@@ -7,6 +7,7 @@ production data for ISO 9001 traceability.
 """
 
 import os
+import json
 import time
 import threading
 import copy
@@ -25,7 +26,8 @@ class PrintFarmManager:
     def __init__(self, config: dict, history_db: PrintHistoryDB,
                  filament_db: FilamentInventoryDB = None,
                  assignment_db: FilamentAssignmentDB = None,
-                 production_db=None, snapshots_dir=None):
+                 production_db=None, snapshots_dir=None,
+                 data_dir=None):
         self.printers = {}
         self.job_history = []       # in-memory recent events
         self.poll_interval = config.get("poll_interval_sec", 5)
@@ -34,6 +36,7 @@ class PrintFarmManager:
         self.assignment_db = assignment_db
         self.production_db = production_db
         self.snapshots_dir = snapshots_dir
+        self.data_dir = data_dir
         self._lock = threading.Lock()
 
         # Track elapsed time per printer for duration logging
@@ -58,6 +61,143 @@ class PrintFarmManager:
 
         # Events that the drone system will care about
         self.pending_events = []
+
+        # Restore previous state so first poll doesn't create false events
+        self._restore_previous_state()
+
+    # ------------------------------------------------------------------
+    # State Persistence & Restoration
+    # ------------------------------------------------------------------
+
+    def _state_file_path(self):
+        """Path to the server state JSON file."""
+        if self.data_dir:
+            return os.path.join(self.data_dir, "server_state.json")
+        return None
+
+    def _restore_previous_state(self):
+        """
+        Restore each printer's previous_status so the first poll
+        doesn't create false state-change events.
+        Tries JSON state file first, falls back to database query.
+        """
+        restored = {}
+
+        # Step 1: Try loading from state file
+        state_path = self._state_file_path()
+        if state_path and os.path.exists(state_path):
+            try:
+                with open(state_path, "r") as f:
+                    saved = json.load(f)
+                for pid in self.printers:
+                    if pid in saved:
+                        self.printers[pid]["previous_status"] = saved[pid]
+                        restored[pid] = saved[pid]
+                print(f"[STARTUP] Restored printer states from state file")
+            except Exception as e:
+                print(f"[STARTUP] Could not read state file: {e}")
+
+        # Step 2: For any printer not restored, try database
+        for pid in self.printers:
+            if pid in restored:
+                continue
+            status = self._get_last_status_from_db(pid)
+            if status:
+                self.printers[pid]["previous_status"] = status
+                restored[pid] = status
+
+        # Step 3: Restore active job IDs from production DB
+        if self.production_db:
+            for pid in self.printers:
+                active_job = self.production_db.get_active_job(pid)
+                if active_job:
+                    self._active_job_ids[pid] = active_job["job_id"]
+                    # Also restore the start time for duration tracking
+                    try:
+                        started = datetime.fromisoformat(
+                            active_job["started_at"])
+                        self._print_start_times[pid] = started
+                    except (ValueError, KeyError):
+                        pass
+
+        if restored:
+            print(f"[STARTUP] Restored states: {restored}")
+        else:
+            print("[STARTUP] No previous state found, starting fresh")
+
+    def _get_last_status_from_db(self, printer_id):
+        """Query the most recent event for a printer to find its last status."""
+        try:
+            history = self.history_db.get_history(limit=50)
+            for event in history:
+                if event.get("printer_id") == printer_id:
+                    return event.get("to_status")
+        except Exception:
+            pass
+        return None
+
+    def _save_state(self):
+        """Save current printer statuses to JSON for next startup."""
+        state_path = self._state_file_path()
+        if not state_path:
+            return
+        try:
+            states = {
+                pid: p["previous_status"]
+                for pid, p in self.printers.items()
+            }
+            with open(state_path, "w") as f:
+                json.dump(states, f)
+        except Exception as e:
+            print(f"[STATE] Error saving state: {e}")
+
+    # ------------------------------------------------------------------
+    # Deduplication Helpers
+    # ------------------------------------------------------------------
+
+    def _is_duplicate_history_event(self, event):
+        """Check if a similar event was already logged recently."""
+        try:
+            recent = self.history_db.get_history(limit=20)
+            for existing in recent:
+                if (existing.get("printer_id") == event.get("printer_id")
+                        and existing.get("event_type") == event.get("type")
+                        and existing.get("filename") == event.get("filename")):
+                    # Check if within 60 seconds
+                    try:
+                        existing_time = datetime.fromisoformat(
+                            existing["timestamp"])
+                        event_time = datetime.fromisoformat(
+                            event["timestamp"])
+                        if abs((event_time - existing_time
+                                ).total_seconds()) < 60:
+                            return True
+                    except (ValueError, KeyError):
+                        pass
+        except Exception:
+            pass
+        return False
+
+    def _is_duplicate_pending_event(self, event):
+        """Check if a similar event already exists in pending_events."""
+        for existing in self.pending_events:
+            if (existing.get("printer_id") == event.get("printer_id")
+                    and existing.get("type") == event.get("type")):
+                try:
+                    existing_time = datetime.fromisoformat(
+                        existing["timestamp"])
+                    event_time = datetime.fromisoformat(
+                        event["timestamp"])
+                    if abs((event_time - existing_time
+                            ).total_seconds()) < 60:
+                        return True
+                except (ValueError, KeyError):
+                    pass
+        return False
+
+    # ------------------------------------------------------------------
+    # Polling
+    # ------------------------------------------------------------------
 
     def poll_all(self):
         """Poll all printers and detect state changes."""
@@ -92,10 +232,14 @@ class PrintFarmManager:
                             (datetime.now(timezone.utc) - start
                              ).total_seconds()
                         )
-                    with self._lock:
-                        self.pending_events.append(event)
-                        self.job_history.append(event)
-                    self.history_db.log_event(event)
+
+                    # Deduplicate before logging
+                    if not self._is_duplicate_history_event(event):
+                        with self._lock:
+                            if not self._is_duplicate_pending_event(event):
+                                self.pending_events.append(event)
+                            self.job_history.append(event)
+                        self.history_db.log_event(event)
 
                     # Auto-deduct filament from assigned spool
                     self._auto_deduct_filament(pid, state)
@@ -110,9 +254,12 @@ class PrintFarmManager:
                 elif new_status == "printing" and prev_status != "printing":
                     event["type"] = "print_started"
                     self._print_start_times[pid] = datetime.now(timezone.utc)
-                    with self._lock:
-                        self.job_history.append(event)
-                    self.history_db.log_event(event)
+
+                    # Deduplicate before logging
+                    if not self._is_duplicate_history_event(event):
+                        with self._lock:
+                            self.job_history.append(event)
+                        self.history_db.log_event(event)
 
                     # Production logging: create job
                     self._production_start(pid, client, state)
@@ -122,10 +269,14 @@ class PrintFarmManager:
 
                 elif new_status in ("error",):
                     event["type"] = "printer_error"
-                    with self._lock:
-                        self.pending_events.append(event)
-                        self.job_history.append(event)
-                    self.history_db.log_event(event)
+
+                    # Deduplicate before logging
+                    if not self._is_duplicate_history_event(event):
+                        with self._lock:
+                            if not self._is_duplicate_pending_event(event):
+                                self.pending_events.append(event)
+                            self.job_history.append(event)
+                        self.history_db.log_event(event)
 
                     # Production logging: fail job
                     self._production_fail(pid, state)
@@ -133,6 +284,9 @@ class PrintFarmManager:
                     print(f"[EVENT] Error on {state['name']}!")
 
                 printer_data["previous_status"] = new_status
+
+        # Save state after every poll cycle
+        self._save_state()
 
     def _auto_deduct_filament(self, printer_id: str, state: dict):
         """Deduct estimated filament usage from the assigned spool."""

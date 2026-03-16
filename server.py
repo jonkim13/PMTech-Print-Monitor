@@ -100,7 +100,8 @@ def main():
                                     filament_db=filament_db,
                                     assignment_db=assignment_db,
                                     production_db=production_db,
-                                    snapshots_dir=snapshots_dir)
+                                    snapshots_dir=snapshots_dir,
+                                    data_dir=DATA_DIR)
     drone_controller = DroneController()
 
     # --- Flask app ---

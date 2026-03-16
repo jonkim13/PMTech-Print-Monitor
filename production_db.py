@@ -98,9 +98,24 @@ class ProductionDB:
                    spool_id=None, spool_material=None, spool_brand=None,
                    layer_height=None, nozzle_diameter=None,
                    fill_density=None, nozzle_temp=None, bed_temp=None):
-        """Create a new print job record when a print starts."""
+        """Create a new print job record when a print starts.
+        Idempotent: if a 'started' job already exists for this printer
+        with the same file_name within the last 24 hours, return that
+        job's ID instead of creating a duplicate."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
+
+        # Check for existing active job with same file on same printer
+        existing = conn.execute("""
+            SELECT job_id FROM print_jobs
+            WHERE printer_id = ? AND file_name = ? AND status = 'started'
+              AND started_at >= datetime('now', '-24 hours')
+            ORDER BY job_id DESC LIMIT 1
+        """, (printer_id, file_name)).fetchone()
+        if existing:
+            conn.close()
+            return existing["job_id"]
+
         cursor = conn.execute("""
             INSERT INTO print_jobs
                 (printer_id, printer_name, file_name, file_display_name,
@@ -122,9 +137,10 @@ class ProductionDB:
 
     def complete_job(self, job_id, duration_sec=0, filament_used_g=0,
                      filament_used_mm=0, snapshot_path=None):
-        """Mark a job as completed."""
+        """Mark a job as completed. Idempotent: skips if already completed."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
+        # Only update if the job hasn't already been completed/failed
         conn.execute("""
             UPDATE print_jobs
             SET status = 'completed',
@@ -133,7 +149,7 @@ class ProductionDB:
                 filament_used_g = CASE WHEN ? > 0 THEN ? ELSE filament_used_g END,
                 filament_used_mm = CASE WHEN ? > 0 THEN ? ELSE filament_used_mm END,
                 snapshot_path = COALESCE(?, snapshot_path)
-            WHERE job_id = ?
+            WHERE job_id = ? AND completed_at IS NULL
         """, (now, duration_sec,
               filament_used_g, filament_used_g,
               filament_used_mm, filament_used_mm,
@@ -142,13 +158,13 @@ class ProductionDB:
         conn.close()
 
     def fail_job(self, job_id, duration_sec=0):
-        """Mark a job as failed."""
+        """Mark a job as failed. Idempotent: skips if already completed/failed."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute("""
             UPDATE print_jobs
             SET status = 'failed', completed_at = ?, print_duration_sec = ?
-            WHERE job_id = ?
+            WHERE job_id = ? AND completed_at IS NULL
         """, (now, duration_sec, job_id))
         conn.commit()
         conn.close()

@@ -5,6 +5,7 @@ SQLite-backed databases for print history and filament inventory.
 """
 import sqlite3
 from datetime import datetime, timezone
+from typing import Optional
 
 # ============================================================
 # PRINT HISTORY DATABASE
@@ -322,7 +323,7 @@ class FilamentAssignmentDB:
         conn.close()
         return changed
 
-    def get_assignment(self, printer_id: str) -> dict | None:
+    def get_assignment(self, printer_id: str) -> Optional[dict]:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT * FROM filament_assignments WHERE printer_id = ?",

@@ -19,6 +19,7 @@ Authentication:
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 import requests
 from requests.auth import HTTPDigestAuth
@@ -242,7 +243,7 @@ class PrusaLinkClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def get_camera_snapshot(self) -> bytes | None:
+    def get_camera_snapshot(self) -> Optional[bytes]:
         """
         Grab a camera snapshot from the printer.
         GET /api/v1/cameras/snap returns PNG image data.

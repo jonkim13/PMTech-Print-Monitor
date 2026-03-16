@@ -1,0 +1,63 @@
+# ============================================================
+# PRINT FARM MONITOR - Configuration
+# ============================================================
+# Copy this file to config.yaml and fill in the printer details.
+#
+#   cp config.example.yaml config.yaml
+#   open config.yaml   (and edit with the IPs and passwords)
+#
+# Find the printer's IP: Printer screen → Settings → Network
+# Find the password: Printer screen → Settings → Network → PrusaLink
+# ============================================================
+
+# How often to check each printer (using seconds)
+poll_interval_sec: 5
+
+# Web dashboard port
+server_port: 5001
+
+# ============================================================
+# The Prusa Printers
+# ============================================================
+printers:
+  core_one_1:
+    name: "Core One #1"
+    model: "core_one"
+    host: "192.168.1.128"
+    username: "maker"
+    password: "${CORE_ONE_1_PASSWORD}"
+
+  core_one_2:
+    name: "Core One #2"
+    model: "core_one"
+    host: "192.168.1.132"
+    username: "maker"
+    password: "${CORE_ONE_2_PASSWORD}"
+
+  xl_1:
+    name: "XL #1"
+    model: "xl"
+    host: "192.168.1.127"
+    username: "maker"
+    password: "${XL_1_PASSWORD}"
+
+  xl_2:
+    name: "XL #2"
+    model: "xl"
+    host: "192.168.1.111"
+    username: "maker"
+    password: "${XL_2_PASSWORD}"
+
+# ============================================================
+# Database
+# Path to the filament inventory database
+# ============================================================
+db_path: "data/FilamentInventory.db"
+
+# ============================================================
+# Drone Integration (not done yet)
+# ============================================================
+drone:
+  enabled: false
+  auto_dispatch: false
+  cooldown_sec: 300

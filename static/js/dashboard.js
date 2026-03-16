@@ -1,0 +1,459 @@
+// ============================================================
+// Dashboard - Printer cards, stats, events, poll loop
+// ============================================================
+function renderCard(printer) {
+    const rawStatus = String(printer.status || "unknown").toLowerCase();
+    const status = rawStatus.replace(/[^a-z_]/g, "") || "unknown";
+    const job = printer.job || {};
+    const temps = printer.temperatures || {};
+    const isPrinting = status === "printing";
+    const isFinished = status === "finished";
+    const hasJob = isPrinting || isFinished;
+    const progress = Number(job.progress) || 0;
+    const progressClamped = Math.max(0, Math.min(100, progress));
+    const pid = String(printer.printer_id || "");
+    const printerName = String(printer.name || "");
+    const printerModel = String(printer.model || "");
+    const pidEnc = encodeURIComponent(pid);
+    const nameEnc = encodeURIComponent(printerName);
+    const safeFilename = escapeHtml(job.filename || "Unknown file");
+
+    // Filament spool assignment info
+    const spool = printer.assigned_spool;
+    let spoolHTML = '';
+
+    if(spool) {
+        const spoolWeight = Number(spool.grams) || 0;
+        const weightClass = getWeightClass(spoolWeight);
+
+        spoolHTML = `
+        <div class="spool-info">
+            <span class="spool-label">Loaded Spool</span>
+            <div class="spool-detail">
+                <span class="spool-id">${escapeHtml(spool.id)}</span>
+                <span>${escapeHtml(spool.material)} · ${escapeHtml(spool.color)} · ${escapeHtml(spool.brand)}</span>
+                <span class="weight-badge ${weightClass}">${spoolWeight}g</span>
+            </div>
+        </div>`;
+
+    } else {
+        spoolHTML = `<div class="spool-info"><span class="spool-none">No spool assigned</span></div>`;
+    }
+
+    let progressHTML = '';
+    if(hasJob) {
+        progressHTML = `
+        <div class="progress-section">
+            <div class="progress-header">
+                <span class="progress-filename" title="${safeFilename}">${safeFilename}</span>
+                <span class="progress-percent ${isPrinting ? 'printing-pulse' : ''}">${progressClamped.toFixed(1)}%</span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill ${isFinished ? 'complete' : ''}" style="width: ${progressClamped}%"></div>
+            </div>
+            <div class="progress-time">
+                <span>Elapsed: ${formatTime(job.time_elapsed_sec)}</span>
+                <span>Remaining: ${formatTime(job.time_remaining_sec)}</span>
+            </div>
+            ${isPrinting && job.time_remaining_sec > 0 ? `<div class="progress-eta">${formatETA(job.time_remaining_sec)}</div>` : ''}
+        </div>`;
+
+    } else {
+        progressHTML = '<div class="no-job">No active print job</div>';
+    }
+
+    return `
+    <div class="printer-card status-${status}">
+        <div class="card-header">
+            <div>
+                <div class="printer-name">${escapeHtml(printerName)}</div>
+                <div class="printer-model">${escapeHtml(printerModel)}</div>
+            </div>
+            <span class="printer-status-badge ${getBadgeClass(status)}">${escapeHtml(rawStatus)}</span>
+        </div>
+        ${spoolHTML}
+        ${progressHTML}
+        <div class="temps">
+            <div class="temp-item">
+                <span class="temp-label">Nozzle</span>
+                <span class="temp-value">
+                    ${(temps.nozzle_current || 0).toFixed(0)}&deg;C
+                    <span class="target">/ ${(temps.nozzle_target || 0).toFixed(0)}&deg;C</span>
+                </span>
+            </div>
+            <div class="temp-item">
+                <span class="temp-label">Bed</span>
+                <span class="temp-value">
+                    ${(temps.bed_current || 0).toFixed(0)}&deg;C
+                    <span class="target">/ ${(temps.bed_target || 0).toFixed(0)}&deg;C</span>
+                </span>
+            </div>
+        </div>
+        <div class="card-actions">
+            <button class="btn btn-primary" onclick="showUploadModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Send GCode</button>
+            <button class="btn btn-green" onclick="showFilesModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Files</button>
+            <button class="btn btn-orange" onclick="showAssignSpoolModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Assign Spool</button>
+            <button class="btn btn-danger" onclick="stopPrint(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))" ${isPrinting ? '' : 'disabled'}>Stop Print</button>
+        </div>
+    </div>`;
+}
+
+function renderEvent(event) {
+    const dotClass = event.type === "print_complete" ? "complete"
+        : event.type === "printer_error" ? "error" : "started";
+
+    let text = "";
+    if(event.type === "print_complete") {
+        text = `<strong>${escapeHtml(event.printer_name)}</strong> finished printing ${escapeHtml(event.filename || 'a job')}`;
+    } else if(event.type === "print_started") {
+        text = `<strong>${escapeHtml(event.printer_name)}</strong> started printing ${escapeHtml(event.filename || 'a job')}`;
+    } else if(event.type === "printer_error") {
+        text = `<strong>${escapeHtml(event.printer_name)}</strong> encountered an error`;
+    } else {
+        text = `<strong>${escapeHtml(event.printer_name || '')}</strong>: ${escapeHtml(event.from_status)} → ${escapeHtml(event.to_status)}`;
+    }
+
+    return `
+    <div class="event-item">
+        <span class="event-time">${formatTimestamp(event.timestamp)}</span>
+        <div class="event-dot ${dotClass}"></div>
+        <span class="event-text">${text}</span>
+    </div>`;
+}
+
+function updateStats(printers) {
+    const total = printers.length;
+    const printing = printers.filter(p => p.status === "printing").length;
+    const idle = printers.filter(p => p.status === "idle").length;
+    const finished = printers.filter(p => p.status === "finished").length;
+    const errors = printers.filter(p => p.status === "error" || p.status === "offline").length;
+
+    document.getElementById("statTotal").textContent = total;
+    document.getElementById("statPrinting").textContent = printing;
+    document.getElementById("statIdle").textContent = idle;
+    document.getElementById("statFinished").textContent = finished;
+    document.getElementById("statErrors").textContent = errors;
+}
+
+// ============================================================
+// Printer Actions
+// ============================================================
+function showUploadModal(printerId, printerName) {
+    document.getElementById('uploadPrinterName').textContent = printerName;
+    document.getElementById('uploadModal').dataset.printerId = printerId;
+    document.getElementById('gcodeFile').value = '';
+    document.getElementById('printAfterUpload').checked = false;
+    showModal('uploadModal');
+}
+
+async function submitUpload() {
+    const printerId = document.getElementById('uploadModal').dataset.printerId;
+    const fileInput = document.getElementById('gcodeFile');
+    const printAfter = document.getElementById('printAfterUpload').checked;
+
+    if(!fileInput.files.length) {
+        showToast('Please select a GCode file', 'error');
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const btn = document.getElementById('uploadBtn');
+    btn.textContent = 'Uploading...';
+    btn.disabled = true;
+
+    try {
+        const url = `/api/printers/${printerId}/upload${printAfter ? '?print_after=1' : ''}`;
+        const resp = await fetch(url, { method: 'POST', body: formData });
+        const result = await resp.json();
+
+        if(result.success) {
+            showToast(`Uploaded ${file.name} successfully`);
+            hideModal('uploadModal');
+        } else {
+            showToast(`Upload failed: ${result.error || 'Unknown error'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Upload error: ${e.message}`, 'error');
+    } finally {
+        btn.textContent = 'Upload';
+        btn.disabled = false;
+    }
+}
+
+async function stopPrint(printerId, printerName) {
+    if(!confirm(`Stop the current print on ${printerName}?`)) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/stop`, { method: 'POST' });
+        const result = await resp.json();
+
+        if(result.success) {
+            showToast(`Stopped print on ${printerName}`);
+        } else {
+            showToast(`Failed to stop: ${result.error || 'Unknown error'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function showFilesModal(printerId, printerName) {
+    document.getElementById('filesModalTitle').textContent = printerName;
+    document.getElementById('filesList').innerHTML = '<div class="events-empty">Loading files...</div>';
+    showModal('filesModal');
+
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/files`);
+        const data = await resp.json();
+
+        if(data.error) {
+            document.getElementById('filesList').innerHTML =
+                `<div class="events-empty">${escapeHtml(data.error)}</div>`;
+            return;
+        }
+
+        const files = extractFilesFromStorageResponse(data);
+
+        if(files.length === 0) {
+            const storageNames = extractStorageNames(data);
+            const storageText = storageNames.length
+                ? `Mounted storage: ${storageNames.map(escapeHtml).join(", ")}`
+                : "No mounted storage detected from printer API";
+            document.getElementById('filesList').innerHTML =
+                `<div class="events-empty">No files found.<br><br>${storageText}</div>`;
+            return;
+        }
+
+        document.getElementById('filesList').innerHTML = files.map(f => {
+            const name = escapeHtml(f.display_name || f.name || f.filename || f.path || 'Unknown');
+            const sizeKB = f.size ? (f.size / 1024).toFixed(0) + ' KB' : '';
+            return `<div class="file-item">
+                <span class="file-name">${name}</span>
+                <span class="file-size">${sizeKB}</span>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        document.getElementById('filesList').innerHTML =
+            `<div class="events-empty">Error: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function extractStorageNames(data) {
+    if(!data || typeof data !== 'object') {
+        return [];
+    }
+
+    if(Array.isArray(data.storage_list)) {
+        return data.storage_list
+            .map(s => s.storage || s.name || s.path || '')
+            .filter(Boolean);
+    }
+
+    return [];
+}
+
+function extractFilesFromStorageResponse(data) {
+    const files = [];
+    const walk = (node, prefix = '') => {
+        if(!node || typeof node !== 'object') {
+            return;
+        }
+
+        const type = String(node.type || '').toUpperCase();
+        const name = String(node.display_name || node.name || node.filename || '');
+        const path = String(node.path || '').trim();
+        const fullPath = path || [prefix, name].filter(Boolean).join('/');
+
+        if(type === 'FILE' || type === 'PRINT_FILE') {
+            files.push({
+                name,
+                display_name: node.display_name || node.name || node.filename || fullPath,
+                filename: node.filename || node.name || node.display_name || '',
+                path: fullPath,
+                size: Number(node.size) || 0
+            });
+        }
+
+        const childKeys = ['children', 'files', 'items'];
+        for(const key of childKeys) {
+            if(Array.isArray(node[key])) {
+                for (const child of node[key]) {
+                    walk(child, fullPath || prefix);
+                }
+            }
+        }
+    };
+
+    if(Array.isArray(data)) {
+        data.forEach(item => walk(item));
+        return files;
+    }
+
+    if(data && typeof data === 'object') {
+        if(Array.isArray(data.storage_list)) {
+            for(const storage of data.storage_list) {
+                walk(storage);
+            }
+        } else {
+            walk(data);
+        }
+    }
+
+    // Deduplicate by path/name to avoid repeats when multiple trees include refs.
+    const seen = new Set();
+    return files.filter(f => {
+        const key = `${f.path}|${f.name}`;
+
+        if(seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+
+        return true;
+    });
+}
+
+// ============================================================
+// Spool Assignment 
+// ============================================================
+async function showAssignSpoolModal(printerId, printerName) {
+    document.getElementById('assignPrinterName').textContent = printerName;
+    document.getElementById('assignSpoolModal').dataset.printerId = printerId;
+    const select = document.getElementById('assignSpoolSelect');
+    select.innerHTML = '<option value="">Loading spools...</option>';
+    showModal('assignSpoolModal');
+
+    try {
+        const resp = await fetch('/api/inventory');
+        const spools = await resp.json();
+
+        if(spools.length === 0) {
+            select.innerHTML = '<option value="">No spools in inventory</option>';
+            return;
+        }
+
+        select.innerHTML = '<option value="">-- Select a spool --</option>' +
+            spools.map(s => {
+                const id = escapeHtml(s.id || '');
+                const label = `${escapeHtml(s.id)} - ${escapeHtml(s.material)} ${escapeHtml(s.color)} (${s.grams}g)`;
+                return `<option value="${id}">${label}</option>`;
+            }).join('');
+    } catch (e) {
+        select.innerHTML = '<option value="">Error loading spools</option>';
+    }
+}
+
+async function submitAssignSpool() {
+    const printerId = document.getElementById('assignSpoolModal').dataset.printerId;
+    const spoolId = document.getElementById('assignSpoolSelect').value;
+
+    if(!spoolId) {
+        showToast('Please select a spool', 'error');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/assignments/${printerId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ spool_id: spoolId })
+        });
+
+        const result = await resp.json();
+
+        if(result.success) {
+            showToast(`Assigned spool ${spoolId} to printer`);
+            hideModal('assignSpoolModal');
+            poll();
+        } else {
+            showToast(`Error: ${result.error}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function unassignSpool() {
+    const printerId = document.getElementById('assignSpoolModal').dataset.printerId;
+
+    try {
+        const resp = await fetch(`/api/assignments/${printerId}`, { method: 'DELETE' });
+        const result = await resp.json();
+
+        if(result.success) {
+            showToast('Spool unassigned');
+            hideModal('assignSpoolModal');
+            poll();
+        } else {
+            showToast(`No spool was assigned`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+// ============================================================
+// Main Poll Loop
+// ============================================================
+async function poll() {
+    try {
+        const printersResp = await fetch("/api/printers");
+        const printers = await printersResp.json();
+
+        printerList = printers;
+
+        // Check for status transitions → browser notifications
+        checkPrinterTransitions(printers);
+
+        document.getElementById("printerGrid").innerHTML = printers.map(renderCard).join("");
+        updateStats(printers);
+
+        const badge = document.getElementById("serverBadge");
+        badge.textContent = "LIVE";
+        badge.className = "status-badge";
+        document.getElementById("sidebarDot").className = "status-dot";
+        document.getElementById("sidebarStatus").textContent = "CONNECTED";
+
+        const eventsResp = await fetch("/api/events/peek");
+        const newEvents = await eventsResp.json();
+
+        if(newEvents.length > 0) {
+            for(const evt of newEvents) {
+                const isDuplicate = events.some(e =>
+                    e.timestamp === evt.timestamp &&
+                    e.printer_id === evt.printer_id &&
+                    e.type === evt.type
+                );
+                if(!isDuplicate) events.unshift(evt);
+            }
+            events = events.slice(0, 50);
+        }
+
+        const eventCount = document.getElementById("eventCount");
+        const eventsList = document.getElementById("eventsList");
+        eventCount.textContent = events.length;
+
+        if(events.length > 0) {
+            eventsList.innerHTML = events.map(renderEvent).join("");
+        } else {
+            eventsList.innerHTML = '<div class="events-empty">No events yet</div>';
+        }
+
+    } catch (err) {
+        console.error("Poll failed:", err);
+        document.getElementById("serverBadge").textContent = "OFFLINE";
+        document.getElementById("serverBadge").className = "status-badge error";
+        document.getElementById("sidebarDot").className = "status-dot offline";
+        document.getElementById("sidebarStatus").textContent = "DISCONNECTED";
+    }
+}
+
+// Start polling
+poll();
+setInterval(poll, POLL_INTERVAL);

@@ -1,7 +1,6 @@
 // ============================================================
 // Drone - Status display, mission controls, mission log
 // ============================================================
-
 async function loadDroneData() {
     try {
         const [statusResp, missionsResp] = await Promise.all([

@@ -5,5 +5,7 @@
 __pycache__/
 *.pyc
 
-# Data
-data/
+# Data (keep FilamentInventory.db, ignore the rest)
+data/assignments.db
+data/print_history.db
+data/production_log.db

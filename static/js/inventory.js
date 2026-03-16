@@ -165,12 +165,12 @@ async function deleteSpool(spoolId) {
     if(!confirm(`Delete spool ${spoolId}?`)) {
         return;
     }
-    
+
     try {
         const resp = await fetch(`/api/inventory/${spoolId}`, { method: 'DELETE' });
         const result = await resp.json();
 
-        if (result.success) {
+        if(result.success) {
             showToast(`Deleted spool ${spoolId}`);
             loadInventory();
         } else {

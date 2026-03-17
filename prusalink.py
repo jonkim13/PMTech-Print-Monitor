@@ -217,6 +217,12 @@ class PrusaLinkClient:
         Fetch detailed job information from GET /api/v1/job.
         Returns metadata including filament usage estimates,
         layer height, nozzle diameter, temperatures, etc.
+
+        For multi-tool printers (XL), also returns per-tool arrays:
+        - filament_used_g_per_tool: list of grams per nozzle
+        - filament_used_mm_per_tool: list of mm per nozzle
+        - filament_type_per_tool: list of filament type strings
+        - nozzle_diameter_per_tool: list of diameters
         """
         try:
             resp = self._request("/api/v1/job")
@@ -224,20 +230,43 @@ class PrusaLinkClient:
             # Normalize the response into a flat dict of useful fields
             file_info = data.get("file", {})
             meta = file_info.get("meta", {}) or {}
+            # PrusaLink meta uses space-bracket names like
+            # "filament used [g]" — try those first, fall back to
+            # underscore variants for compatibility.
+            raw_g = (meta.get("filament used [g]")
+                     or meta.get("filament_used_g") or 0)
+            raw_mm = (meta.get("filament used [mm]")
+                      or meta.get("filament_used_mm") or 0)
+            filament_g = float(raw_g) if raw_g else 0
+            filament_mm = float(raw_mm) if raw_mm else 0
+            estimated_time = (meta.get("estimated_print_time")
+                              or meta.get("estimated print time")
+                              or data.get("time_remaining") or 0)
+
             result = {
                 "file_name": file_info.get("name", ""),
                 "file_display_name": file_info.get("display_name",
                                                     file_info.get("name", "")),
                 "filament_type": meta.get("filament_type", ""),
-                "filament_used_g": meta.get("filament_used_g", 0),
-                "filament_used_mm": meta.get("filament_used_mm", 0),
+                "filament_used_g": filament_g,
+                "filament_used_mm": filament_mm,
                 "layer_height": meta.get("layer_height", None),
                 "nozzle_diameter": meta.get("nozzle_diameter", None),
                 "fill_density": meta.get("fill_density", None),
                 "nozzle_temp": meta.get("nozzle_temp", None),
                 "bed_temp": meta.get("bed_temp", None),
-                "estimated_time_sec": meta.get("estimated_print_time",
-                                               data.get("time_remaining", 0)),
+                "estimated_time_sec": estimated_time,
+                # Per-tool arrays (XL multi-tool support)
+                "filament_used_g_per_tool": meta.get(
+                    "filament used [g] per tool", []),
+                "filament_used_mm_per_tool": meta.get(
+                    "filament used [mm] per tool", []),
+                "filament_type_per_tool": meta.get(
+                    "filament_type per tool", []),
+                "nozzle_diameter_per_tool": meta.get(
+                    "nozzle_diameter per tool", []),
+                "temperature_per_tool": meta.get(
+                    "temperature per tool", []),
             }
             return result
         except Exception as e:

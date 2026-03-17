@@ -467,6 +467,14 @@ body {
     color: var(--text-dim);
 }
 
+.spool-tool-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 10px;
+    color: var(--accent-blue);
+    min-width: 24px;
+}
+
 /* ========== PRINTER ACTION BUTTONS ========== */
 .card-actions {
     display: flex;

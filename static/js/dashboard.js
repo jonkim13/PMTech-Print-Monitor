@@ -18,26 +18,55 @@ function renderCard(printer) {
     const nameEnc = encodeURIComponent(printerName);
     const safeFilename = escapeHtml(job.filename || "Unknown file");
 
-    // Filament spool assignment info
-    const spool = printer.assigned_spool;
+    // Filament spool assignment info (multi-tool aware)
+    const toolCount = Number(printer.tool_count) || 1;
+    const assignedSpools = printer.assigned_spools || [];
     let spoolHTML = '';
 
-    if(spool) {
-        const spoolWeight = Number(spool.grams) || 0;
-        const weightClass = getWeightClass(spoolWeight);
-
-        spoolHTML = `
-        <div class="spool-info">
-            <span class="spool-label">Loaded Spool</span>
-            <div class="spool-detail">
-                <span class="spool-id">${escapeHtml(spool.id)}</span>
-                <span>${escapeHtml(spool.material)} · ${escapeHtml(spool.color)} · ${escapeHtml(spool.brand)}</span>
-                <span class="weight-badge ${weightClass}">${spoolWeight}g</span>
-            </div>
+    if(toolCount > 1) {
+        // Multi-tool printer (XL) — show per-tool assignments
+        let toolRows = '';
+        for(let t = 0; t < toolCount; t++) {
+            const entry = assignedSpools.find(a => a.tool_index === t);
+            const spool = entry ? entry.spool : null;
+            if(spool) {
+                const w = Number(spool.grams) || 0;
+                const wc = getWeightClass(w);
+                toolRows += `<div class="spool-detail" style="margin-bottom:2px;">
+                    <span class="spool-tool-label">T${t + 1}:</span>
+                    <span class="spool-id">${escapeHtml(spool.id)}</span>
+                    <span>${escapeHtml(spool.material)} · ${escapeHtml(spool.color)}</span>
+                    <span class="weight-badge ${wc}">${w}g</span>
+                </div>`;
+            } else {
+                toolRows += `<div class="spool-detail" style="margin-bottom:2px;">
+                    <span class="spool-tool-label">T${t + 1}:</span>
+                    <span class="spool-none">empty</span>
+                </div>`;
+            }
+        }
+        spoolHTML = `<div class="spool-info">
+            <span class="spool-label">Tool Spools</span>
+            ${toolRows}
         </div>`;
-
     } else {
-        spoolHTML = `<div class="spool-info"><span class="spool-none">No spool assigned</span></div>`;
+        // Single-tool printer (Core One)
+        const spool = printer.assigned_spool;
+        if(spool) {
+            const spoolWeight = Number(spool.grams) || 0;
+            const weightClass = getWeightClass(spoolWeight);
+            spoolHTML = `
+            <div class="spool-info">
+                <span class="spool-label">Loaded Spool</span>
+                <div class="spool-detail">
+                    <span class="spool-id">${escapeHtml(spool.id)}</span>
+                    <span>${escapeHtml(spool.material)} · ${escapeHtml(spool.color)} · ${escapeHtml(spool.brand)}</span>
+                    <span class="weight-badge ${weightClass}">${spoolWeight}g</span>
+                </div>
+            </div>`;
+        } else {
+            spoolHTML = `<div class="spool-info"><span class="spool-none">No spool assigned</span></div>`;
+        }
     }
 
     let progressHTML = '';
@@ -320,11 +349,32 @@ function extractFilesFromStorageResponse(data) {
 }
 
 // ============================================================
-// Spool Assignment 
+// Spool Assignment (multi-tool aware)
 // ============================================================
 async function showAssignSpoolModal(printerId, printerName) {
     document.getElementById('assignPrinterName').textContent = printerName;
-    document.getElementById('assignSpoolModal').dataset.printerId = printerId;
+    const modal = document.getElementById('assignSpoolModal');
+    modal.dataset.printerId = printerId;
+
+    // Find the printer to determine tool count
+    const printer = (printerList || []).find(p => p.printer_id === printerId);
+    const toolCount = (printer && printer.tool_count) ? printer.tool_count : 1;
+    modal.dataset.toolCount = toolCount;
+
+    // Show/hide tool selector based on multi-tool
+    const toolGroup = document.getElementById('assignToolGroup');
+    const toolSelect = document.getElementById('assignToolSelect');
+    if(toolCount > 1) {
+        toolGroup.style.display = '';
+        toolSelect.innerHTML = '';
+        for(let t = 0; t < toolCount; t++) {
+            toolSelect.innerHTML += `<option value="${t}">Tool ${t + 1} (T${t + 1})</option>`;
+        }
+    } else {
+        toolGroup.style.display = 'none';
+        toolSelect.innerHTML = '<option value="0">Tool 1</option>';
+    }
+
     const select = document.getElementById('assignSpoolSelect');
     select.innerHTML = '<option value="">Loading spools...</option>';
     showModal('assignSpoolModal');
@@ -339,10 +389,10 @@ async function showAssignSpoolModal(printerId, printerName) {
         }
 
         select.innerHTML = '<option value="">-- Select a spool --</option>' +
-            spools.map(s => {
-                const id = escapeHtml(s.id || '');
-                const label = `${escapeHtml(s.id)} - ${escapeHtml(s.material)} ${escapeHtml(s.color)} (${s.grams}g)`;
-                return `<option value="${id}">${label}</option>`;
+            spools.map(function(s) {
+                var id = escapeHtml(s.id || '');
+                var label = escapeHtml(s.id) + ' - ' + escapeHtml(s.material) + ' ' + escapeHtml(s.color) + ' (' + s.grams + 'g)';
+                return '<option value="' + id + '">' + label + '</option>';
             }).join('');
     } catch (e) {
         select.innerHTML = '<option value="">Error loading spools</option>';
@@ -350,8 +400,9 @@ async function showAssignSpoolModal(printerId, printerName) {
 }
 
 async function submitAssignSpool() {
-    const printerId = document.getElementById('assignSpoolModal').dataset.printerId;
-    const spoolId = document.getElementById('assignSpoolSelect').value;
+    var printerId = document.getElementById('assignSpoolModal').dataset.printerId;
+    var spoolId = document.getElementById('assignSpoolSelect').value;
+    var toolIndex = parseInt(document.getElementById('assignToolSelect').value) || 0;
 
     if(!spoolId) {
         showToast('Please select a spool', 'error');
@@ -359,42 +410,50 @@ async function submitAssignSpool() {
     }
 
     try {
-        const resp = await fetch(`/api/assignments/${printerId}`, {
+        var resp = await fetch('/api/assignments/' + printerId, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ spool_id: spoolId })
+            body: JSON.stringify({ spool_id: spoolId, tool_index: toolIndex })
         });
 
-        const result = await resp.json();
+        var result = await resp.json();
 
         if(result.success) {
-            showToast(`Assigned spool ${spoolId} to printer`);
+            var toolLabel = (parseInt(document.getElementById('assignSpoolModal').dataset.toolCount) > 1)
+                ? ' to T' + (toolIndex + 1) : '';
+            showToast('Assigned spool ' + spoolId + toolLabel);
             hideModal('assignSpoolModal');
             poll();
         } else {
-            showToast(`Error: ${result.error}`, 'error');
+            showToast('Error: ' + result.error, 'error');
         }
     } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
+        showToast('Error: ' + e.message, 'error');
     }
 }
 
 async function unassignSpool() {
-    const printerId = document.getElementById('assignSpoolModal').dataset.printerId;
+    var printerId = document.getElementById('assignSpoolModal').dataset.printerId;
+    var toolCount = parseInt(document.getElementById('assignSpoolModal').dataset.toolCount) || 1;
+    var toolIndex = parseInt(document.getElementById('assignToolSelect').value) || 0;
+
+    // For multi-tool, unassign just the selected tool
+    var url = '/api/assignments/' + printerId + '?tool_index=' + toolIndex;
 
     try {
-        const resp = await fetch(`/api/assignments/${printerId}`, { method: 'DELETE' });
-        const result = await resp.json();
+        var resp = await fetch(url, { method: 'DELETE' });
+        var result = await resp.json();
 
         if(result.success) {
-            showToast('Spool unassigned');
+            var label = (toolCount > 1) ? 'T' + (toolIndex + 1) + ' spool' : 'Spool';
+            showToast(label + ' unassigned');
             hideModal('assignSpoolModal');
             poll();
         } else {
-            showToast(`No spool was assigned`, 'error');
+            showToast('No spool was assigned', 'error');
         }
     } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
+        showToast('Error: ' + e.message, 'error');
     }
 }
 

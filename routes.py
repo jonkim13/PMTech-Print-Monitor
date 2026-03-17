@@ -262,9 +262,22 @@ def api_assignments():
     return jsonify(_assignment_db.get_all_assignments())
 
 
+@api.route("/api/assignments/<printer_id>", methods=["GET"])
+def api_printer_assignments(printer_id):
+    """Get all tool assignments for a specific printer."""
+    if printer_id not in _farm_manager.printers:
+        return jsonify({"error": "Unknown printer"}), 404
+    assignments = _assignment_db.get_printer_assignments(printer_id)
+    return jsonify(assignments)
+
+
 @api.route("/api/assignments/<printer_id>", methods=["POST"])
 def api_assign_spool(printer_id):
-    """Assign a spool to a printer. Body: { "spool_id": "..." }"""
+    """Assign a spool to a printer tool.
+
+    Body: { "spool_id": "...", "tool_index": 0 }
+    tool_index defaults to 0 if not provided (backward compat).
+    """
     if printer_id not in _farm_manager.printers:
         return jsonify({"error": "Unknown printer"}), 404
 
@@ -276,14 +289,25 @@ def api_assign_spool(printer_id):
     if not spool:
         return jsonify({"error": "Spool not found"}), 404
 
-    _assignment_db.assign(printer_id, data["spool_id"])
+    tool_index = int(data.get("tool_index", 0))
+    _assignment_db.assign(printer_id, data["spool_id"],
+                          tool_index=tool_index)
     return jsonify({"success": True})
 
 
 @api.route("/api/assignments/<printer_id>", methods=["DELETE"])
 def api_unassign_spool(printer_id):
-    """Remove the spool assignment from a printer."""
-    success = _assignment_db.unassign(printer_id)
+    """Remove spool assignment from a printer tool.
+
+    Query param: ?tool_index=0 (defaults to 0).
+    Use ?all=1 to remove all tool assignments.
+    """
+    if request.args.get("all") == "1":
+        success = _assignment_db.unassign_all(printer_id)
+    else:
+        tool_index = request.args.get("tool_index", 0, type=int)
+        success = _assignment_db.unassign(printer_id,
+                                          tool_index=tool_index)
     if success:
         return jsonify({"success": True})
     return jsonify({"error": "No assignment found"}), 404

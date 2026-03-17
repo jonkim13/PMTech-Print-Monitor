@@ -288,26 +288,88 @@ class PrintFarmManager:
         # Save state after every poll cycle
         self._save_state()
 
+    def _get_printer_model(self, printer_id: str) -> str:
+        """Get the model of a printer from its client state."""
+        printer_data = self.printers.get(printer_id)
+        if printer_data:
+            return printer_data["client"].model
+        return "unknown"
+
+    def _get_tool_count(self, printer_id: str) -> int:
+        """Return the number of tool heads for a printer model."""
+        model = self._get_printer_model(printer_id)
+        if model == "xl":
+            return 5
+        return 1
+
     def _auto_deduct_filament(self, printer_id: str, state: dict):
-        """Deduct estimated filament usage from the assigned spool."""
+        """Deduct estimated filament usage from assigned spools.
+
+        For multi-tool printers (XL), deducts per-tool usage from
+        the spool assigned to each tool. For single-tool printers,
+        deducts from the tool 0 spool assignment.
+        """
         if not self.assignment_db or not self.filament_db:
             return
-        assignment = self.assignment_db.get_assignment(printer_id)
+
+        model = self._get_printer_model(printer_id)
+
+        # Fetch detailed job metadata (includes per-tool arrays)
+        client = self.printers[printer_id]["client"]
+        details = client.get_job_details()
+        if details.get("error"):
+            details = {}
+        # Merge basic job data with detailed metadata
+        job = dict(state.get("job", {}))
+        job.update(details)
+
+        # For XL printers, try per-tool deduction first
+        if model == "xl":
+            per_tool_g = job.get("filament_used_g_per_tool", [])
+            per_tool_mm = job.get("filament_used_mm_per_tool", [])
+            deducted_any = False
+
+            for tool_idx in range(len(per_tool_g) if per_tool_g
+                                  else len(per_tool_mm) if per_tool_mm
+                                  else 0):
+                grams = 0
+                if per_tool_g and tool_idx < len(per_tool_g):
+                    val = per_tool_g[tool_idx]
+                    if val:
+                        grams = int(float(val))
+                elif per_tool_mm and tool_idx < len(per_tool_mm):
+                    val = per_tool_mm[tool_idx]
+                    if val:
+                        grams = int(float(val) * 0.00298)
+
+                if grams > 0:
+                    assignment = self.assignment_db.get_assignment(
+                        printer_id, tool_index=tool_idx)
+                    if assignment:
+                        self.filament_db.deduct_weight(
+                            assignment["spool_id"], grams)
+                        print(f"[FILAMENT] Deducted ~{grams}g from spool "
+                              f"{assignment['spool_id']} (T{tool_idx + 1}) "
+                              f"on {state['name']}")
+                        deducted_any = True
+
+            if deducted_any:
+                return
+            # Fall through to single-spool logic if no per-tool data
+
+        # Single-tool deduction (Core One, or XL fallback)
+        assignment = self.assignment_db.get_assignment(
+            printer_id, tool_index=0)
         if not assignment:
             return
         spool_id = assignment["spool_id"]
 
-        # PrusaLink may report filament_used_g in the job data
-        job = state.get("job", {})
         grams_used = 0
-
-        # Try direct grams first (some firmware versions)
         if job.get("filament_used_g"):
             grams_used = int(float(job["filament_used_g"]))
-        # Try converting from mm of filament (assume 1.75mm PLA ~2.98g/m)
         elif job.get("filament_used_mm"):
             mm_used = float(job["filament_used_mm"])
-            grams_used = int(mm_used * 0.00298)  # rough PLA estimate
+            grams_used = int(mm_used * 0.00298)
 
         if grams_used > 0:
             self.filament_db.deduct_weight(spool_id, grams_used)
@@ -328,18 +390,33 @@ class PrintFarmManager:
             if details.get("error"):
                 details = {}
 
-            # Get assigned spool info
+            # Get assigned spool info (tool 0 for backward compat)
             spool_id = None
             spool_material = None
             spool_brand = None
             if self.assignment_db and self.filament_db:
-                assignment = self.assignment_db.get_assignment(printer_id)
+                assignment = self.assignment_db.get_assignment(
+                    printer_id, tool_index=0)
                 if assignment:
                     spool_id = assignment["spool_id"]
                     spool = self.filament_db.get_by_id(spool_id)
                     if spool:
                         spool_material = spool.get("material")
                         spool_brand = spool.get("brand")
+
+            # Build per-tool spool snapshot for traceability
+            tool_spools = {}  # type: dict
+            if self.assignment_db and self.filament_db:
+                assignments = self.assignment_db.get_printer_assignments(
+                    printer_id)
+                for a in assignments:
+                    s = self.filament_db.get_by_id(a["spool_id"])
+                    tool_spools[a["tool_index"]] = {
+                        "spool_id": a["spool_id"],
+                        "material": s.get("material") if s else None,
+                        "brand": s.get("brand") if s else None,
+                        "color": s.get("color") if s else None,
+                    }
 
             job_id = self.production_db.create_job(
                 printer_id=printer_id,
@@ -349,8 +426,8 @@ class PrintFarmManager:
                 file_display_name=details.get("file_display_name",
                                               state["job"]["filename"]),
                 filament_type=details.get("filament_type"),
-                filament_used_g=details.get("filament_used_g", 0),
-                filament_used_mm=details.get("filament_used_mm", 0),
+                filament_used_g=float(details.get("filament_used_g") or 0),
+                filament_used_mm=float(details.get("filament_used_mm") or 0),
                 spool_id=spool_id,
                 spool_material=spool_material,
                 spool_brand=spool_brand,
@@ -359,6 +436,7 @@ class PrintFarmManager:
                 fill_density=details.get("fill_density"),
                 nozzle_temp=details.get("nozzle_temp"),
                 bed_temp=details.get("bed_temp"),
+                tool_spools=tool_spools if tool_spools else None,
             )
             self._active_job_ids[printer_id] = job_id
 
@@ -386,8 +464,8 @@ class PrintFarmManager:
             filament_g = 0
             filament_mm = 0
             if not details.get("error"):
-                filament_g = details.get("filament_used_g", 0)
-                filament_mm = details.get("filament_used_mm", 0)
+                filament_g = float(details.get("filament_used_g") or 0)
+                filament_mm = float(details.get("filament_used_mm") or 0)
 
             # Camera snapshot
             snapshot_path = None
@@ -412,15 +490,40 @@ class PrintFarmManager:
                 snapshot_path=snapshot_path,
             )
 
-            # Material usage log
+            # Material usage log — per-tool for XL, single for Core One
             job = self.production_db.get_job(job_id)
-            if job and job.get("spool_id"):
+            model = self._get_printer_model(printer_id)
+            per_tool_g = (details.get("filament_used_g_per_tool", [])
+                          if not details.get("error") else [])
+            per_tool_mm = (details.get("filament_used_mm_per_tool", [])
+                           if not details.get("error") else [])
+
+            if model == "xl" and per_tool_g and self.assignment_db:
+                for tidx, g_val in enumerate(per_tool_g):
+                    g = float(g_val) if g_val else 0
+                    mm = (float(per_tool_mm[tidx])
+                          if per_tool_mm and tidx < len(per_tool_mm)
+                          and per_tool_mm[tidx] else 0)
+                    if g > 0:
+                        a = self.assignment_db.get_assignment(
+                            printer_id, tool_index=tidx)
+                        sid = a["spool_id"] if a else None
+                        self.production_db.log_material_usage(
+                            spool_id=sid,
+                            job_id=job_id,
+                            printer_id=printer_id,
+                            grams_used=g,
+                            mm_used=mm,
+                            tool_index=tidx,
+                        )
+            elif job and job.get("spool_id"):
                 self.production_db.log_material_usage(
                     spool_id=job["spool_id"],
                     job_id=job_id,
                     printer_id=printer_id,
                     grams_used=filament_g or job.get("filament_used_g", 0),
                     mm_used=filament_mm or job.get("filament_used_mm", 0),
+                    tool_index=0,
                 )
 
             # Machine log
@@ -457,16 +560,40 @@ class PrintFarmManager:
             print(f"[PRODUCTION] Error logging failure: {e}")
 
     def _enrich_with_spool(self, printer_id: str, status: dict) -> dict:
-        """Attach assigned spool info to a printer status dict."""
+        """Attach assigned spool info to a printer status dict.
+
+        For multi-tool printers, includes assigned_spools list with
+        per-tool assignments. Also keeps backward-compatible
+        assigned_spool (tool 0) field.
+        """
         if not self.assignment_db or not self.filament_db:
             status["assigned_spool"] = None
+            status["assigned_spools"] = []
+            status["tool_count"] = self._get_tool_count(printer_id)
             return status
-        assignment = self.assignment_db.get_assignment(printer_id)
-        if assignment:
-            spool = self.filament_db.get_by_id(assignment["spool_id"])
-            status["assigned_spool"] = spool  # full spool dict or None
-        else:
-            status["assigned_spool"] = None
+
+        tool_count = self._get_tool_count(printer_id)
+        status["tool_count"] = tool_count
+
+        assignments = self.assignment_db.get_printer_assignments(printer_id)
+        # Build per-tool spool list
+        spools_by_tool = {}  # type: dict
+        for a in assignments:
+            spool = self.filament_db.get_by_id(a["spool_id"])
+            if spool:
+                spools_by_tool[a["tool_index"]] = spool
+
+        assigned_spools = []
+        for t in range(tool_count):
+            spool = spools_by_tool.get(t)
+            assigned_spools.append({
+                "tool_index": t,
+                "spool": spool,  # full spool dict or None
+            })
+        status["assigned_spools"] = assigned_spools
+
+        # Backward compat: assigned_spool = tool 0 spool
+        status["assigned_spool"] = spools_by_tool.get(0)
         return status
 
     def get_all_status(self) -> list:

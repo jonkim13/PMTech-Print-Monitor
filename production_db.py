@@ -86,7 +86,24 @@ class ProductionDB:
             CREATE INDEX IF NOT EXISTS idx_material_job ON material_usage(job_id);
         """)
         conn.commit()
+
+        # Migrate: add tool_spools column to print_jobs if missing
+        self._add_column_if_missing(conn, "print_jobs", "tool_spools",
+                                    "TEXT DEFAULT '{}'")
+        # Migrate: add tool_index column to material_usage if missing
+        self._add_column_if_missing(conn, "material_usage", "tool_index",
+                                    "INTEGER DEFAULT 0")
         conn.close()
+
+    @staticmethod
+    def _add_column_if_missing(conn, table, column, col_def):
+        """Add a column to a table if it doesn't already exist."""
+        cursor = conn.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if column not in columns:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+            conn.commit()
 
     # ------------------------------------------------------------------
     # Print Jobs
@@ -97,11 +114,17 @@ class ProductionDB:
                    filament_used_g=0, filament_used_mm=0,
                    spool_id=None, spool_material=None, spool_brand=None,
                    layer_height=None, nozzle_diameter=None,
-                   fill_density=None, nozzle_temp=None, bed_temp=None):
+                   fill_density=None, nozzle_temp=None, bed_temp=None,
+                   tool_spools=None):
         """Create a new print job record when a print starts.
         Idempotent: if a 'started' job already exists for this printer
         with the same file_name within the last 24 hours, return that
-        job's ID instead of creating a duplicate."""
+        job's ID instead of creating a duplicate.
+
+        tool_spools: dict mapping tool_index -> {spool_id, material,
+        brand, color} for ISO 9001 traceability of multi-tool prints.
+        """
+        import json as _json
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
 
@@ -116,20 +139,22 @@ class ProductionDB:
             conn.close()
             return existing["job_id"]
 
+        tool_spools_json = _json.dumps(tool_spools) if tool_spools else "{}"
+
         cursor = conn.execute("""
             INSERT INTO print_jobs
                 (printer_id, printer_name, file_name, file_display_name,
                  status, started_at, filament_type, filament_used_g,
                  filament_used_mm, spool_id, spool_material, spool_brand,
                  layer_height, nozzle_diameter, fill_density,
-                 nozzle_temp, bed_temp, created_at)
-            VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 nozzle_temp, bed_temp, tool_spools, created_at)
+            VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (printer_id, printer_name, file_name,
               file_display_name or file_name,
               now, filament_type, filament_used_g, filament_used_mm,
               spool_id, spool_material, spool_brand,
               layer_height, nozzle_diameter, fill_density,
-              nozzle_temp, bed_temp, now))
+              nozzle_temp, bed_temp, tool_spools_json, now))
         job_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -378,15 +403,17 @@ class ProductionDB:
     # ------------------------------------------------------------------
 
     def log_material_usage(self, spool_id, job_id, printer_id,
-                           grams_used=0, mm_used=0):
-        """Log material usage for a job."""
+                           grams_used=0, mm_used=0, tool_index=0):
+        """Log material usage for a job, optionally per tool."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute("""
             INSERT INTO material_usage
-                (spool_id, job_id, printer_id, grams_used, mm_used, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (spool_id, job_id, printer_id, grams_used, mm_used, now))
+                (spool_id, job_id, printer_id, grams_used, mm_used,
+                 tool_index, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (spool_id, job_id, printer_id, grams_used, mm_used,
+              tool_index, now))
         conn.commit()
         conn.close()
 
@@ -431,6 +458,7 @@ class ProductionDB:
             "filament_used_mm", "spool_id", "spool_material", "spool_brand",
             "layer_height", "nozzle_diameter", "fill_density",
             "nozzle_temp", "bed_temp", "operator", "notes", "outcome",
+            "tool_spools",
         ])
 
     def export_machine_csv(self, date_from=None, date_to=None):
@@ -465,7 +493,7 @@ class ProductionDB:
         return self._to_csv(data, [
             "usage_id", "spool_id", "job_id", "printer_id",
             "printer_name", "file_name", "grams_used", "mm_used",
-            "timestamp",
+            "tool_index", "timestamp",
         ])
 
     @staticmethod

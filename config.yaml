@@ -1,13 +1,8 @@
 # ============================================================
 # PRINT FARM MONITOR - Configuration
 # ============================================================
-# Copy this file to config.yaml and fill in the printer details.
-#
-#   cp config.example.yaml config.yaml
-#   open config.yaml   (and edit with the IPs and passwords)
-#
-# Find the printer's IP: Printer screen → Settings → Network
-# Find the password: Printer screen → Settings → Network → PrusaLink
+# Find the printer's hostname
+# Find the password
 # ============================================================
 
 # How often to check each printer (using seconds)

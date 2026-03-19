@@ -23,28 +23,28 @@ printers:
   core_one_1:
     name: "Core One #1"
     model: "core_one"
-    host: "192.168.1.128"
+    host: "PrusaCoreOne-1.local"
     username: "maker"
     password: "${CORE_ONE_1_PASSWORD}"
 
   core_one_2:
     name: "Core One #2"
     model: "core_one"
-    host: "192.168.1.132"
+    host: "PrusaCoreOne-2.local"
     username: "maker"
     password: "${CORE_ONE_2_PASSWORD}"
 
   xl_1:
     name: "XL #1"
     model: "xl"
-    host: "192.168.1.127"
+    host: "PrusaXL-1.local"
     username: "maker"
     password: "${XL_1_PASSWORD}"
 
   xl_2:
     name: "XL #2"
     model: "xl"
-    host: "192.168.1.111"
+    host: "PrusaXL-2.local"
     username: "maker"
     password: "${XL_2_PASSWORD}"
 

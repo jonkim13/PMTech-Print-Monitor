@@ -20,13 +20,14 @@ function switchPage(page) {
     document.querySelectorAll('.section-page').forEach(p => p.classList.remove('active'));
     document.getElementById(`page-${page}`).classList.add('active');
 
-    const titles = { dashboard: 'Dashboard', drone: 'Drone', inventory: 'Inventory', production: 'Production Log', history: 'History' };
+    const titles = { dashboard: 'Dashboard', drone: 'Drone', inventory: 'Inventory', production: 'Production Log', workorders: 'Work Orders', history: 'History' };
     document.getElementById('pageTitle').textContent = titles[page] || page;
 
     if(page === 'inventory') loadInventory();
     if(page === 'history') loadHistory();
     if(page === 'drone') loadDroneData();
     if(page === 'production') loadProductionData();
+    if(page === 'workorders') loadWorkOrdersPage();
 
     document.getElementById('sidebar').classList.remove('open');
 }

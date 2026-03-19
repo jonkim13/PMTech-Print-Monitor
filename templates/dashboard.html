@@ -35,6 +35,10 @@
                 <span class="nav-icon">&#9878;</span>
                 Production Log
             </button>
+            <button class="nav-item" data-page="workorders" onclick="switchPage('workorders')">
+                <span class="nav-icon">&#9998;</span>
+                Work Orders
+            </button>
             <button class="nav-item" data-page="history" onclick="switchPage('history')">
                 <span class="nav-icon">&#9776;</span>
                 History
@@ -335,6 +339,154 @@
             </div>
         </div>
 
+        <!-- ==================== WORK ORDERS PAGE ==================== -->
+        <div class="section-page" id="page-workorders">
+
+            <!-- Sub-tab navigation -->
+            <div class="prod-tabs">
+                <button class="prod-tab active" data-wotab="queue" onclick="switchWoTab('queue')">Production Queue</button>
+                <button class="prod-tab" data-wotab="orders" onclick="switchWoTab('orders')">All Orders</button>
+                <button class="prod-tab" data-wotab="create" onclick="switchWoTab('create')">Create New</button>
+            </div>
+
+            <!-- ---- Queue Sub-Tab ---- -->
+            <div class="prod-panel active" id="woPanel-queue">
+                <!-- Queue Stats -->
+                <div class="stats-bar" style="margin-bottom: 16px;">
+                    <div class="stat-item">
+                        <span class="stat-label">Queued</span>
+                        <span class="stat-value orange" id="queueStatQueued">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Printing</span>
+                        <span class="stat-value blue" id="queueStatPrinting">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Completed</span>
+                        <span class="stat-value green" id="queueStatCompleted">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Failed</span>
+                        <span class="stat-value red" id="queueStatFailed">0</span>
+                    </div>
+                </div>
+
+                <div class="prod-toolbar">
+                    <select class="input-field" id="queueFilterStatus">
+                        <option value="">All Active</option>
+                        <option value="queued">Queued</option>
+                        <option value="printing">Printing</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadQueue()">Filter</button>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>WO#</th>
+                                <th>Customer</th>
+                                <th>Part</th>
+                                <th>Material</th>
+                                <th>Seq</th>
+                                <th>Status</th>
+                                <th>Printer</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueBody">
+                            <tr><td colspan="9" class="table-empty">Loading queue...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Orders Sub-Tab ---- -->
+            <div class="prod-panel" id="woPanel-orders">
+                <div class="prod-toolbar">
+                    <select class="input-field" id="woFilterStatus">
+                        <option value="">All Statuses</option>
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadWorkOrders()">Filter</button>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>WO#</th>
+                                <th>Customer</th>
+                                <th>Date</th>
+                                <th>Parts</th>
+                                <th>Progress</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workOrdersBody">
+                            <tr><td colspan="7" class="table-empty">Loading work orders...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Create Sub-Tab ---- -->
+            <div class="prod-panel" id="woPanel-create">
+                <div class="wo-create-form">
+                    <h3>New Work Order</h3>
+                    <div class="form-group">
+                        <label class="form-label">Customer Name</label>
+                        <input type="text" class="form-input" id="woCustomerName" required placeholder="e.g. Acme Corp" style="max-width: 400px;">
+                    </div>
+
+                    <div class="section-header" style="margin-top: 20px;">
+                        Line Items
+                        <button class="btn btn-primary" onclick="addWoLineItem()" style="margin-left: 12px; font-size: 11px; padding: 4px 10px;">+ Add Item</button>
+                    </div>
+
+                    <div id="woLineItems">
+                        <!-- Dynamic line items go here -->
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <button class="btn btn-green" onclick="submitCreateWorkOrder()">Create Work Order</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ---- Work Order Detail (inline) ---- -->
+            <div class="prod-panel" id="woPanel-detail" style="display: none;">
+                <div style="margin-bottom: 12px;">
+                    <button class="btn" onclick="switchWoTab('orders')" style="font-size: 11px;">&larr; Back to Orders</button>
+                </div>
+                <div id="woDetailHeader"></div>
+                <div class="table-container" style="margin-top: 16px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Part</th>
+                                <th>Material</th>
+                                <th>Seq</th>
+                                <th>Status</th>
+                                <th>Printer</th>
+                                <th>GCode</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="woDetailBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- ==================== HISTORY PAGE ==================== -->
         <div class="section-page" id="page-history">
 
@@ -579,6 +731,28 @@
     </div>
 </div>
 
+<!-- ===== PRINT FROM QUEUE MODAL ===== -->
+<div class="modal-overlay" id="queuePrintModal">
+    <div class="modal" style="width: 460px;">
+        <h2>Print Queue Item</h2>
+        <div id="queuePrintInfo" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;"></div>
+        <div class="form-group">
+            <label class="form-label">Select Printer (idle only)</label>
+            <select class="form-input" id="queuePrintPrinter">
+                <option value="">Loading printers...</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">GCode File</label>
+            <input type="file" class="form-input" id="queuePrintFile" accept=".gcode,.gco,.g,.bgcode" style="padding: 6px;">
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('queuePrintModal')">Cancel</button>
+            <button type="button" class="btn btn-green" id="queuePrintBtn" onclick="submitQueuePrint()">Send &amp; Print</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== TOAST CONTAINER ===== -->
 <div class="toast-container" id="toastContainer"></div>
 
@@ -594,6 +768,7 @@ window.APP_CONFIG = {
 <script src="/static/js/drone.js"></script>
 <script src="/static/js/inventory.js"></script>
 <script src="/static/js/production.js"></script>
+<script src="/static/js/workorders.js"></script>
 <script src="/static/js/history.js"></script>
 
 </body>

@@ -1301,3 +1301,100 @@ textarea.form-input {
         align-items: stretch;
     }
 }
+
+/* ========== WORK ORDERS ========== */
+
+.wo-link {
+    color: var(--accent-blue);
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+}
+.wo-link:hover {
+    text-decoration: underline;
+}
+
+/* Queue status badges */
+.queue-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.qs-queued { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
+.qs-assigned { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.qs-printing { background: rgba(0, 150, 255, 0.2); color: var(--accent-blue); }
+.qs-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
+.qs-failed { background: rgba(255, 60, 60, 0.15); color: var(--accent-red); }
+
+/* WO status badges */
+.wo-status {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.wos-open { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
+.wos-inprogress { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.wos-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
+.wos-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
+
+/* WO progress bar */
+.wo-progress-bar {
+    display: inline-block;
+    width: 80px;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+    vertical-align: middle;
+}
+.wo-progress-fill {
+    height: 100%;
+    background: var(--accent-green);
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+.wo-progress-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 6px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* WO detail header */
+.wo-detail-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+.wo-detail-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.wo-detail-progress .wo-progress-bar {
+    flex: 1;
+    height: 8px;
+    width: auto;
+}
+
+/* Create WO form */
+.wo-create-form {
+    max-width: 700px;
+}
+.wo-line-item {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}

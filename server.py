@@ -27,6 +27,8 @@ from farm_manager import PrintFarmManager
 from drone import DroneController
 from routes import register_routes
 from production_routes import register_production_routes
+from work_orders_db import WorkOrderDB
+from work_order_routes import register_work_order_routes
 
 # ============================================================
 # CONFIGURATION
@@ -94,6 +96,8 @@ def main():
     assignment_db = FilamentAssignmentDB(assignment_db_path)
     production_db = ProductionDB(production_db_path,
                                  snapshots_dir=snapshots_dir)
+    work_order_db_path = os.path.join(DATA_DIR, "work_orders.db")
+    work_order_db = WorkOrderDB(work_order_db_path)
 
     # --- Initialize managers ---
     farm_manager = PrintFarmManager(config, history_db,
@@ -101,7 +105,8 @@ def main():
                                     assignment_db=assignment_db,
                                     production_db=production_db,
                                     snapshots_dir=snapshots_dir,
-                                    data_dir=DATA_DIR)
+                                    data_dir=DATA_DIR,
+                                    work_order_db=work_order_db)
     drone_controller = DroneController()
 
     # --- Flask app ---
@@ -125,6 +130,7 @@ def main():
     )
     register_production_routes(app, production_db, farm_manager,
                                snapshots_dir=snapshots_dir)
+    register_work_order_routes(app, work_order_db, farm_manager)
 
     # Start background polling
     farm_manager.start_polling()
@@ -138,6 +144,7 @@ def main():
     print(f"  Inventory:  {inventory_db_path}")
     print(f"  History:    {history_db_path}")
     print(f"  Production: {production_db_path}")
+    print(f"  WorkOrders: {work_order_db_path}")
     print(f"  Snapshots:  {snapshots_dir}")
     print(f"{'='*50}\n")
 

@@ -27,7 +27,7 @@ class PrintFarmManager:
                  filament_db: FilamentInventoryDB = None,
                  assignment_db: FilamentAssignmentDB = None,
                  production_db=None, snapshots_dir=None,
-                 data_dir=None):
+                 data_dir=None, work_order_db=None):
         self.printers = {}
         self.job_history = []       # in-memory recent events
         self.poll_interval = config.get("poll_interval_sec", 5)
@@ -35,6 +35,7 @@ class PrintFarmManager:
         self.filament_db = filament_db
         self.assignment_db = assignment_db
         self.production_db = production_db
+        self.work_order_db = work_order_db
         self.snapshots_dir = snapshots_dir
         self.data_dir = data_dir
         self._lock = threading.Lock()
@@ -248,6 +249,9 @@ class PrintFarmManager:
                     self._production_complete(pid, client, state,
                                               event["duration_sec"])
 
+                    # Work order queue: auto-complete matching item
+                    self._wo_complete(pid, state)
+
                     print(f"[EVENT] Print complete on {state['name']}: "
                           f"{state['job']['filename']}")
 
@@ -280,6 +284,9 @@ class PrintFarmManager:
 
                     # Production logging: fail job
                     self._production_fail(pid, state)
+
+                    # Work order queue: auto-fail matching item
+                    self._wo_fail(pid, state)
 
                     print(f"[EVENT] Error on {state['name']}!")
 
@@ -558,6 +565,49 @@ class PrintFarmManager:
             print(f"[PRODUCTION] Job #{job_id} failed")
         except Exception as e:
             print(f"[PRODUCTION] Error logging failure: {e}")
+
+    # ------------------------------------------------------------------
+    # Work Order Queue Integration
+    # ------------------------------------------------------------------
+
+    def _wo_complete(self, printer_id, state):
+        """Auto-complete a work order queue item when a print finishes."""
+        if not self.work_order_db:
+            return
+        filename = state.get("job", {}).get("filename", "")
+        if not filename:
+            return
+        try:
+            qi = self.work_order_db.find_printing_item_by_filename(
+                printer_id, filename)
+            if qi:
+                # Link the production job if we have one
+                job_id = self._active_job_ids.get(printer_id)
+                self.work_order_db.complete_queue_item(
+                    qi["queue_id"], print_job_id=job_id)
+                print(f"[WORKORDER] Queue item #{qi['queue_id']} "
+                      f"completed ({qi['part_name']} "
+                      f"{qi['sequence_number']}/{qi['total_quantity']} "
+                      f"for {qi['customer_name']})")
+        except Exception as e:
+            print(f"[WORKORDER] Error completing queue item: {e}")
+
+    def _wo_fail(self, printer_id, state):
+        """Auto-fail a work order queue item when a printer errors."""
+        if not self.work_order_db:
+            return
+        filename = state.get("job", {}).get("filename", "")
+        if not filename:
+            return
+        try:
+            qi = self.work_order_db.find_printing_item_by_filename(
+                printer_id, filename)
+            if qi:
+                self.work_order_db.fail_queue_item(qi["queue_id"])
+                print(f"[WORKORDER] Queue item #{qi['queue_id']} "
+                      f"failed ({qi['part_name']})")
+        except Exception as e:
+            print(f"[WORKORDER] Error failing queue item: {e}")
 
     def _enrich_with_spool(self, printer_id: str, status: dict) -> dict:
         """Attach assigned spool info to a printer status dict.

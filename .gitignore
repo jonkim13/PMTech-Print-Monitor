@@ -17,3 +17,6 @@ venv/
 
 # Logs
 logs/
+
+# Project Memory
+PROJECT_MEMORY.md

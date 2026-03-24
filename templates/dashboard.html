@@ -562,7 +562,11 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Supplier</label>
-                    <input type="text" class="form-input" id="formSupplier" required placeholder="e.g. Prusa Research">
+                    <select class="form-input" id="formSupplier" required>
+                        {% for supplier in allowed_suppliers %}
+                        <option value="{{ supplier }}">{{ supplier }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
             </div>
             <div class="form-row">

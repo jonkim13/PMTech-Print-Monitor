@@ -41,6 +41,7 @@ def register_routes(app, farm_manager, filament_db, history_db,
 def dashboard():
     return render_template(
         "dashboard.html",
+        allowed_suppliers=_filament_db.ALLOWED_SUPPLIERS,
         poll_interval_ms=int(_ui_config.get("poll_interval_ms", 3000)),
     )
 
@@ -198,18 +199,27 @@ def api_inventory_add():
     if diameter <= 0:
         return jsonify({"error": "diameter must be > 0"}), 400
 
+    supplier = str(data["supplier"]).strip()
+    if supplier not in _filament_db.ALLOWED_SUPPLIERS:
+        allowed = ", ".join(_filament_db.ALLOWED_SUPPLIERS)
+        return jsonify({
+            "error": f"Invalid supplier '{supplier}'. Allowed suppliers: {allowed}"
+        }), 400
+
     try:
         spool_id = _filament_db.add_filament(
             material=data["material"],
             brand=data["brand"],
             color=data["color"],
-            supplier=data["supplier"],
+            supplier=supplier,
             grams=grams,
             diameter=diameter,
             batch=data.get("batch", ""),
             operator=data["operator"],
         )
         return jsonify({"success": True, "id": spool_id}), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -130,6 +130,11 @@ class FilamentInventoryDB:
         "Nylon": "NYL", "Nylon CF": "NYC", "PEEK": "PEK", "PEKK": "PKK",
         "ULTEM 1010": "U10", "ULTEM 9085": "U85", "TPU": "TPU", "SEBS": "SEB",
     }
+    ALLOWED_SUPPLIERS = (
+        "Prusa Research",
+        "3DXTech",
+        "Printed Solid",
+    )
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -195,6 +200,12 @@ class FilamentInventoryDB:
                      supplier: str, grams: int, diameter: float,
                      batch: str, operator: str) -> str:
         """Add a new filament spool and return its generated ID."""
+        if supplier not in self.ALLOWED_SUPPLIERS:
+            allowed = ", ".join(self.ALLOWED_SUPPLIERS)
+            raise ValueError(
+                f"Invalid supplier '{supplier}'. Allowed suppliers: {allowed}"
+            )
+
         conn = self._get_conn()
         # Generate ID: YY + material_code + sequence_number
         count = conn.execute(

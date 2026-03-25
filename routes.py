@@ -233,7 +233,11 @@ def api_inventory_add():
             batch=data.get("batch", ""),
             operator=data["operator"],
         )
-        return jsonify({"success": True, "id": spool_id}), 201
+        return jsonify({
+            "success": True,
+            "id": spool_id,
+            "spool_id": spool_id,
+        }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:

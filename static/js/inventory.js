@@ -97,10 +97,16 @@ async function loadInventoryOptions() {
 }
 
 function showAddFilamentModal() {
+    hideModal('newSpoolIdModal');
     document.getElementById('addFilamentForm').reset();
     document.getElementById('formGrams').value = 1000;
     document.getElementById('formDiameter').value = 1.75;
     showModal('addFilamentModal');
+}
+
+function showNewSpoolIdModal(spoolId) {
+    document.getElementById('newSpoolIdValue').textContent = spoolId;
+    showModal('newSpoolIdModal');
 }
 
 async function submitAddFilament(e) {
@@ -126,8 +132,14 @@ async function submitAddFilament(e) {
         const result = await resp.json();
 
         if(result.success) {
-            showToast(`Added spool: ${result.id}`);
+            const spoolId = String(result.spool_id || result.id || '').trim();
+            if(!spoolId) {
+                showToast('Error: spool created but no spool ID was returned', 'error');
+                return;
+            }
+            showToast(`Added spool: ${spoolId}`);
             hideModal('addFilamentModal');
+            showNewSpoolIdModal(spoolId);
             loadInventory();
             await loadInventoryOptions();
         } else {

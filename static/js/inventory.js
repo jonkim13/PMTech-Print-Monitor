@@ -20,7 +20,7 @@ async function loadInventory() {
         const body = document.getElementById('inventoryBody');
 
         if(spools.length === 0) {
-            body.innerHTML = '<tr><td colspan="10" class="table-empty">No spools found</td></tr>';
+            body.innerHTML = '<tr><td colspan="11" class="table-empty">No spools found</td></tr>';
 
             return;
         }
@@ -41,6 +41,7 @@ async function loadInventory() {
                 <td>${Number.isFinite(diameter) ? diameter : "--"}mm</td>
                 <td>${escapeHtml(s.operator || "")}</td>
                 <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${escapeHtml(s.date_ins || "")}</td>
+                <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${escapeHtml(formatDateTime(s.last_dried_at) || "--")}</td>
                 <td>
                     <button class="btn" onclick="showUpdateWeight(decodeURIComponent('${spoolIdEnc}'), ${grams})" style="padding: 3px 6px; font-size: 9px;">Edit Weight</button>
                     <button class="btn btn-danger" onclick="deleteSpool(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;">Delete</button>

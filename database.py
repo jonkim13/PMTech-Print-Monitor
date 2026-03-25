@@ -164,6 +164,13 @@ class FilamentInventoryDB:
                 date_ins TEXT NOT NULL
             )
         """)
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(Filament)")
+        }
+        if "last_dried_at" not in columns:
+            conn.execute(
+                "ALTER TABLE Filament ADD COLUMN last_dried_at TEXT"
+            )
         conn.commit()
         conn.close()
 
@@ -245,6 +252,21 @@ class FilamentInventoryDB:
         conn = self._get_conn()
         cursor = conn.execute(
             "DELETE FROM Filament WHERE id = ?", (spool_id,)
+        )
+        conn.commit()
+        changed = cursor.rowcount > 0
+        conn.close()
+        return changed
+
+    def update_last_dried(self, spool_id: str,
+                          last_dried_at: Optional[str] = None) -> bool:
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "UPDATE Filament SET last_dried_at = ? WHERE id = ?",
+            (
+                last_dried_at or datetime.now(timezone.utc).isoformat(),
+                spool_id,
+            )
         )
         conn.commit()
         changed = cursor.rowcount > 0

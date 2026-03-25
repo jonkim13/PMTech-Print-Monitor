@@ -46,6 +46,22 @@ def _validate_filament_material(material):
     return material
 
 
+def _coerce_optional_bool(value, field_name: str) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    raise ValueError(f"'{field_name}' must be a boolean")
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -307,7 +323,7 @@ def api_printer_assignments(printer_id):
 def api_assign_spool(printer_id):
     """Assign a spool to a printer tool.
 
-    Body: { "spool_id": "...", "tool_index": 0 }
+    Body: { "spool_id": "...", "tool_index": 0, "was_dried": true }
     tool_index defaults to 0 if not provided (backward compat).
     """
     if printer_id not in _farm_manager.printers:
@@ -321,9 +337,17 @@ def api_assign_spool(printer_id):
     if not spool:
         return jsonify({"error": "Spool not found"}), 404
 
+    try:
+        was_dried = _coerce_optional_bool(data.get("was_dried"),
+                                          "was_dried")
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     tool_index = int(data.get("tool_index", 0))
     _assignment_db.assign(printer_id, data["spool_id"],
                           tool_index=tool_index)
+    if was_dried:
+        _filament_db.update_last_dried(data["spool_id"])
     return jsonify({"success": True})
 
 

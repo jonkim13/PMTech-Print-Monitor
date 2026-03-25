@@ -355,6 +355,7 @@ async function showAssignSpoolModal(printerId, printerName) {
     document.getElementById('assignPrinterName').textContent = printerName;
     const modal = document.getElementById('assignSpoolModal');
     modal.dataset.printerId = printerId;
+    document.getElementById('assignWasDried').checked = false;
 
     // Find the printer to determine tool count
     const printer = (printerList || []).find(p => p.printer_id === printerId);
@@ -403,6 +404,7 @@ async function submitAssignSpool() {
     var printerId = document.getElementById('assignSpoolModal').dataset.printerId;
     var spoolId = document.getElementById('assignSpoolSelect').value;
     var toolIndex = parseInt(document.getElementById('assignToolSelect').value) || 0;
+    var wasDried = document.getElementById('assignWasDried').checked;
 
     if(!spoolId) {
         showToast('Please select a spool', 'error');
@@ -413,7 +415,11 @@ async function submitAssignSpool() {
         var resp = await fetch('/api/assignments/' + printerId, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ spool_id: spoolId, tool_index: toolIndex })
+            body: JSON.stringify({
+                spool_id: spoolId,
+                tool_index: toolIndex,
+                was_dried: wasDried
+            })
         });
 
         var result = await resp.json();

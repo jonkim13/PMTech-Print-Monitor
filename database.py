@@ -130,6 +130,7 @@ class FilamentInventoryDB:
         "Nylon": "NYL", "Nylon CF": "NYC", "PEEK": "PEK", "PEKK": "PKK",
         "ULTEM 1010": "U10", "ULTEM 9085": "U85", "TPU": "TPU", "SEBS": "SEB",
     }
+    DEPRECATED_CREATION_MATERIALS = frozenset({"NylonCF", "PEKK"})
     ALLOWED_SUPPLIERS = (
         "Prusa Research",
         "3DXTech",
@@ -252,6 +253,27 @@ class FilamentInventoryDB:
 
     def get_materials_list(self) -> list:
         return list(self.MATERIALS.keys())
+
+    def get_filter_materials_list(self) -> list:
+        materials = list(self.MATERIALS.keys())
+        conn = self._get_conn()
+        rows = conn.execute("""
+            SELECT DISTINCT material
+            FROM Filament
+            WHERE material IS NOT NULL AND material != ''
+            ORDER BY material
+        """).fetchall()
+        conn.close()
+        extra_materials = [
+            r["material"] for r in rows if r["material"] not in materials
+        ]
+        return materials + extra_materials
+
+    def get_creation_materials_list(self) -> list:
+        return [
+            material for material in self.MATERIALS
+            if material not in self.DEPRECATED_CREATION_MATERIALS
+        ]
 
     def get_brands_list(self) -> list:
         conn = self._get_conn()

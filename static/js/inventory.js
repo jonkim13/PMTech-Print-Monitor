@@ -67,12 +67,20 @@ async function loadInventoryOptions() {
         brandFilter.innerHTML = '<option value="">All Brands</option>';
         supFilter.innerHTML = '<option value="">All Suppliers</option>';
 
-        const materials = Array.from(new Set(opts.materials || []));
+        const filterMaterials = Array.from(
+            new Set(opts.filter_materials || opts.materials || [])
+        );
+        const formMaterials = Array.from(
+            new Set(opts.form_materials || opts.materials || [])
+        );
         const brands = Array.from(new Set(opts.brands || []));
         const suppliers = Array.from(new Set(opts.suppliers || []));
 
-        materials.forEach(m => {
+        filterMaterials.forEach(m => {
             matFilter.add(new Option(m, m));
+        });
+
+        formMaterials.forEach(m => {
             matForm.add(new Option(m, m));
         });
 

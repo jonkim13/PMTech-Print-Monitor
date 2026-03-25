@@ -35,6 +35,17 @@ def register_routes(app, farm_manager, filament_db, history_db,
     app.register_blueprint(api)
 
 
+def _validate_filament_material(material):
+    material = str(material or "").strip()
+    if not material:
+        raise ValueError("material is required")
+    if material in _filament_db.DEPRECATED_CREATION_MATERIALS:
+        raise ValueError(
+            f"Material '{material}' is deprecated and cannot be used for new or updated filament entries"
+        )
+    return material
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -199,6 +210,11 @@ def api_inventory_add():
     if diameter <= 0:
         return jsonify({"error": "diameter must be > 0"}), 400
 
+    try:
+        material = _validate_filament_material(data["material"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     supplier = str(data["supplier"]).strip()
     if supplier not in _filament_db.ALLOWED_SUPPLIERS:
         allowed = ", ".join(_filament_db.ALLOWED_SUPPLIERS)
@@ -208,7 +224,7 @@ def api_inventory_add():
 
     try:
         spool_id = _filament_db.add_filament(
-            material=data["material"],
+            material=material,
             brand=data["brand"],
             color=data["color"],
             supplier=supplier,
@@ -259,6 +275,8 @@ def api_inventory_options():
     """Get available materials, brands, and suppliers for form dropdowns."""
     return jsonify({
         "materials": _filament_db.get_materials_list(),
+        "filter_materials": _filament_db.get_filter_materials_list(),
+        "form_materials": _filament_db.get_creation_materials_list(),
         "brands": _filament_db.get_brands_list(),
         "suppliers": _filament_db.get_suppliers_list(),
     })

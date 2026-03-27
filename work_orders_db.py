@@ -115,8 +115,6 @@ class WorkOrderDB:
                 ON queue_items(wo_id);
             CREATE INDEX IF NOT EXISTS idx_queue_printer
                 ON queue_items(assigned_printer_id);
-            CREATE INDEX IF NOT EXISTS idx_queue_job
-                ON queue_items(queue_job_id);
             CREATE INDEX IF NOT EXISTS idx_queue_jobs_status
                 ON queue_jobs(status);
             CREATE INDEX IF NOT EXISTS idx_queue_jobs_printer
@@ -128,6 +126,10 @@ class WorkOrderDB:
             conn, "queue_items", "queue_job_id",
             "INTEGER"
         )
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_queue_job
+            ON queue_items(queue_job_id)
+        """)
         conn.commit()
         conn.close()
 

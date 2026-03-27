@@ -473,10 +473,18 @@
                     <button class="btn" onclick="switchWoTab('orders')" style="font-size: 11px;">&larr; Back to Orders</button>
                 </div>
                 <div id="woDetailHeader"></div>
+                <div class="prod-toolbar" id="woDetailSelectionBar" style="margin-top: 16px; display: none;">
+                    <span id="woDetailSelectionText" style="color: var(--text-secondary); font-size: 12px;">0 selected</span>
+                    <button class="btn btn-green" id="woPrintSelectedBtn" onclick="printSelectedWoParts()" disabled>Print Selected</button>
+                    <button class="btn" id="woClearSelectedBtn" onclick="clearWoSelection()" disabled>Clear</button>
+                </div>
                 <div class="table-container" style="margin-top: 16px;">
                     <table class="data-table">
                         <thead>
                             <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" id="woSelectAllParts" onclick="toggleAllWoQueueSelections(this.checked)" disabled>
+                                </th>
                                 <th>Part</th>
                                 <th>Material</th>
                                 <th>Seq</th>

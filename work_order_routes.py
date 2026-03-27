@@ -32,6 +32,145 @@ def _validate_operator_initials(value):
     return initials
 
 
+def _parse_queue_ids(values, default_queue_id=None):
+    """Parse queue ids from form values or a route parameter."""
+    raw_ids = list(values or [])
+    if not raw_ids and default_queue_id is not None:
+        raw_ids = [default_queue_id]
+
+    queue_ids = []
+    seen = set()
+    for raw_id in raw_ids:
+        parts = str(raw_id).split(",")
+        for part in parts:
+            value = part.strip()
+            if not value:
+                continue
+            try:
+                queue_id = int(value)
+            except (TypeError, ValueError):
+                raise ValueError("Invalid queue_id: {}".format(value))
+            if queue_id in seen:
+                continue
+            seen.add(queue_id)
+            queue_ids.append(queue_id)
+
+    if not queue_ids:
+        raise ValueError("At least one part must be selected")
+    return queue_ids
+
+
+def _validate_queue_print_items(queue_ids):
+    """Validate a queue selection for single- or multi-part printing."""
+    items = _wo_db.get_queue_items(queue_ids)
+    if len(items) != len(queue_ids):
+        raise LookupError("One or more selected parts were not found")
+
+    if any(item["status"] not in ("queued", "failed") for item in items):
+        raise ValueError(
+            "Selected parts must be queued or failed before printing"
+        )
+
+    wo_ids = {item["wo_id"] for item in items}
+    if len(wo_ids) != 1:
+        raise ValueError(
+            "Selected parts must belong to the same work order"
+        )
+
+    return items
+
+
+def _print_queue_items(queue_ids):
+    """Assign one or more queue items, upload gcode, and start printing."""
+    try:
+        queue_ids = _parse_queue_ids(queue_ids)
+        queue_items = _validate_queue_print_items(queue_ids)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    printer_id = request.form.get("printer_id")
+    if not printer_id:
+        return jsonify({"error": "Missing printer_id"}), 400
+
+    try:
+        operator_initials = _validate_operator_initials(
+            request.form.get("operator_initials")
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    client = _farm_manager.get_printer_client(printer_id)
+    if not client:
+        return jsonify({"error": "Unknown printer"}), 404
+
+    status = _farm_manager.get_printer_status(printer_id)
+    if status.get("status") not in ("idle", "finished"):
+        return jsonify({
+            "error": "Printer is not idle (status: {})"
+                     .format(status.get("status", "unknown"))
+        }), 400
+
+    if "file" not in request.files:
+        return jsonify({"error": "No gcode file provided"}), 400
+
+    uploaded = request.files["file"]
+    if not uploaded.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    filename = secure_filename(uploaded.filename)
+    if not filename:
+        return jsonify({"error": "Invalid filename"}), 400
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        return jsonify({"error": "Unsupported file type: {}".format(ext)}), 400
+
+    file_data = uploaded.read()
+
+    _farm_manager.record_pending_print_start(
+        printer_id, filename, operator_initials
+    )
+
+    try:
+        result = client.upload_gcode(file_data, filename, print_after=True)
+    except Exception:
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+        raise
+
+    if not result.get("success"):
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+        return jsonify({
+            "error": "Upload failed: {}".format(result.get("error", "unknown"))
+        }), 500
+
+    printer_name = status.get("name", printer_id)
+    queue_job_id = _wo_db.assign_queue_items(
+        queue_ids, printer_id, printer_name, filename
+    )
+    if queue_job_id is None:
+        return jsonify({
+            "error": "Selected parts could not be assigned to a print job"
+        }), 409
+
+    return jsonify({
+        "success": True,
+        "message": "Uploaded {} to {} and started printing {} part{}".format(
+            filename, printer_name, len(queue_items),
+            "" if len(queue_items) == 1 else "s"
+        ),
+        "queue_ids": queue_ids,
+        "queue_job_id": queue_job_id,
+        "printer_id": printer_id,
+        "wo_id": queue_items[0]["wo_id"],
+    })
+
+
 # ------------------------------------------------------------------
 # Work Orders
 # ------------------------------------------------------------------
@@ -185,88 +324,15 @@ def api_print_queue_item(queue_id):
     - file: the gcode file
     - operator_initials: required traceability field
     """
-    qi = _wo_db.get_queue_item(queue_id)
-    if not qi:
-        return jsonify({"error": "Queue item not found"}), 404
-    if qi["status"] not in ("queued", "failed"):
-        return jsonify({
-            "error": "Item is not in a printable state (status: {})"
-                     .format(qi["status"])
-        }), 400
+    return _print_queue_items([queue_id])
 
-    printer_id = request.form.get("printer_id")
-    if not printer_id:
-        return jsonify({"error": "Missing printer_id"}), 400
 
-    try:
-        operator_initials = _validate_operator_initials(
-            request.form.get("operator_initials")
-        )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    client = _farm_manager.get_printer_client(printer_id)
-    if not client:
-        return jsonify({"error": "Unknown printer"}), 404
-
-    # Check printer is idle
-    status = _farm_manager.get_printer_status(printer_id)
-    if status.get("status") not in ("idle", "finished"):
-        return jsonify({
-            "error": "Printer is not idle (status: {})"
-                     .format(status.get("status", "unknown"))
-        }), 400
-
-    if "file" not in request.files:
-        return jsonify({"error": "No gcode file provided"}), 400
-
-    uploaded = request.files["file"]
-    if not uploaded.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
-    filename = secure_filename(uploaded.filename)
-    if not filename:
-        return jsonify({"error": "Invalid filename"}), 400
-
-    ext = os.path.splitext(filename)[1].lower()
-    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
-        return jsonify({"error": "Unsupported file type: {}".format(ext)}), 400
-
-    file_data = uploaded.read()
-
-    # Upload to printer with print-after-upload
-    _farm_manager.record_pending_print_start(
-        printer_id, filename, operator_initials
-    )
-
-    try:
-        result = client.upload_gcode(file_data, filename, print_after=True)
-    except Exception:
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-        raise
-
-    if not result.get("success"):
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-        return jsonify({
-            "error": "Upload failed: {}".format(result.get("error", "unknown"))
-        }), 500
-
-    # Re-queue failed items first so assign works
-    if qi["status"] == "failed":
-        _wo_db.requeue_item(queue_id)
-
-    # Update queue item
-    printer_name = status.get("name", printer_id)
-    _wo_db.assign_queue_item(queue_id, printer_id, printer_name, filename)
-
-    return jsonify({
-        "success": True,
-        "message": "Uploaded {} to {} and started printing".format(
-            filename, printer_name),
-        "queue_id": queue_id,
-        "printer_id": printer_id,
-    })
+@work_order_api.route("/api/queue/print", methods=["POST"])
+def api_print_queue_items():
+    """Assign one or more selected queue items to a single print job."""
+    queue_ids = request.form.getlist("queue_ids")
+    if not queue_ids:
+        single = request.form.get("queue_id")
+        if single:
+            queue_ids = [single]
+    return _print_queue_items(queue_ids)

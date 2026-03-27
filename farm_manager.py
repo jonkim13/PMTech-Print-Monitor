@@ -479,6 +479,14 @@ class PrintFarmManager:
                 operator_initials=operator_initials,
             )
             self._active_job_ids[printer_id] = job_id
+            if self.work_order_db:
+                queue_job = self.work_order_db.find_printing_queue_job_by_filename(
+                    printer_id, file_name
+                )
+                if queue_job:
+                    self.work_order_db.link_print_job_to_queue_job(
+                        queue_job["queue_job_id"], job_id
+                    )
             if operator_initials:
                 self.clear_pending_print_start(
                     printer_id, file_name, operator_initials
@@ -615,6 +623,17 @@ class PrintFarmManager:
         if not filename:
             return
         try:
+            queue_job = self.work_order_db.find_printing_queue_job_by_filename(
+                printer_id, filename)
+            if queue_job:
+                self.work_order_db.complete_queue_job(
+                    queue_job["queue_job_id"],
+                    print_job_id=queue_job.get("print_job_id"),
+                )
+                print(f"[WORKORDER] Queue job #{queue_job['queue_job_id']} "
+                      f"completed")
+                return
+
             qi = self.work_order_db.find_printing_item_by_filename(
                 printer_id, filename)
             if qi:
@@ -637,6 +656,14 @@ class PrintFarmManager:
         if not filename:
             return
         try:
+            queue_job = self.work_order_db.find_printing_queue_job_by_filename(
+                printer_id, filename)
+            if queue_job:
+                self.work_order_db.fail_queue_job(queue_job["queue_job_id"])
+                print(f"[WORKORDER] Queue job #{queue_job['queue_job_id']} "
+                      f"failed")
+                return
+
             qi = self.work_order_db.find_printing_item_by_filename(
                 printer_id, filename)
             if qi:

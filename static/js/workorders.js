@@ -4,6 +4,8 @@
 
 var _woLineItemCounter = 0;
 var _woDetailId = null;
+var _woDetailQueueItems = [];
+var _woSelectedQueueIds = {};
 
 function loadWorkOrdersPage() {
     loadQueue();
@@ -35,6 +37,12 @@ function switchWoTab(tab) {
     if (panel) {
         panel.classList.add('active');
         if (tab === 'detail') panel.style.display = '';
+    }
+
+    if (tab !== 'detail') {
+        _woDetailQueueItems = [];
+        _woSelectedQueueIds = {};
+        updateWoSelectionToolbar();
     }
 
     if (tab === 'queue') { loadQueue(); loadQueueStats(); }
@@ -93,7 +101,7 @@ async function loadQueue() {
                 '<td>' + (idx + 1) + '</td>' +
                 '<td><a href="#" onclick="viewWorkOrder(\'' + escapeHtml(qi.wo_id) + '\');return false;" class="wo-link">' + escapeHtml(qi.wo_id) + '</a></td>' +
                 '<td>' + escapeHtml(qi.customer_name) + '</td>' +
-                '<td>' + escapeHtml(qi.part_name) + '</td>' +
+                '<td>' + escapeHtml(qi.part_name) + formatQueueJobSummary(qi) + '</td>' +
                 '<td>' + escapeHtml(qi.material) + '</td>' +
                 '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
                 '<td><span class="queue-status ' + statusClass + '">' + escapeHtml(qi.status) + '</span></td>' +
@@ -118,23 +126,165 @@ function getQueueStatusClass(status) {
     return map[status] || '';
 }
 
+function formatQueueJobSummary(qi) {
+    if (!qi || !qi.job_part_count || qi.job_part_count < 2) {
+        return '';
+    }
+
+    var summary = 'Job: ' + qi.job_part_count + ' parts';
+    if (qi.job_part_names) {
+        summary += ' - ' + qi.job_part_names;
+    }
+
+    return '<div style="font-size:10px;color:var(--text-secondary);margin-top:2px;">' +
+        escapeHtml(summary) +
+        '</div>';
+}
+
+function getPrintableQueueItems() {
+    return (_woDetailQueueItems || []).filter(function(qi) {
+        return qi.status === 'queued' || qi.status === 'failed';
+    });
+}
+
+function syncWoSelectionCheckboxes() {
+    document.querySelectorAll('.wo-queue-select').forEach(function(input) {
+        var queueId = input.getAttribute('data-queue-id');
+        input.checked = !!_woSelectedQueueIds[queueId];
+    });
+}
+
+function updateWoSelectionToolbar() {
+    var bar = document.getElementById('woDetailSelectionBar');
+    var text = document.getElementById('woDetailSelectionText');
+    var btn = document.getElementById('woPrintSelectedBtn');
+    var clearBtn = document.getElementById('woClearSelectedBtn');
+    var selectAll = document.getElementById('woSelectAllParts');
+    if (!bar || !text || !btn || !clearBtn) {
+        return;
+    }
+
+    var printable = getPrintableQueueItems();
+    var selectedIds = Object.keys(_woSelectedQueueIds);
+
+    if (printable.length === 0) {
+        bar.style.display = 'none';
+        text.textContent = '0 selected';
+        btn.disabled = true;
+        clearBtn.disabled = true;
+        if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+            selectAll.disabled = true;
+        }
+        return;
+    }
+
+    bar.style.display = '';
+    text.textContent = selectedIds.length + ' selected';
+    btn.disabled = selectedIds.length === 0;
+    clearBtn.disabled = selectedIds.length === 0;
+
+    if (selectAll) {
+        selectAll.disabled = false;
+        selectAll.checked = selectedIds.length > 0 &&
+            selectedIds.length === printable.length;
+        selectAll.indeterminate = selectedIds.length > 0 &&
+            selectedIds.length < printable.length;
+    }
+}
+
+function clearWoSelection() {
+    _woSelectedQueueIds = {};
+    syncWoSelectionCheckboxes();
+    updateWoSelectionToolbar();
+}
+
+function toggleWoQueueSelection(queueId, checked) {
+    var key = String(queueId);
+    if (checked) {
+        _woSelectedQueueIds[key] = true;
+    } else {
+        delete _woSelectedQueueIds[key];
+    }
+    updateWoSelectionToolbar();
+}
+
+function toggleAllWoQueueSelections(checked) {
+    if (!checked) {
+        clearWoSelection();
+        return;
+    }
+
+    _woSelectedQueueIds = {};
+    getPrintableQueueItems().forEach(function(qi) {
+        _woSelectedQueueIds[String(qi.queue_id)] = true;
+    });
+    syncWoSelectionCheckboxes();
+    updateWoSelectionToolbar();
+}
+
+function printSelectedWoParts() {
+    var queueIds = Object.keys(_woSelectedQueueIds).map(function(id) {
+        return parseInt(id, 10);
+    }).filter(function(id) {
+        return !isNaN(id);
+    });
+
+    if (queueIds.length === 0) {
+        showToast('Select at least one part to print', 'error');
+        return;
+    }
+
+    showQueuePrintModal(queueIds);
+}
+
 // ============================================================
 // Print from Queue Modal
 // ============================================================
 async function showQueuePrintModal(queueId) {
     var modal = document.getElementById('queuePrintModal');
-    modal.dataset.queueId = queueId;
+    var queueIds = Array.isArray(queueId) ? queueId.slice() : [queueId];
+    modal.dataset.queueIds = queueIds.join(',');
+    document.getElementById('queuePrintInfo').innerHTML = '';
 
     // Load queue item info
     try {
         var items = await (await fetch('/api/queue')).json();
-        var qi = items.find(function(i) { return i.queue_id === queueId; });
-        if (qi) {
-            document.getElementById('queuePrintInfo').innerHTML =
-                '<strong>' + escapeHtml(qi.part_name) + '</strong> (' +
-                qi.sequence_number + '/' + qi.total_quantity + ') — ' +
-                escapeHtml(qi.material) + '<br>Customer: ' +
-                escapeHtml(qi.customer_name) + ' | WO: ' + escapeHtml(qi.wo_id);
+        var selected = queueIds.map(function(id) {
+            return items.find(function(item) { return item.queue_id === id; });
+        }).filter(function(item) {
+            return !!item;
+        });
+
+        if (selected.length) {
+            var first = selected[0];
+            var partLabels = selected.map(function(qi) {
+                return qi.part_name + ' (' +
+                    qi.sequence_number + '/' + qi.total_quantity + ')';
+            });
+            var materials = {};
+            selected.forEach(function(qi) {
+                materials[qi.material] = true;
+            });
+
+            var infoHtml = '<strong>' +
+                escapeHtml(selected.length + ' selected part' +
+                    (selected.length === 1 ? '' : 's')) +
+                '</strong><br>' +
+                escapeHtml(partLabels.join(', ')) + '<br>Customer: ' +
+                escapeHtml(first.customer_name) + ' | WO: ' +
+                escapeHtml(first.wo_id);
+
+            var materialList = Object.keys(materials);
+            if (materialList.length === 1) {
+                infoHtml += ' | Material: ' + escapeHtml(materialList[0]);
+            } else if (materialList.length > 1) {
+                infoHtml += '<br>Materials: ' +
+                    escapeHtml(materialList.join(', '));
+            }
+
+            document.getElementById('queuePrintInfo').innerHTML = infoHtml;
         }
     } catch (e) { /* ignore */ }
 
@@ -169,12 +319,19 @@ async function showQueuePrintModal(queueId) {
 }
 
 async function submitQueuePrint() {
-    var queueId = document.getElementById('queuePrintModal').dataset.queueId;
+    var queueIds = (document.getElementById('queuePrintModal').dataset.queueIds || '')
+        .split(',')
+        .map(function(value) { return value.trim(); })
+        .filter(function(value) { return !!value; });
     var printerId = document.getElementById('queuePrintPrinter').value;
     var fileInput = document.getElementById('queuePrintFile');
     var operatorInput = document.getElementById('queuePrintOperatorInitials');
     var operatorInitials = operatorInput.value.trim();
 
+    if (!queueIds.length) {
+        showToast('Please select at least one part', 'error');
+        return;
+    }
     if (!printerId) {
         showToast('Please select a printer', 'error');
         return;
@@ -198,8 +355,11 @@ async function submitQueuePrint() {
         formData.append('printer_id', printerId);
         formData.append('file', fileInput.files[0]);
         formData.append('operator_initials', operatorInitials);
+        queueIds.forEach(function(queueId) {
+            formData.append('queue_ids', queueId);
+        });
 
-        var resp = await fetch('/api/queue/' + queueId + '/print', {
+        var resp = await fetch('/api/queue/print', {
             method: 'POST',
             body: formData
         });
@@ -208,6 +368,13 @@ async function submitQueuePrint() {
         if (result.success) {
             showToast(result.message || 'Print started');
             hideModal('queuePrintModal');
+            clearWoSelection();
+            if (_woDetailId) {
+                var detailPanel = document.getElementById('woPanel-detail');
+                if (detailPanel && detailPanel.classList.contains('active')) {
+                    viewWorkOrder(_woDetailId);
+                }
+            }
             loadQueue();
             loadQueueStats();
         } else {
@@ -231,6 +398,12 @@ async function requeueItem(queueId) {
         var result = await resp.json();
         if (result.success) {
             showToast('Item re-queued');
+            if (_woDetailId) {
+                var detailPanel = document.getElementById('woPanel-detail');
+                if (detailPanel && detailPanel.classList.contains('active')) {
+                    viewWorkOrder(_woDetailId);
+                }
+            }
             loadQueue();
             loadQueueStats();
         } else {
@@ -323,6 +496,8 @@ async function cancelWorkOrder(woId) {
 // ============================================================
 async function viewWorkOrder(woId) {
     _woDetailId = woId;
+    _woDetailQueueItems = [];
+    _woSelectedQueueIds = {};
 
     // Hide all wo panels, show detail
     var panels = ['queue', 'orders', 'create'];
@@ -346,6 +521,7 @@ async function viewWorkOrder(woId) {
         if (wo.error) {
             document.getElementById('woDetailHeader').innerHTML =
                 '<div class="events-empty">' + escapeHtml(wo.error) + '</div>';
+            updateWoSelectionToolbar();
             return;
         }
 
@@ -366,16 +542,22 @@ async function viewWorkOrder(woId) {
             '</div>';
 
         var queueItems = wo.queue_items || [];
+        _woDetailQueueItems = queueItems;
         var body = document.getElementById('woDetailBody');
 
         if (queueItems.length === 0) {
-            body.innerHTML = '<tr><td colspan="7" class="table-empty">No queue items</td></tr>';
+            body.innerHTML = '<tr><td colspan="8" class="table-empty">No queue items</td></tr>';
+            updateWoSelectionToolbar();
             return;
         }
 
         body.innerHTML = queueItems.map(function(qi) {
             var sc = getQueueStatusClass(qi.status);
             var actions = '';
+            var canSelect = qi.status === 'queued' || qi.status === 'failed';
+            var selector = canSelect
+                ? '<input type="checkbox" class="wo-queue-select" data-queue-id="' + qi.queue_id + '" onchange="toggleWoQueueSelection(' + qi.queue_id + ', this.checked)">'
+                : '';
             if (qi.status === 'queued') {
                 actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>';
             } else if (qi.status === 'failed') {
@@ -384,7 +566,8 @@ async function viewWorkOrder(woId) {
             }
 
             return '<tr>' +
-                '<td>' + escapeHtml(qi.part_name) + '</td>' +
+                '<td>' + selector + '</td>' +
+                '<td>' + escapeHtml(qi.part_name) + formatQueueJobSummary(qi) + '</td>' +
                 '<td>' + escapeHtml(qi.material) + '</td>' +
                 '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
                 '<td><span class="queue-status ' + sc + '">' + escapeHtml(qi.status) + '</span></td>' +
@@ -393,9 +576,13 @@ async function viewWorkOrder(woId) {
                 '<td>' + actions + '</td>' +
                 '</tr>';
         }).join('');
+        updateWoSelectionToolbar();
     } catch (e) {
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="events-empty">Error loading work order</div>';
+        _woDetailQueueItems = [];
+        _woSelectedQueueIds = {};
+        updateWoSelectionToolbar();
     }
 }
 

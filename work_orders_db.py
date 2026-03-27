@@ -24,6 +24,32 @@ class WorkOrderDB:
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    @staticmethod
+    def _add_column_if_missing(conn, table: str,
+                               column: str, col_def: str) -> None:
+        """Add a column if it does not already exist."""
+        cursor = conn.execute("PRAGMA table_info({})".format(table))
+        columns = [row[1] for row in cursor.fetchall()]
+        if column not in columns:
+            conn.execute(
+                "ALTER TABLE {} ADD COLUMN {} {}".format(
+                    table, column, col_def)
+            )
+            conn.commit()
+
+    @staticmethod
+    def _normalize_queue_ids(queue_ids) -> list:
+        """Normalize a sequence of queue ids into unique ints."""
+        result = []
+        seen = set()
+        for raw_id in queue_ids or []:
+            queue_id = int(raw_id)
+            if queue_id in seen:
+                continue
+            seen.add(queue_id)
+            result.append(queue_id)
+        return result
+
     def _init_db(self):
         conn = self._get_conn()
         conn.executescript("""
@@ -45,10 +71,25 @@ class WorkOrderDB:
                 FOREIGN KEY (wo_id) REFERENCES work_orders(wo_id)
             );
 
+            CREATE TABLE IF NOT EXISTS queue_jobs (
+                queue_job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wo_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'printing',
+                assigned_printer_id TEXT,
+                assigned_printer_name TEXT,
+                gcode_file TEXT,
+                print_job_id INTEGER,
+                created_at TEXT NOT NULL,
+                assigned_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (wo_id) REFERENCES work_orders(wo_id)
+            );
+
             CREATE TABLE IF NOT EXISTS queue_items (
                 queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item_id INTEGER NOT NULL,
                 wo_id TEXT NOT NULL,
+                queue_job_id INTEGER,
                 part_name TEXT NOT NULL,
                 material TEXT NOT NULL,
                 customer_name TEXT NOT NULL,
@@ -64,7 +105,8 @@ class WorkOrderDB:
                 started_at TEXT,
                 completed_at TEXT,
                 FOREIGN KEY (item_id) REFERENCES line_items(item_id),
-                FOREIGN KEY (wo_id) REFERENCES work_orders(wo_id)
+                FOREIGN KEY (wo_id) REFERENCES work_orders(wo_id),
+                FOREIGN KEY (queue_job_id) REFERENCES queue_jobs(queue_job_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_queue_status
@@ -73,9 +115,19 @@ class WorkOrderDB:
                 ON queue_items(wo_id);
             CREATE INDEX IF NOT EXISTS idx_queue_printer
                 ON queue_items(assigned_printer_id);
+            CREATE INDEX IF NOT EXISTS idx_queue_job
+                ON queue_items(queue_job_id);
+            CREATE INDEX IF NOT EXISTS idx_queue_jobs_status
+                ON queue_jobs(status);
+            CREATE INDEX IF NOT EXISTS idx_queue_jobs_printer
+                ON queue_jobs(assigned_printer_id);
             CREATE INDEX IF NOT EXISTS idx_wo_status
                 ON work_orders(status);
         """)
+        self._add_column_if_missing(
+            conn, "queue_items", "queue_job_id",
+            "INTEGER"
+        )
         conn.commit()
         conn.close()
 
@@ -167,11 +219,15 @@ class WorkOrderDB:
 
         # Queue items
         qi_rows = conn.execute(
-            "SELECT * FROM queue_items WHERE wo_id = ? "
-            "ORDER BY item_id, sequence_number",
+            "SELECT qi.*, qj.status AS queue_job_status "
+            "FROM queue_items qi "
+            "LEFT JOIN queue_jobs qj ON qi.queue_job_id = qj.queue_job_id "
+            "WHERE qi.wo_id = ? "
+            "ORDER BY qi.item_id, qi.sequence_number",
             (wo_id,)
         ).fetchall()
         result["queue_items"] = [dict(r) for r in qi_rows]
+        self._attach_queue_job_metadata(conn, result["queue_items"])
 
         # Counts
         total = len(result["queue_items"])
@@ -255,21 +311,28 @@ class WorkOrderDB:
                   limit: int = 200, offset: int = 0) -> list:
         """Get the production queue, ordered FIFO by queued_at."""
         conn = self._get_conn()
-        query = "SELECT * FROM queue_items WHERE 1=1"
+        query = (
+            "SELECT qi.*, qj.status AS queue_job_status "
+            "FROM queue_items qi "
+            "LEFT JOIN queue_jobs qj ON qi.queue_job_id = qj.queue_job_id "
+            "WHERE 1=1"
+        )
         params = []  # type: list
         if status:
-            query += " AND status = ?"
+            query += " AND qi.status = ?"
             params.append(status)
         else:
             # Exclude cancelled by default
-            query += " AND status != 'cancelled'"
-        query += " ORDER BY queued_at ASC, queue_id ASC"
+            query += " AND qi.status != 'cancelled'"
+        query += " ORDER BY qi.queued_at ASC, qi.queue_id ASC"
         query += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
         rows = conn.execute(query, params).fetchall()
+        items = [dict(r) for r in rows]
+        self._attach_queue_job_metadata(conn, items)
         conn.close()
-        return [dict(r) for r in rows]
+        return items
 
     def get_queue_item(self, queue_id: int) -> Optional[dict]:
         """Get a single queue item."""
@@ -281,33 +344,142 @@ class WorkOrderDB:
         conn.close()
         return dict(row) if row else None
 
+    def get_queue_items(self, queue_ids) -> list:
+        """Get multiple queue items in the same order as requested."""
+        conn = self._get_conn()
+        items = self._get_queue_items_by_ids(conn, queue_ids)
+        conn.close()
+        return items
+
+    def _get_queue_items_by_ids(self, conn, queue_ids) -> list:
+        """Fetch queue items by id using an existing connection."""
+        queue_ids = self._normalize_queue_ids(queue_ids)
+        if not queue_ids:
+            return []
+
+        placeholders = ",".join("?" for _ in queue_ids)
+        rows = conn.execute("""
+            SELECT qi.*, qj.status AS queue_job_status
+            FROM queue_items qi
+            LEFT JOIN queue_jobs qj ON qi.queue_job_id = qj.queue_job_id
+            WHERE qi.queue_id IN ({})
+        """.format(placeholders), queue_ids).fetchall()
+
+        items = [dict(r) for r in rows]
+        self._attach_queue_job_metadata(conn, items)
+        items_by_id = {item["queue_id"]: item for item in items}
+        return [items_by_id[qid] for qid in queue_ids if qid in items_by_id]
+
+    def _attach_queue_job_metadata(self, conn, queue_items: List[dict]) -> None:
+        """Attach grouped queue-job summary data to queue items."""
+        queue_job_ids = sorted({
+            item.get("queue_job_id") for item in queue_items
+            if item.get("queue_job_id")
+        })
+        if not queue_job_ids:
+            return
+
+        placeholders = ",".join("?" for _ in queue_job_ids)
+        rows = conn.execute("""
+            SELECT queue_job_id,
+                   COUNT(*) AS job_part_count,
+                   GROUP_CONCAT(part_name, ', ') AS job_part_names
+            FROM queue_items
+            WHERE queue_job_id IN ({})
+            GROUP BY queue_job_id
+        """.format(placeholders), queue_job_ids).fetchall()
+        summaries = {row["queue_job_id"]: dict(row) for row in rows}
+
+        for item in queue_items:
+            summary = summaries.get(item.get("queue_job_id"))
+            if summary:
+                item["job_part_count"] = summary["job_part_count"]
+                item["job_part_names"] = summary["job_part_names"]
+
     def assign_queue_item(self, queue_id: int, printer_id: str,
                           printer_name: str,
                           gcode_file: str) -> bool:
         """Mark a queue item as assigned to a printer."""
+        queue_job_id = self.assign_queue_items(
+            [queue_id], printer_id, printer_name, gcode_file)
+        return queue_job_id is not None
+
+    def assign_queue_items(self, queue_ids, printer_id: str,
+                           printer_name: str,
+                           gcode_file: str) -> Optional[int]:
+        """Assign one or more queue items to the same print job."""
+        queue_ids = self._normalize_queue_ids(queue_ids)
+        if not queue_ids:
+            return None
+
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
+
+        items = self._get_queue_items_by_ids(conn, queue_ids)
+        if len(items) != len(queue_ids):
+            conn.close()
+            return None
+
+        wo_ids = {item["wo_id"] for item in items}
+        if len(wo_ids) != 1:
+            conn.close()
+            return None
+
+        if any(item["status"] not in ("queued", "failed") for item in items):
+            conn.close()
+            return None
+
+        placeholders = ",".join("?" for _ in queue_ids)
+
+        cursor = conn.execute("""
+            INSERT INTO queue_jobs
+                (wo_id, status, assigned_printer_id, assigned_printer_name,
+                 gcode_file, created_at, assigned_at)
+            VALUES (?, 'printing', ?, ?, ?, ?, ?)
+        """, (items[0]["wo_id"], printer_id, printer_name,
+              gcode_file, now, now))
+        queue_job_id = cursor.lastrowid
+
+        conn.execute("""
+            UPDATE queue_items
+            SET status = 'queued',
+                queue_job_id = NULL,
+                assigned_printer_id = NULL,
+                assigned_printer_name = NULL,
+                gcode_file = NULL,
+                print_job_id = NULL,
+                assigned_at = NULL,
+                started_at = NULL,
+                completed_at = NULL
+            WHERE queue_id IN ({}) AND status = 'failed'
+        """.format(placeholders), queue_ids)
+
         cursor = conn.execute("""
             UPDATE queue_items
             SET status = 'printing',
+                queue_job_id = ?,
                 assigned_printer_id = ?,
                 assigned_printer_name = ?,
                 gcode_file = ?,
+                print_job_id = NULL,
                 assigned_at = ?,
-                started_at = ?
-            WHERE queue_id = ? AND status IN ('queued', 'assigned')
-        """, (printer_id, printer_name, gcode_file, now, now, queue_id))
-        conn.commit()
-        changed = cursor.rowcount > 0
+                started_at = ?,
+                completed_at = NULL
+            WHERE queue_id IN ({}) AND status IN ('queued', 'assigned')
+        """.format(placeholders),
+                              [queue_job_id, printer_id, printer_name,
+                               gcode_file, now, now] + queue_ids)
 
+        changed = cursor.rowcount == len(queue_ids)
         if changed:
-            # Update work order to in_progress
-            qi = self.get_queue_item(queue_id)
-            if qi:
-                self._update_wo_status_from_items(conn, qi["wo_id"])
+            self._update_wo_status_from_items(conn, items[0]["wo_id"])
+            conn.commit()
+        else:
+            conn.rollback()
+            queue_job_id = None
 
         conn.close()
-        return changed
+        return queue_job_id
 
     def complete_queue_item(self, queue_id: int,
                             print_job_id: Optional[int] = None) -> bool:
@@ -352,6 +524,7 @@ class WorkOrderDB:
         cursor = conn.execute("""
             UPDATE queue_items
             SET status = 'queued',
+                queue_job_id = NULL,
                 assigned_printer_id = NULL,
                 assigned_printer_name = NULL,
                 gcode_file = NULL,
@@ -365,6 +538,31 @@ class WorkOrderDB:
         changed = cursor.rowcount > 0
         conn.close()
         return changed
+
+    def find_printing_queue_job_by_filename(self, printer_id: str,
+                                            filename: str) -> Optional[dict]:
+        """Find the active grouped queue job for a printer/filename."""
+        conn = self._get_conn()
+        row = conn.execute("""
+            SELECT * FROM queue_jobs
+            WHERE assigned_printer_id = ?
+              AND gcode_file = ?
+              AND status = 'printing'
+            ORDER BY queue_job_id DESC LIMIT 1
+        """, (printer_id, filename)).fetchone()
+
+        if not row and filename:
+            bare = filename.rsplit("/", 1)[-1] if "/" in filename else filename
+            row = conn.execute("""
+                SELECT * FROM queue_jobs
+                WHERE assigned_printer_id = ?
+                  AND (gcode_file = ? OR gcode_file LIKE ?)
+                  AND status = 'printing'
+                ORDER BY queue_job_id DESC LIMIT 1
+            """, (printer_id, bare, "%" + bare)).fetchone()
+
+        conn.close()
+        return dict(row) if row else None
 
     def find_printing_item_by_filename(self, printer_id: str,
                                        filename: str) -> Optional[dict]:
@@ -407,6 +605,83 @@ class WorkOrderDB:
         """, (print_job_id, queue_id))
         conn.commit()
         conn.close()
+
+    def link_print_job_to_queue_job(self, queue_job_id: int,
+                                    print_job_id: int) -> None:
+        """Link a production log job id to all items in a grouped queue job."""
+        conn = self._get_conn()
+        conn.execute("""
+            UPDATE queue_jobs
+            SET print_job_id = ?
+            WHERE queue_job_id = ?
+        """, (print_job_id, queue_job_id))
+        conn.execute("""
+            UPDATE queue_items
+            SET print_job_id = ?
+            WHERE queue_job_id = ?
+        """, (print_job_id, queue_job_id))
+        conn.commit()
+        conn.close()
+
+    def complete_queue_job(self, queue_job_id: int,
+                           print_job_id: Optional[int] = None) -> bool:
+        """Mark all queue items in a grouped job as completed."""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        job = conn.execute(
+            "SELECT wo_id FROM queue_jobs WHERE queue_job_id = ?",
+            (queue_job_id,)
+        ).fetchone()
+        if not job:
+            conn.close()
+            return False
+
+        cursor = conn.execute("""
+            UPDATE queue_items
+            SET status = 'completed',
+                completed_at = ?,
+                print_job_id = COALESCE(?, print_job_id)
+            WHERE queue_job_id = ? AND status = 'printing'
+        """, (now, print_job_id, queue_job_id))
+        changed = cursor.rowcount > 0
+
+        conn.execute("""
+            UPDATE queue_jobs
+            SET status = 'completed',
+                completed_at = ?,
+                print_job_id = COALESCE(?, print_job_id)
+            WHERE queue_job_id = ?
+        """, (now, print_job_id, queue_job_id))
+
+        if changed:
+            self._update_wo_status_from_items(conn, job["wo_id"])
+
+        conn.commit()
+        conn.close()
+        return changed
+
+    def fail_queue_job(self, queue_job_id: int) -> bool:
+        """Mark all queue items in a grouped job as failed."""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        cursor = conn.execute("""
+            UPDATE queue_items
+            SET status = 'failed',
+                completed_at = ?
+            WHERE queue_job_id = ? AND status = 'printing'
+        """, (now, queue_job_id))
+        changed = cursor.rowcount > 0
+
+        conn.execute("""
+            UPDATE queue_jobs
+            SET status = 'failed',
+                completed_at = ?
+            WHERE queue_job_id = ?
+        """, (now, queue_job_id))
+
+        conn.commit()
+        conn.close()
+        return changed
 
     def _update_wo_status_from_items(self, conn, wo_id: str):
         """Auto-update work order status based on queue items."""

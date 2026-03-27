@@ -49,15 +49,14 @@ body {
 }
 
 .sidebar-brand {
-    padding: 20px 20px 16px;
+    padding: 16px 12px 12px;
     border-bottom: 1px solid var(--border);
+    line-height: 0;
 }
 
 .sidebar-brand-logo {
     display: block;
-    max-width: 100%;
-    max-height: 38px;
-    width: auto;
+    width: 100%;
     height: auto;
 }
 

@@ -61,7 +61,7 @@ body {
     max-width: none;
     width: 100%;
     height: auto;
-    transform: scale(1.12);
+    transform: scale(1.0);
     transform-origin: center;
 }
 

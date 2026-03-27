@@ -176,6 +176,8 @@ def api_printer_upload(printer_id):
         )
 
     status_code = 200 if result.get("success") else 500
+    if result.get("error_type") == "upload_timeout":
+        status_code = 504
     return jsonify(result), status_code
 
 

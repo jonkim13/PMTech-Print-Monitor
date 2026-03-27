@@ -227,7 +227,7 @@ async function submitUpload() {
             showToast(`Uploaded ${file.name} successfully`);
             hideModal('uploadModal');
         } else {
-            showToast(`Upload failed: ${result.error || 'Unknown error'}`, 'error');
+            showToast(formatUploadError(result, resp.status), 'error');
         }
     } catch (e) {
         showToast(`Upload error: ${e.message}`, 'error');
@@ -235,6 +235,19 @@ async function submitUpload() {
         btn.textContent = 'Upload';
         btn.disabled = false;
     }
+}
+
+function formatUploadError(result, statusCode) {
+    if(result && result.error_type === 'upload_timeout') {
+        return result.error || 'Upload timed out while sending the file to the printer';
+    }
+    if(statusCode === 400) {
+        return `Invalid upload: ${result.error || 'Check the selected file and try again.'}`;
+    }
+    if(result && result.error_type === 'printer_api_error') {
+        return result.error || 'Printer upload failed';
+    }
+    return `Upload failed: ${result && result.error ? result.error : 'Unknown error'}`;
 }
 
 async function stopPrint(printerId, printerName) {

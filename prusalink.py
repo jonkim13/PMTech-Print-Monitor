@@ -19,6 +19,7 @@ Authentication:
 """
 
 from datetime import datetime, timezone
+import time
 from typing import Optional
 
 import requests
@@ -39,6 +40,7 @@ class PrusaLinkClient:
         self.model = model
         self.base_url = f"http://{self.host}"
         self.timeout = 10
+        self.upload_timeout = (10, 300)
 
         # PrusaLink uses HTTP Digest auth, but some firmware versions
         # use Basic auth. We try Digest first, fall back to Basic.
@@ -83,16 +85,17 @@ class PrusaLinkClient:
         """
         url = f"{self.base_url}{endpoint}"
         req_method = getattr(requests, method.lower())
+        timeout = kwargs.pop("timeout", self.timeout)
 
         # Try primary auth method
         resp = req_method(url, auth=self._get_auth(),
-                          timeout=self.timeout, **kwargs)
+                          timeout=timeout, **kwargs)
 
         # If Digest fails with 401, try Basic
         if resp.status_code == 401 and not self.use_basic:
             self.use_basic = True
             resp = req_method(url, auth=self._get_auth(),
-                              timeout=self.timeout, **kwargs)
+                              timeout=timeout, **kwargs)
 
         resp.raise_for_status()
         return resp
@@ -193,6 +196,12 @@ class PrusaLinkClient:
             Overwrite: ?1 (to overwrite existing files)
             Content-Type: application/octet-stream
         """
+        file_size = len(file_data) if file_data is not None else 0
+        start_time = time.monotonic()
+        print(f"[UPLOAD] Starting upload to {self.printer_id}: "
+              f"file={filename} size={file_size}B "
+              f"print_after={'yes' if print_after else 'no'}")
+
         try:
             endpoint = f"/api/v1/files/usb/{filename}"
             headers = {
@@ -207,10 +216,59 @@ class PrusaLinkClient:
                 method="PUT",
                 data=file_data,
                 headers=headers,
+                timeout=self.upload_timeout,
             )
+            elapsed = time.monotonic() - start_time
+            print(f"[UPLOAD] Upload complete on {self.printer_id}: "
+                  f"file={filename} size={file_size}B "
+                  f"status={resp.status_code} elapsed={elapsed:.1f}s")
             return {"success": True, "status_code": resp.status_code}
+        except requests.exceptions.Timeout as e:
+            elapsed = time.monotonic() - start_time
+            print(f"[UPLOAD] Timeout on {self.printer_id}: "
+                  f"file={filename} size={file_size}B "
+                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
+            return {
+                "success": False,
+                "error": ("Upload timed out while sending the file to the "
+                          "printer"),
+                "error_type": "upload_timeout",
+            }
+        except requests.exceptions.HTTPError as e:
+            elapsed = time.monotonic() - start_time
+            status_code = e.response.status_code if e.response else None
+            print(f"[UPLOAD] Printer API failure on {self.printer_id}: "
+                  f"file={filename} size={file_size}B "
+                  f"elapsed={elapsed:.1f}s status={status_code} "
+                  f"error={type(e).__name__}: {e}")
+            error = "Printer upload failed"
+            if status_code is not None:
+                error = f"Printer upload failed with HTTP {status_code}"
+            return {
+                "success": False,
+                "error": error,
+                "error_type": "printer_api_error",
+            }
+        except requests.exceptions.RequestException as e:
+            elapsed = time.monotonic() - start_time
+            print(f"[UPLOAD] Request failure on {self.printer_id}: "
+                  f"file={filename} size={file_size}B "
+                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
+            return {
+                "success": False,
+                "error": f"Printer upload failed: {e}",
+                "error_type": "printer_api_error",
+            }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            elapsed = time.monotonic() - start_time
+            print(f"[UPLOAD] Unexpected failure on {self.printer_id}: "
+                  f"file={filename} size={file_size}B "
+                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "upload_error",
+            }
 
     def get_job_details(self) -> dict:
         """

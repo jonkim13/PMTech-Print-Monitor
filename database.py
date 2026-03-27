@@ -449,6 +449,21 @@ class FilamentAssignmentDB:
         conn.close()
         return [dict(r) for r in rows]
 
+    def get_spool_assignments(self, spool_id: str) -> list:
+        """Get all active assignments for a spool.
+
+        Legacy data may contain duplicate active rows for the same spool_id,
+        so callers should tolerate multiple results.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM filament_assignments "
+            "WHERE spool_id = ? ORDER BY printer_id, tool_index",
+            (spool_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     def get_all_assignments(self) -> dict:
         """Return {printer_id: spool_id} for tool 0 (backward compat).
 

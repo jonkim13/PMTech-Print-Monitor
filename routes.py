@@ -62,6 +62,16 @@ def _coerce_optional_bool(value, field_name: str) -> bool:
     raise ValueError(f"'{field_name}' must be a boolean")
 
 
+def _format_assignment_location(printer_id: str, tool_index: int) -> str:
+    printer_data = (_farm_manager.printers or {}).get(printer_id, {})
+    client = printer_data.get("client")
+    printer_name = getattr(client, "name", "") if client else ""
+    printer_label = printer_name if printer_name else printer_id
+    if printer_name and printer_name != printer_id:
+        printer_label = f"{printer_name} ({printer_id})"
+    return f"{printer_label} T{tool_index + 1}"
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -344,6 +354,32 @@ def api_assign_spool(printer_id):
         return jsonify({"error": str(e)}), 400
 
     tool_index = int(data.get("tool_index", 0))
+    existing_assignments = _assignment_db.get_spool_assignments(
+        data["spool_id"]
+    )
+    conflict = next(
+        (
+            assignment for assignment in existing_assignments
+            if assignment["printer_id"] != printer_id
+            or assignment["tool_index"] != tool_index
+        ),
+        None,
+    )
+    if conflict:
+        location = _format_assignment_location(conflict["printer_id"],
+                                               conflict["tool_index"])
+        return jsonify({
+            "error": f"Spool {data['spool_id']} is already assigned to {location}"
+        }), 400
+
+    current_assignment = _assignment_db.get_assignment(
+        printer_id, tool_index=tool_index
+    )
+    if current_assignment and current_assignment.get("spool_id") == data["spool_id"]:
+        if was_dried:
+            _filament_db.update_last_dried(data["spool_id"])
+        return jsonify({"success": True})
+
     _assignment_db.assign(printer_id, data["spool_id"],
                           tool_index=tool_index)
     if was_dried:

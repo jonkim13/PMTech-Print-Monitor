@@ -351,10 +351,88 @@ function extractFilesFromStorageResponse(data) {
 // ============================================================
 // Spool Assignment (multi-tool aware)
 // ============================================================
+function getAssignedSpoolIdForTool(printer, toolIndex) {
+    if(!printer) {
+        return '';
+    }
+
+    const normalizedToolIndex = Number(toolIndex) || 0;
+    const toolCount = Number(printer.tool_count) || 1;
+    if(toolCount > 1) {
+        const entry = (printer.assigned_spools || []).find(function(assignment) {
+            return Number(assignment.tool_index) === normalizedToolIndex;
+        });
+        return (entry && entry.spool && entry.spool.id) ? String(entry.spool.id) : '';
+    }
+
+    return (normalizedToolIndex === 0 && printer.assigned_spool && printer.assigned_spool.id)
+        ? String(printer.assigned_spool.id)
+        : '';
+}
+
+function renderAssignSpoolOptions() {
+    const modal = document.getElementById('assignSpoolModal');
+    const select = document.getElementById('assignSpoolSelect');
+    const inventorySpools = Array.isArray(modal._inventorySpools) ? modal._inventorySpools : [];
+
+    if(inventorySpools.length === 0) {
+        select.innerHTML = '<option value="">No spools in inventory</option>';
+        return;
+    }
+
+    const printerId = modal.dataset.printerId;
+    const toolIndex = parseInt(document.getElementById('assignToolSelect').value, 10) || 0;
+    const printer = (printerList || []).find(function(item) {
+        return item.printer_id === printerId;
+    });
+    const currentSpoolId = getAssignedSpoolIdForTool(printer, toolIndex);
+    const assignedSpoolIds = new Set();
+
+    (printerList || []).forEach(function(item) {
+        const itemToolCount = Number(item.tool_count) || 1;
+        if(itemToolCount > 1) {
+            (item.assigned_spools || []).forEach(function(assignment) {
+                const spool = assignment.spool;
+                if(spool && spool.id) {
+                    assignedSpoolIds.add(String(spool.id));
+                }
+            });
+            return;
+        }
+
+        if(item.assigned_spool && item.assigned_spool.id) {
+            assignedSpoolIds.add(String(item.assigned_spool.id));
+        }
+    });
+
+    const availableSpools = inventorySpools.filter(function(spool) {
+        const spoolId = String(spool.id || '');
+        return spoolId && (!assignedSpoolIds.has(spoolId) || spoolId === currentSpoolId);
+    });
+
+    if(availableSpools.length === 0) {
+        select.innerHTML = '<option value="">No available spools</option>';
+        return;
+    }
+
+    select.innerHTML = '<option value="">-- Select a spool --</option>' +
+        availableSpools.map(function(spool) {
+            const spoolId = String(spool.id || '');
+            const label = escapeHtml(spoolId) + ' - '
+                + escapeHtml(spool.material || '') + ' '
+                + escapeHtml(spool.color || '') + ' ('
+                + escapeHtml(String(spool.grams || 0)) + 'g)';
+            return '<option value="' + escapeHtml(spoolId) + '">' + label + '</option>';
+        }).join('');
+
+    select.value = currentSpoolId || '';
+}
+
 async function showAssignSpoolModal(printerId, printerName) {
     document.getElementById('assignPrinterName').textContent = printerName;
     const modal = document.getElementById('assignSpoolModal');
     modal.dataset.printerId = printerId;
+    modal._inventorySpools = [];
     document.getElementById('assignWasDried').checked = false;
 
     // Find the printer to determine tool count
@@ -375,6 +453,7 @@ async function showAssignSpoolModal(printerId, printerName) {
         toolGroup.style.display = 'none';
         toolSelect.innerHTML = '<option value="0">Tool 1</option>';
     }
+    toolSelect.onchange = renderAssignSpoolOptions;
 
     const select = document.getElementById('assignSpoolSelect');
     select.innerHTML = '<option value="">Loading spools...</option>';
@@ -384,17 +463,18 @@ async function showAssignSpoolModal(printerId, printerName) {
         const resp = await fetch('/api/inventory');
         const spools = await resp.json();
 
+        if(!Array.isArray(spools)) {
+            select.innerHTML = '<option value="">Error loading spools</option>';
+            return;
+        }
+
         if(spools.length === 0) {
             select.innerHTML = '<option value="">No spools in inventory</option>';
             return;
         }
 
-        select.innerHTML = '<option value="">-- Select a spool --</option>' +
-            spools.map(function(s) {
-                var id = escapeHtml(s.id || '');
-                var label = escapeHtml(s.id) + ' - ' + escapeHtml(s.material) + ' ' + escapeHtml(s.color) + ' (' + s.grams + 'g)';
-                return '<option value="' + id + '">' + label + '</option>';
-            }).join('');
+        modal._inventorySpools = spools;
+        renderAssignSpoolOptions();
     } catch (e) {
         select.innerHTML = '<option value="">Error loading spools</option>';
     }
@@ -431,7 +511,7 @@ async function submitAssignSpool() {
             hideModal('assignSpoolModal');
             poll();
         } else {
-            showToast('Error: ' + result.error, 'error');
+            showToast(result.error || 'Assignment failed', 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');

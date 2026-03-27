@@ -49,15 +49,20 @@ body {
 }
 
 .sidebar-brand {
-    padding: 16px 12px 12px;
+    padding: 0;
     border-bottom: 1px solid var(--border);
+    background: #000;
     line-height: 0;
+    overflow: hidden;
 }
 
 .sidebar-brand-logo {
     display: block;
+    max-width: none;
     width: 100%;
     height: auto;
+    transform: scale(1.12);
+    transform-origin: center;
 }
 
 .sidebar-brand h1 {

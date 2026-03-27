@@ -44,6 +44,8 @@ class PrintFarmManager:
         self._print_start_times = {}
         # Track active production job IDs per printer
         self._active_job_ids = {}
+        # Track active work-order queue job sessions per printer
+        self._active_queue_job_ids = {}
         # Pending operator initials for UI-initiated print starts
         self._pending_print_starts = {}
 
@@ -122,6 +124,17 @@ class PrintFarmManager:
                         self._print_start_times[pid] = started
                     except (ValueError, KeyError):
                         pass
+
+        if self.work_order_db:
+            for pid in self.printers:
+                try:
+                    queue_job = self.work_order_db.get_active_queue_job_for_printer(
+                        pid
+                    )
+                except Exception:
+                    queue_job = None
+                if queue_job:
+                    self._active_queue_job_ids[pid] = queue_job["queue_job_id"]
 
         if restored:
             print(f"[STARTUP] Restored states: {restored}")
@@ -454,8 +467,12 @@ class PrintFarmManager:
                     }
 
             file_name = details.get("file_name", state["job"]["filename"])
-            operator_initials = self.get_pending_print_start(
+            pending_start = self.get_pending_print_start_entry(
                 printer_id, file_name
+            )
+            operator_initials = (
+                pending_start.get("operator_initials")
+                if pending_start else None
             )
 
             job_id = self.production_db.create_job(
@@ -480,14 +497,31 @@ class PrintFarmManager:
             )
             self._active_job_ids[printer_id] = job_id
             if self.work_order_db:
-                queue_job = self.work_order_db.find_printing_queue_job_by_filename(
-                    printer_id, file_name
+                queue_job = None
+                pending_queue_job_id = (
+                    pending_start.get("queue_job_id")
+                    if pending_start else None
                 )
+                if pending_queue_job_id:
+                    queue_job = self.work_order_db.get_queue_job(
+                        pending_queue_job_id
+                    )
+                    if queue_job and queue_job.get("status") != "printing":
+                        queue_job = None
+                if not queue_job:
+                    queue_job = self.work_order_db.find_printing_queue_job_by_filename(
+                        printer_id, file_name
+                    )
                 if queue_job:
+                    self._active_queue_job_ids[printer_id] = (
+                        queue_job["queue_job_id"]
+                    )
                     self.work_order_db.link_print_job_to_queue_job(
                         queue_job["queue_job_id"], job_id
                     )
-            if operator_initials:
+                else:
+                    self._active_queue_job_ids.pop(printer_id, None)
+            if pending_start:
                 self.clear_pending_print_start(
                     printer_id, file_name, operator_initials
                 )
@@ -620,6 +654,22 @@ class PrintFarmManager:
         if not self.work_order_db:
             return
         filename = state.get("job", {}).get("filename", "")
+        queue_job_id = self._active_queue_job_ids.pop(printer_id, None)
+        if queue_job_id:
+            try:
+                queue_job = self.work_order_db.get_queue_job(queue_job_id)
+                queued_file = self._normalize_print_filename(
+                    queue_job.get("gcode_file") if queue_job else ""
+                )
+                current_file = self._normalize_print_filename(filename)
+                if (queue_job and queue_job.get("status") == "printing"
+                        and (not queued_file or not current_file
+                             or queued_file == current_file)):
+                    if self.work_order_db.complete_queue_job(queue_job_id):
+                        print(f"[WORKORDER] Queue job #{queue_job_id} completed")
+                        return
+            except Exception as e:
+                print(f"[WORKORDER] Error completing queue job: {e}")
         if not filename:
             return
         try:
@@ -653,6 +703,22 @@ class PrintFarmManager:
         if not self.work_order_db:
             return
         filename = state.get("job", {}).get("filename", "")
+        queue_job_id = self._active_queue_job_ids.pop(printer_id, None)
+        if queue_job_id:
+            try:
+                queue_job = self.work_order_db.get_queue_job(queue_job_id)
+                queued_file = self._normalize_print_filename(
+                    queue_job.get("gcode_file") if queue_job else ""
+                )
+                current_file = self._normalize_print_filename(filename)
+                if (queue_job and queue_job.get("status") == "printing"
+                        and (not queued_file or not current_file
+                             or queued_file == current_file)):
+                    if self.work_order_db.fail_queue_job(queue_job_id):
+                        print(f"[WORKORDER] Queue job #{queue_job_id} failed")
+                        return
+            except Exception as e:
+                print(f"[WORKORDER] Error failing queue job: {e}")
         if not filename:
             return
         try:
@@ -737,18 +803,35 @@ class PrintFarmManager:
         return None
 
     def record_pending_print_start(self, printer_id: str, file_name: str,
-                                   operator_initials: str):
+                                   operator_initials: str,
+                                   queue_job_id: int = None,
+                                   job_id: int = None):
         """Store initials for a UI-initiated print until polling logs it."""
         normalized_file = self._normalize_print_filename(file_name)
         initials = str(operator_initials or "").strip()
         if not printer_id or not normalized_file or not initials:
             return
+        now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             self._prune_pending_print_starts_locked()
-            self._pending_print_starts.setdefault(printer_id, []).append({
+            entries = self._pending_print_starts.setdefault(printer_id, [])
+            for entry in reversed(entries):
+                if entry.get("file_name") != normalized_file:
+                    continue
+                if entry.get("operator_initials") != initials:
+                    continue
+                entry["created_at"] = now
+                if queue_job_id is not None:
+                    entry["queue_job_id"] = queue_job_id
+                if job_id is not None:
+                    entry["job_id"] = job_id
+                return
+            entries.append({
                 "file_name": normalized_file,
                 "operator_initials": initials,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "queue_job_id": queue_job_id,
+                "job_id": job_id,
+                "created_at": now,
             })
 
     def clear_pending_print_start(self, printer_id: str, file_name: str,
@@ -774,6 +857,13 @@ class PrintFarmManager:
 
     def get_pending_print_start(self, printer_id: str, file_name: str):
         """Read initials for the next matching polling-detected start."""
+        entry = self.get_pending_print_start_entry(printer_id, file_name)
+        if not entry:
+            return None
+        return entry.get("operator_initials")
+
+    def get_pending_print_start_entry(self, printer_id: str, file_name: str):
+        """Read pending print-start metadata for a matching file."""
         normalized_file = self._normalize_print_filename(file_name)
         if not printer_id or not normalized_file:
             return None
@@ -784,7 +874,7 @@ class PrintFarmManager:
                 entry = entries[index]
                 if entry.get("file_name") != normalized_file:
                     continue
-                return entry.get("operator_initials")
+                return dict(entry)
         return None
 
     def get_pending_events(self) -> list:

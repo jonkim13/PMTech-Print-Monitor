@@ -189,6 +189,11 @@ def _print_queue_items(queue_ids):
     updated_items = _wo_db.get_queue_items(queue_ids)
     work_order_job_id = (updated_items[0].get("job_id")
                          if updated_items else requested_job_id)
+    _farm_manager.record_pending_print_start(
+        printer_id, filename, operator_initials,
+        queue_job_id=queue_job_id,
+        job_id=work_order_job_id,
+    )
 
     return jsonify({
         "success": True,

@@ -99,6 +99,7 @@ class WorkOrderDB:
                 assigned_printer_id TEXT,
                 assigned_printer_name TEXT,
                 gcode_file TEXT,
+                operator_initials TEXT,
                 print_job_id INTEGER,
                 created_at TEXT NOT NULL,
                 assigned_at TEXT,
@@ -162,6 +163,10 @@ class WorkOrderDB:
             conn, "queue_jobs", "job_id",
             "INTEGER"
         )
+        self._add_column_if_missing(
+            conn, "queue_jobs", "operator_initials",
+            "TEXT"
+        )
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_queue_job
             ON queue_items(queue_job_id)
@@ -176,6 +181,53 @@ class WorkOrderDB:
                 CREATE INDEX IF NOT EXISTS idx_queue_jobs_job
                 ON queue_jobs(job_id)
             """)
+        conn.execute("""
+            UPDATE queue_items
+            SET job_id = (
+                SELECT qj.job_id
+                FROM queue_jobs qj
+                WHERE qj.queue_job_id = queue_items.queue_job_id
+            )
+            WHERE job_id IS NULL
+              AND queue_job_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM queue_jobs qj
+                  WHERE qj.queue_job_id = queue_items.queue_job_id
+                    AND qj.job_id IS NOT NULL
+              )
+        """)
+        conn.execute("""
+            UPDATE queue_jobs
+            SET job_id = (
+                SELECT qi.job_id
+                FROM queue_items qi
+                WHERE qi.queue_job_id = queue_jobs.queue_job_id
+                  AND qi.job_id IS NOT NULL
+                ORDER BY qi.queue_id ASC
+                LIMIT 1
+            )
+            WHERE job_id IS NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM queue_items qi
+                  WHERE qi.queue_job_id = queue_jobs.queue_job_id
+                    AND qi.job_id IS NOT NULL
+              )
+        """)
+        conn.execute("""
+            UPDATE queue_jobs
+            SET operator_initials = COALESCE(
+                operator_initials,
+                (
+                    SELECT j.operator_initials
+                    FROM jobs j
+                    WHERE j.job_id = queue_jobs.job_id
+                )
+            )
+            WHERE operator_initials IS NULL
+              AND job_id IS NOT NULL
+        """)
         conn.commit()
         conn.close()
 
@@ -202,9 +254,48 @@ class WorkOrderDB:
         """Normalize nullable aggregate fields on a job summary row."""
         job = dict(row)
         for key in ("part_count", "completed_parts", "queued_parts",
-                    "printing_parts", "failed_parts"):
+                    "printing_parts", "failed_parts",
+                    "print_session_count"):
             job[key] = int(job.get(key) or 0)
         return job
+
+    @staticmethod
+    def _derive_job_status(statuses: List[str]) -> str:
+        """Derive a stable work-order job status from child queue items."""
+        active_statuses = [status for status in statuses
+                           if status != "cancelled"]
+
+        if not active_statuses and statuses:
+            return "cancelled"
+        if active_statuses and all(status == "completed"
+                                   for status in active_statuses):
+            return "completed"
+        if any(status in ("printing", "assigned")
+               for status in active_statuses):
+            return "in_progress"
+        if any(status == "failed" for status in active_statuses):
+            non_failed = [status for status in active_statuses
+                          if status != "failed"]
+            return "failed" if not non_failed else "in_progress"
+        if any(status == "completed" for status in active_statuses):
+            return "in_progress"
+        return "open"
+
+    @staticmethod
+    def _derive_work_order_status(statuses: List[str]) -> str:
+        """Derive the work-order status from its child queue items."""
+        active_statuses = [status for status in statuses
+                           if status != "cancelled"]
+
+        if not active_statuses and statuses:
+            return "cancelled"
+        if active_statuses and all(status == "completed"
+                                   for status in active_statuses):
+            return "completed"
+        if any(status in ("printing", "assigned", "completed", "failed")
+               for status in active_statuses):
+            return "in_progress"
+        return "open"
 
     def _work_order_exists(self, conn, wo_id: str) -> bool:
         """Check whether a work order exists."""
@@ -218,6 +309,27 @@ class WorkOrderDB:
         """Fetch a single persisted work-order job summary."""
         row = conn.execute("""
             SELECT j.*,
+                   (
+                       SELECT qj.queue_job_id
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                       ORDER BY COALESCE(qj.assigned_at, qj.created_at) DESC,
+                                qj.queue_job_id DESC
+                       LIMIT 1
+                   ) AS latest_queue_job_id,
+                   (
+                       SELECT qj.status
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                       ORDER BY COALESCE(qj.assigned_at, qj.created_at) DESC,
+                                qj.queue_job_id DESC
+                       LIMIT 1
+                   ) AS latest_queue_job_status,
+                   (
+                       SELECT COUNT(*)
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                   ) AS print_session_count,
                    COUNT(qi.queue_id) AS part_count,
                    SUM(CASE WHEN qi.status = 'completed'
                             THEN 1 ELSE 0 END) AS completed_parts,
@@ -240,6 +352,27 @@ class WorkOrderDB:
         """Fetch persisted job summaries for a work order."""
         rows = conn.execute("""
             SELECT j.*,
+                   (
+                       SELECT qj.queue_job_id
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                       ORDER BY COALESCE(qj.assigned_at, qj.created_at) DESC,
+                                qj.queue_job_id DESC
+                       LIMIT 1
+                   ) AS latest_queue_job_id,
+                   (
+                       SELECT qj.status
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                       ORDER BY COALESCE(qj.assigned_at, qj.created_at) DESC,
+                                qj.queue_job_id DESC
+                       LIMIT 1
+                   ) AS latest_queue_job_status,
+                   (
+                       SELECT COUNT(*)
+                       FROM queue_jobs qj
+                       WHERE qj.job_id = j.job_id
+                   ) AS print_session_count,
                    COUNT(qi.queue_id) AS part_count,
                    SUM(CASE WHEN qi.status = 'completed'
                             THEN 1 ELSE 0 END) AS completed_parts,
@@ -295,26 +428,7 @@ class WorkOrderDB:
             return
 
         statuses = [row["status"] for row in rows]
-        active_statuses = [status for status in statuses
-                           if status != "cancelled"]
-
-        if not active_statuses and statuses:
-            new_status = "cancelled"
-        elif active_statuses and all(status == "completed"
-                                     for status in active_statuses):
-            new_status = "completed"
-        elif any(status in ("printing", "assigned")
-                 for status in active_statuses):
-            new_status = "in_progress"
-        elif any(status == "failed" for status in active_statuses):
-            non_failed = [status for status in active_statuses
-                          if status != "failed"]
-            new_status = "failed" if not non_failed else "in_progress"
-        elif any(status == "completed" for status in active_statuses):
-            new_status = "in_progress"
-        else:
-            new_status = "open"
-
+        new_status = self._derive_job_status(statuses)
         completed_at = now if new_status in ("completed", "cancelled") else None
         conn.execute("""
             UPDATE jobs
@@ -454,6 +568,55 @@ class WorkOrderDB:
         job_id = self._create_job_row(conn, wo_id)
         self._move_queue_items_to_job(conn, job_id, items)
         return job_id
+
+    def _create_queue_job_session(self, conn, wo_id: str, job_id: int,
+                                  printer_id: str, printer_name: str,
+                                  gcode_file: str,
+                                  operator_initials: Optional[str],
+                                  created_at: str) -> int:
+        """Create a printer execution session linked to one stable job."""
+        cursor = conn.execute("""
+            INSERT INTO queue_jobs
+                (wo_id, job_id, status, assigned_printer_id,
+                 assigned_printer_name, gcode_file, operator_initials,
+                 created_at, assigned_at)
+            VALUES (?, ?, 'printing', ?, ?, ?, ?, ?, ?)
+        """, (wo_id, job_id, printer_id, printer_name, gcode_file,
+              operator_initials, created_at, created_at))
+        return cursor.lastrowid
+
+    def _get_queue_job_by_id(self, conn, queue_job_id: int) -> Optional[dict]:
+        """Fetch one queue-job execution session by id."""
+        row = conn.execute("""
+            SELECT *
+            FROM queue_jobs
+            WHERE queue_job_id = ?
+        """, (queue_job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_queue_job(self, queue_job_id: int) -> Optional[dict]:
+        """Fetch one queue-job execution session by id."""
+        conn = self._get_conn()
+        try:
+            return self._get_queue_job_by_id(conn, queue_job_id)
+        finally:
+            conn.close()
+
+    def get_active_queue_job_for_printer(self, printer_id: str) -> Optional[dict]:
+        """Fetch the current printing queue-job session for a printer."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute("""
+                SELECT *
+                FROM queue_jobs
+                WHERE assigned_printer_id = ?
+                  AND status = 'printing'
+                ORDER BY queue_job_id DESC
+                LIMIT 1
+            """, (printer_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Work Orders
@@ -685,7 +848,7 @@ class WorkOrderDB:
         return [items_by_id[qid] for qid in queue_ids if qid in items_by_id]
 
     def _attach_queue_job_metadata(self, conn, queue_items: List[dict]) -> None:
-        """Attach grouped queue-job summary data to queue items."""
+        """Attach grouped queue-job session data to queue items."""
         queue_job_ids = sorted({
             item.get("queue_job_id") for item in queue_items
             if item.get("queue_job_id")
@@ -696,8 +859,8 @@ class WorkOrderDB:
         placeholders = ",".join("?" for _ in queue_job_ids)
         rows = conn.execute("""
             SELECT queue_job_id,
-                   COUNT(*) AS job_part_count,
-                   GROUP_CONCAT(part_name, ', ') AS job_part_names
+                   COUNT(*) AS queue_job_part_count,
+                   GROUP_CONCAT(part_name, ', ') AS queue_job_part_names
             FROM queue_items
             WHERE queue_job_id IN ({})
             GROUP BY queue_job_id
@@ -707,8 +870,11 @@ class WorkOrderDB:
         for item in queue_items:
             summary = summaries.get(item.get("queue_job_id"))
             if summary:
-                item["job_part_count"] = summary["job_part_count"]
-                item["job_part_names"] = summary["job_part_names"]
+                item["queue_job_part_count"] = summary["queue_job_part_count"]
+                item["queue_job_part_names"] = summary["queue_job_part_names"]
+                # Backward-compatible aliases for older frontend code.
+                item["job_part_count"] = summary["queue_job_part_count"]
+                item["job_part_names"] = summary["queue_job_part_names"]
 
     def assign_queue_item(self, queue_id: int, printer_id: str,
                           printer_name: str,
@@ -758,14 +924,16 @@ class WorkOrderDB:
 
         placeholders = ",".join("?" for _ in queue_ids)
 
-        cursor = conn.execute("""
-            INSERT INTO queue_jobs
-                (wo_id, job_id, status, assigned_printer_id,
-                 assigned_printer_name, gcode_file, created_at, assigned_at)
-            VALUES (?, ?, 'printing', ?, ?, ?, ?, ?)
-        """, (items[0]["wo_id"], work_order_job_id, printer_id,
-              printer_name, gcode_file, now, now))
-        queue_job_id = cursor.lastrowid
+        queue_job_id = self._create_queue_job_session(
+            conn,
+            items[0]["wo_id"],
+            work_order_job_id,
+            printer_id,
+            printer_name,
+            gcode_file,
+            operator_initials,
+            now,
+        )
 
         conn.execute("""
             UPDATE queue_items
@@ -928,7 +1096,7 @@ class WorkOrderDB:
 
     def find_printing_queue_job_by_filename(self, printer_id: str,
                                             filename: str) -> Optional[dict]:
-        """Find the active grouped queue job for a printer/filename."""
+        """Fallback lookup for an active queue-job session by filename."""
         conn = self._get_conn()
         row = conn.execute("""
             SELECT * FROM queue_jobs
@@ -1115,24 +1283,14 @@ class WorkOrderDB:
 
         statuses = [r["status"] for r in rows]
         now = datetime.now(timezone.utc).isoformat()
-
-        # All completed or cancelled → completed
-        active_statuses = [s for s in statuses
-                           if s not in ("cancelled",)]
-        if all(s == "completed" for s in active_statuses):
-            conn.execute("""
-                UPDATE work_orders
-                SET status = 'completed', completed_at = ?
-                WHERE wo_id = ? AND status != 'completed'
-            """, (now, wo_id))
-            conn.commit()
-        elif any(s in ("printing", "assigned") for s in statuses):
-            conn.execute("""
-                UPDATE work_orders
-                SET status = 'in_progress'
-                WHERE wo_id = ? AND status = 'open'
-            """, (wo_id,))
-            conn.commit()
+        new_status = self._derive_work_order_status(statuses)
+        completed_at = now if new_status in ("completed", "cancelled") else None
+        conn.execute("""
+            UPDATE work_orders
+            SET status = ?,
+                completed_at = ?
+            WHERE wo_id = ?
+        """, (new_status, completed_at, wo_id))
 
     def get_queue_stats(self) -> dict:
         """Get summary counts for the queue."""

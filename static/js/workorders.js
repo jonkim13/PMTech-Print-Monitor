@@ -94,7 +94,7 @@ async function loadQueue() {
                 actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
                     ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry</button>';
             } else if (qi.status === 'completed' && qi.print_job_id) {
-                actions = '<button class="btn" style="font-size:10px;padding:3px 8px;" onclick="showJobDetail(' + qi.print_job_id + ')">View Job</button>';
+                actions = '<button class="btn" style="font-size:10px;padding:3px 8px;" onclick="showJobDetail(' + qi.print_job_id + ')">View Print Log</button>';
             }
 
             var printerText = qi.assigned_printer_name || '-';
@@ -137,10 +137,12 @@ function formatQueueJobSummary(qi) {
     if (qi.job_id) {
         details.push('WO Job #' + qi.job_id);
     }
-    if (qi.job_part_count && qi.job_part_count > 1) {
-        var activeSummary = 'Active print: ' + qi.job_part_count + ' parts';
-        if (qi.job_part_names) {
-            activeSummary += ' - ' + qi.job_part_names;
+    var queueJobPartCount = qi.queue_job_part_count || qi.job_part_count || 0;
+    var queueJobPartNames = qi.queue_job_part_names || qi.job_part_names || '';
+    if (queueJobPartCount > 1) {
+        var activeSummary = 'Print session: ' + queueJobPartCount + ' parts';
+        if (queueJobPartNames) {
+            activeSummary += ' - ' + queueJobPartNames;
         }
         details.push(activeSummary);
     }
@@ -384,7 +386,7 @@ async function showQueuePrintModal(queueId, jobId) {
                 escapeHtml(first.customer_name) + ' | WO: ' +
                 escapeHtml(first.wo_id);
             if (first.job_id) {
-                infoHtml += ' | Job: #' + escapeHtml(String(first.job_id));
+                infoHtml += ' | WO Job: #' + escapeHtml(String(first.job_id));
             }
 
             var materialList = Object.keys(materials);
@@ -750,7 +752,7 @@ function renderWoJobCard(title, job, items, isUnassigned) {
         '<span class="wo-status ' + badgeClass + '" style="font-size:12px;">' + escapeHtml(job.status || 'open') + '</span>' +
         '</div>' +
         '<div style="margin-top:6px; color:var(--text-secondary); font-size:12px;">' + escapeHtml(meta) + '</div>' +
-        '<div style="margin-top:4px; color:var(--text-secondary); font-size:12px;">Printer: ' +
+        '<div style="margin-top:4px; color:var(--text-secondary); font-size:12px;">Latest print: ' +
         escapeHtml(job.printer_name || '-') + ' | File: ' +
         escapeHtml(job.gcode_file || '-') + ' | Operator: ' +
         escapeHtml(job.operator_initials || '-') + '</div>' +

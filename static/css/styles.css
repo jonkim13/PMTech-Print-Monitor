@@ -53,6 +53,14 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.sidebar-brand-logo {
+    display: block;
+    max-width: 100%;
+    max-height: 38px;
+    width: auto;
+    height: auto;
+}
+
 .sidebar-brand h1 {
     font-size: 15px;
     font-weight: 700;

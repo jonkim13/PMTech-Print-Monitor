@@ -49,7 +49,7 @@ body {
 }
 
 .sidebar-brand {
-    padding: 4px 0px 4px;
+    padding: 2px 0px 2px;
     border-bottom: 1px solid var(--border);
     background: #000;
     line-height: 0;

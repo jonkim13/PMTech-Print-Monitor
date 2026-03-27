@@ -25,12 +25,17 @@ class WorkOrderDB:
         return conn
 
     @staticmethod
+    def _has_column(conn, table: str, column: str) -> bool:
+        """Return True when a table already has a given column."""
+        cursor = conn.execute("PRAGMA table_info({})".format(table))
+        columns = [row[1] for row in cursor.fetchall()]
+        return column in columns
+
+    @staticmethod
     def _add_column_if_missing(conn, table: str,
                                column: str, col_def: str) -> None:
         """Add a column if it does not already exist."""
-        cursor = conn.execute("PRAGMA table_info({})".format(table))
-        columns = [row[1] for row in cursor.fetchall()]
-        if column not in columns:
+        if not WorkOrderDB._has_column(conn, table, column):
             conn.execute(
                 "ALTER TABLE {} ADD COLUMN {} {}".format(
                     table, column, col_def)
@@ -136,14 +141,10 @@ class WorkOrderDB:
                 ON queue_items(status);
             CREATE INDEX IF NOT EXISTS idx_queue_wo
                 ON queue_items(wo_id);
-            CREATE INDEX IF NOT EXISTS idx_queue_items_job
-                ON queue_items(job_id);
             CREATE INDEX IF NOT EXISTS idx_queue_printer
                 ON queue_items(assigned_printer_id);
             CREATE INDEX IF NOT EXISTS idx_queue_jobs_status
                 ON queue_jobs(status);
-            CREATE INDEX IF NOT EXISTS idx_queue_jobs_job
-                ON queue_jobs(job_id);
             CREATE INDEX IF NOT EXISTS idx_queue_jobs_printer
                 ON queue_jobs(assigned_printer_id);
             CREATE INDEX IF NOT EXISTS idx_wo_status
@@ -165,14 +166,16 @@ class WorkOrderDB:
             CREATE INDEX IF NOT EXISTS idx_queue_job
             ON queue_items(queue_job_id)
         """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_queue_items_job
-            ON queue_items(job_id)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_queue_jobs_job
-            ON queue_jobs(job_id)
-        """)
+        if self._has_column(conn, "queue_items", "job_id"):
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_queue_items_job
+                ON queue_items(job_id)
+            """)
+        if self._has_column(conn, "queue_jobs", "job_id"):
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_queue_jobs_job
+                ON queue_jobs(job_id)
+            """)
         conn.commit()
         conn.close()
 

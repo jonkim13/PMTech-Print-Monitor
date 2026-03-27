@@ -80,6 +80,26 @@ def _validate_queue_print_items(queue_ids):
     return items
 
 
+def _validate_selected_job(queue_items, requested_job_id=None):
+    """Ensure a print selection stays within one persisted work-order job."""
+    job_ids = {
+        item.get("job_id") for item in queue_items if item.get("job_id")
+    }
+
+    if requested_job_id is not None:
+        if any(item.get("job_id") not in (None, requested_job_id)
+               for item in queue_items):
+            raise ValueError(
+                "Selected parts must belong to the requested job"
+            )
+        return
+
+    if len(job_ids) > 1:
+        raise ValueError(
+            "Selected parts must belong to the same job before printing"
+        )
+
+
 def _print_queue_items(queue_ids):
     """Assign one or more queue items, upload gcode, and start printing."""
     try:
@@ -98,6 +118,12 @@ def _print_queue_items(queue_ids):
         operator_initials = _validate_operator_initials(
             request.form.get("operator_initials")
         )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    requested_job_id = request.form.get("job_id", type=int)
+    try:
+        _validate_selected_job(queue_items, requested_job_id)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -151,12 +177,18 @@ def _print_queue_items(queue_ids):
 
     printer_name = status.get("name", printer_id)
     queue_job_id = _wo_db.assign_queue_items(
-        queue_ids, printer_id, printer_name, filename
+        queue_ids, printer_id, printer_name, filename,
+        operator_initials=operator_initials,
+        job_id=requested_job_id,
     )
     if queue_job_id is None:
         return jsonify({
             "error": "Selected parts could not be assigned to a print job"
         }), 409
+
+    updated_items = _wo_db.get_queue_items(queue_ids)
+    work_order_job_id = (updated_items[0].get("job_id")
+                         if updated_items else requested_job_id)
 
     return jsonify({
         "success": True,
@@ -166,6 +198,7 @@ def _print_queue_items(queue_ids):
         ),
         "queue_ids": queue_ids,
         "queue_job_id": queue_job_id,
+        "job_id": work_order_job_id,
         "printer_id": printer_id,
         "wo_id": queue_items[0]["wo_id"],
     })
@@ -239,6 +272,64 @@ def api_get_work_order(wo_id):
     if not wo:
         return jsonify({"error": "Work order not found"}), 404
     return jsonify(wo)
+
+
+@work_order_api.route("/api/workorders/<wo_id>/jobs")
+def api_get_work_order_jobs(wo_id):
+    """List persisted jobs for a work order."""
+    jobs = _wo_db.get_work_order_jobs(wo_id)
+    if jobs is None:
+        return jsonify({"error": "Work order not found"}), 404
+    return jsonify(jobs)
+
+
+@work_order_api.route("/api/workorders/<wo_id>/jobs", methods=["POST"])
+def api_create_work_order_job(wo_id):
+    """Create a persisted job for a work order."""
+    data = request.get_json(silent=True) or {}
+
+    queue_ids = []
+    if data.get("queue_ids") is not None:
+        try:
+            queue_ids = _parse_queue_ids(data.get("queue_ids"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    try:
+        job = _wo_db.create_job(wo_id, queue_ids=queue_ids)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        "job": job,
+        "assigned_count": len(queue_ids),
+    }), 201
+
+
+@work_order_api.route("/api/workorders/<wo_id>/jobs/<int:job_id>/assign",
+                      methods=["POST"])
+def api_assign_work_order_job_items(wo_id, job_id):
+    """Assign selected queue items to an existing persisted job."""
+    data = request.get_json()
+    if not data or data.get("queue_ids") is None:
+        return jsonify({"error": "Missing queue_ids"}), 400
+
+    try:
+        queue_ids = _parse_queue_ids(data.get("queue_ids"))
+        job = _wo_db.assign_queue_items_to_job(wo_id, job_id, queue_ids)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        "job": job,
+        "assigned_count": len(queue_ids),
+    })
 
 
 @work_order_api.route("/api/workorders/<wo_id>", methods=["PATCH"])

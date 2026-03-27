@@ -5,6 +5,7 @@
 var _woLineItemCounter = 0;
 var _woDetailId = null;
 var _woDetailQueueItems = [];
+var _woDetailJobs = [];
 var _woSelectedQueueIds = {};
 
 function loadWorkOrdersPage() {
@@ -41,6 +42,7 @@ function switchWoTab(tab) {
 
     if (tab !== 'detail') {
         _woDetailQueueItems = [];
+        _woDetailJobs = [];
         _woSelectedQueueIds = {};
         updateWoSelectionToolbar();
     }
@@ -127,17 +129,28 @@ function getQueueStatusClass(status) {
 }
 
 function formatQueueJobSummary(qi) {
-    if (!qi || !qi.job_part_count || qi.job_part_count < 2) {
+    if (!qi) {
         return '';
     }
 
-    var summary = 'Job: ' + qi.job_part_count + ' parts';
-    if (qi.job_part_names) {
-        summary += ' - ' + qi.job_part_names;
+    var details = [];
+    if (qi.job_id) {
+        details.push('WO Job #' + qi.job_id);
+    }
+    if (qi.job_part_count && qi.job_part_count > 1) {
+        var activeSummary = 'Active print: ' + qi.job_part_count + ' parts';
+        if (qi.job_part_names) {
+            activeSummary += ' - ' + qi.job_part_names;
+        }
+        details.push(activeSummary);
+    }
+
+    if (!details.length) {
+        return '';
     }
 
     return '<div style="font-size:10px;color:var(--text-secondary);margin-top:2px;">' +
-        escapeHtml(summary) +
+        escapeHtml(details.join(' | ')) +
         '</div>';
 }
 
@@ -154,23 +167,44 @@ function syncWoSelectionCheckboxes() {
     });
 }
 
+function getSelectedWoQueueItems() {
+    return (_woDetailQueueItems || []).filter(function(qi) {
+        return !!_woSelectedQueueIds[String(qi.queue_id)];
+    });
+}
+
+function getSelectedWoPersistedJobIds(items) {
+    var ids = {};
+    (items || []).forEach(function(qi) {
+        if (qi.job_id) {
+            ids[String(qi.job_id)] = true;
+        }
+    });
+    return Object.keys(ids);
+}
+
 function updateWoSelectionToolbar() {
     var bar = document.getElementById('woDetailSelectionBar');
     var text = document.getElementById('woDetailSelectionText');
-    var btn = document.getElementById('woPrintSelectedBtn');
+    var printBtn = document.getElementById('woPrintSelectedBtn');
+    var createBtn = document.getElementById('woCreateJobBtn');
     var clearBtn = document.getElementById('woClearSelectedBtn');
     var selectAll = document.getElementById('woSelectAllParts');
-    if (!bar || !text || !btn || !clearBtn) {
+    if (!bar || !text || !printBtn || !createBtn || !clearBtn) {
         return;
     }
 
     var printable = getPrintableQueueItems();
+    var selectedItems = getSelectedWoQueueItems();
     var selectedIds = Object.keys(_woSelectedQueueIds);
+    var selectedJobIds = getSelectedWoPersistedJobIds(selectedItems);
+    var canPrintSelection = selectedJobIds.length <= 1;
 
     if (printable.length === 0) {
         bar.style.display = 'none';
         text.textContent = '0 selected';
-        btn.disabled = true;
+        printBtn.disabled = true;
+        createBtn.disabled = true;
         clearBtn.disabled = true;
         if (selectAll) {
             selectAll.checked = false;
@@ -181,8 +215,19 @@ function updateWoSelectionToolbar() {
     }
 
     bar.style.display = '';
-    text.textContent = selectedIds.length + ' selected';
-    btn.disabled = selectedIds.length === 0;
+    if (!selectedIds.length) {
+        text.textContent = '0 selected';
+    } else if (!canPrintSelection) {
+        text.textContent = selectedIds.length +
+            ' selected across multiple jobs';
+    } else if (selectedJobIds.length === 1) {
+        text.textContent = selectedIds.length + ' selected in Job #' +
+            selectedJobIds[0];
+    } else {
+        text.textContent = selectedIds.length + ' selected';
+    }
+    printBtn.disabled = selectedIds.length === 0 || !canPrintSelection;
+    createBtn.disabled = selectedIds.length === 0;
     clearBtn.disabled = selectedIds.length === 0;
 
     if (selectAll) {
@@ -236,16 +281,79 @@ function printSelectedWoParts() {
         return;
     }
 
-    showQueuePrintModal(queueIds);
+    var selectedJobIds = getSelectedWoPersistedJobIds(getSelectedWoQueueItems());
+    if (selectedJobIds.length > 1) {
+        showToast('Selected parts must stay within one job before printing', 'error');
+        return;
+    }
+
+    showQueuePrintModal(queueIds, selectedJobIds[0] || '');
+}
+
+async function createWoJobFromSelected() {
+    if (!_woDetailId) {
+        return;
+    }
+
+    var queueIds = Object.keys(_woSelectedQueueIds).map(function(id) {
+        return parseInt(id, 10);
+    }).filter(function(id) {
+        return !isNaN(id);
+    });
+
+    if (queueIds.length === 0) {
+        showToast('Select at least one part to create a job', 'error');
+        return;
+    }
+
+    try {
+        var resp = await fetch('/api/workorders/' + encodeURIComponent(_woDetailId) + '/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ queue_ids: queueIds })
+        });
+        var result = await resp.json();
+
+        if (result.success && result.job) {
+            showToast('Job #' + result.job.job_id + ' created with ' +
+                (result.assigned_count || queueIds.length) + ' part' +
+                ((result.assigned_count || queueIds.length) === 1 ? '' : 's'));
+            clearWoSelection();
+            await viewWorkOrder(_woDetailId);
+            loadWorkOrders();
+            loadQueue();
+        } else {
+            showToast('Error: ' + (result.error || 'Unknown'), 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+function printWoJob(jobId) {
+    var queueIds = (_woDetailQueueItems || []).filter(function(qi) {
+        return qi.job_id === jobId &&
+            (qi.status === 'queued' || qi.status === 'failed');
+    }).map(function(qi) {
+        return qi.queue_id;
+    });
+
+    if (!queueIds.length) {
+        showToast('No queued parts remain in this job', 'error');
+        return;
+    }
+
+    showQueuePrintModal(queueIds, jobId);
 }
 
 // ============================================================
 // Print from Queue Modal
 // ============================================================
-async function showQueuePrintModal(queueId) {
+async function showQueuePrintModal(queueId, jobId) {
     var modal = document.getElementById('queuePrintModal');
     var queueIds = Array.isArray(queueId) ? queueId.slice() : [queueId];
     modal.dataset.queueIds = queueIds.join(',');
+    modal.dataset.jobId = jobId || '';
     document.getElementById('queuePrintInfo').innerHTML = '';
 
     // Load queue item info
@@ -275,6 +383,9 @@ async function showQueuePrintModal(queueId) {
                 escapeHtml(partLabels.join(', ')) + '<br>Customer: ' +
                 escapeHtml(first.customer_name) + ' | WO: ' +
                 escapeHtml(first.wo_id);
+            if (first.job_id) {
+                infoHtml += ' | Job: #' + escapeHtml(String(first.job_id));
+            }
 
             var materialList = Object.keys(materials);
             if (materialList.length === 1) {
@@ -319,10 +430,12 @@ async function showQueuePrintModal(queueId) {
 }
 
 async function submitQueuePrint() {
-    var queueIds = (document.getElementById('queuePrintModal').dataset.queueIds || '')
+    var modal = document.getElementById('queuePrintModal');
+    var queueIds = (modal.dataset.queueIds || '')
         .split(',')
         .map(function(value) { return value.trim(); })
         .filter(function(value) { return !!value; });
+    var jobId = modal.dataset.jobId || '';
     var printerId = document.getElementById('queuePrintPrinter').value;
     var fileInput = document.getElementById('queuePrintFile');
     var operatorInput = document.getElementById('queuePrintOperatorInitials');
@@ -355,6 +468,9 @@ async function submitQueuePrint() {
         formData.append('printer_id', printerId);
         formData.append('file', fileInput.files[0]);
         formData.append('operator_initials', operatorInitials);
+        if (jobId) {
+            formData.append('job_id', jobId);
+        }
         queueIds.forEach(function(queueId) {
             formData.append('queue_ids', queueId);
         });
@@ -464,7 +580,8 @@ function getWoStatusClass(status) {
         open: 'wos-open',
         in_progress: 'wos-inprogress',
         completed: 'wos-completed',
-        cancelled: 'wos-cancelled'
+        cancelled: 'wos-cancelled',
+        failed: 'wos-cancelled'
     };
     return map[status] || '';
 }
@@ -494,9 +611,205 @@ async function cancelWorkOrder(woId) {
 // ============================================================
 // Work Order Detail
 // ============================================================
+function summarizeWoJobItems(items) {
+    var summary = {
+        status: 'open',
+        part_count: items.length,
+        completed_parts: 0,
+        queued_parts: 0,
+        printing_parts: 0,
+        failed_parts: 0,
+        printer_name: '',
+        gcode_file: '',
+        operator_initials: ''
+    };
+
+    if (!items.length) {
+        return summary;
+    }
+
+    var statuses = [];
+    items.forEach(function(qi) {
+        statuses.push(qi.status);
+        if (qi.status === 'completed') summary.completed_parts += 1;
+        if (qi.status === 'queued') summary.queued_parts += 1;
+        if (qi.status === 'printing' || qi.status === 'assigned') {
+            summary.printing_parts += 1;
+        }
+        if (qi.status === 'failed') summary.failed_parts += 1;
+        if (!summary.printer_name && qi.assigned_printer_name) {
+            summary.printer_name = qi.assigned_printer_name;
+        }
+        if (!summary.gcode_file && qi.gcode_file) {
+            summary.gcode_file = qi.gcode_file;
+        }
+    });
+
+    var activeStatuses = statuses.filter(function(status) {
+        return status !== 'cancelled';
+    });
+
+    if (!activeStatuses.length) {
+        summary.status = 'cancelled';
+    } else if (activeStatuses.every(function(status) {
+        return status === 'completed';
+    })) {
+        summary.status = 'completed';
+    } else if (activeStatuses.some(function(status) {
+        return status === 'printing' || status === 'assigned';
+    })) {
+        summary.status = 'in_progress';
+    } else if (activeStatuses.some(function(status) {
+        return status === 'failed';
+    })) {
+        var hasNonFailed = activeStatuses.some(function(status) {
+            return status !== 'failed';
+        });
+        summary.status = hasNonFailed ? 'in_progress' : 'failed';
+    } else if (activeStatuses.some(function(status) {
+        return status === 'completed';
+    })) {
+        summary.status = 'in_progress';
+    }
+
+    return summary;
+}
+
+function renderWoQueueRow(qi) {
+    var sc = getQueueStatusClass(qi.status);
+    var actions = '';
+    var canSelect = qi.status === 'queued' || qi.status === 'failed';
+    var selector = canSelect
+        ? '<input type="checkbox" class="wo-queue-select" data-queue-id="' + qi.queue_id + '" onchange="toggleWoQueueSelection(' + qi.queue_id + ', this.checked)">'
+        : '';
+    var printArgs = qi.job_id ? (qi.queue_id + ', ' + qi.job_id) : qi.queue_id;
+
+    if (qi.status === 'queued') {
+        actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Print</button>';
+    } else if (qi.status === 'failed') {
+        actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
+            ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>';
+    }
+
+    return '<tr>' +
+        '<td>' + selector + '</td>' +
+        '<td>' + escapeHtml(qi.part_name) + '</td>' +
+        '<td>' + escapeHtml(qi.material) + '</td>' +
+        '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
+        '<td><span class="queue-status ' + sc + '">' + escapeHtml(qi.status) + '</span></td>' +
+        '<td>' + escapeHtml(qi.assigned_printer_name || '-') + '</td>' +
+        '<td>' + escapeHtml(qi.gcode_file || '-') + '</td>' +
+        '<td>' + actions + '</td>' +
+        '</tr>';
+}
+
+function renderWoJobCard(title, job, items, isUnassigned) {
+    var printableCount = items.filter(function(qi) {
+        return qi.status === 'queued' || qi.status === 'failed';
+    }).length;
+    var badgeClass = getWoStatusClass(job.status);
+    var meta = [
+        'Parts: ' + (job.part_count || items.length || 0),
+        'Done: ' + (job.completed_parts || 0),
+        'Queued: ' + (job.queued_parts || 0),
+        'Printing: ' + (job.printing_parts || 0),
+        'Failed: ' + (job.failed_parts || 0)
+    ].join(' | ');
+
+    var printButton = '';
+    if (printableCount > 0 && !isUnassigned && job.job_id) {
+        printButton = '<button class="btn btn-green" style="font-size:11px;padding:4px 10px;" onclick="printWoJob(' + job.job_id + ')">Print Job</button>';
+    }
+
+    var bodyHtml = '<div class="events-empty" style="padding: 18px 12px;">No parts assigned yet</div>';
+    if (items.length) {
+        bodyHtml = '<div class="table-container" style="margin-top: 12px;">' +
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th style="width: 40px;"></th>' +
+            '<th>Part</th>' +
+            '<th>Material</th>' +
+            '<th>Seq</th>' +
+            '<th>Status</th>' +
+            '<th>Printer</th>' +
+            '<th>GCode</th>' +
+            '<th>Actions</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>' + items.map(renderWoQueueRow).join('') + '</tbody>' +
+            '</table>' +
+            '</div>';
+    }
+
+    return '<div style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden;">' +
+        '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding: 16px 18px 12px 18px; border-bottom: 1px solid var(--border);">' +
+        '<div>' +
+        '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">' +
+        '<strong style="font-size:15px;">' + escapeHtml(title) + '</strong>' +
+        '<span class="wo-status ' + badgeClass + '" style="font-size:12px;">' + escapeHtml(job.status || 'open') + '</span>' +
+        '</div>' +
+        '<div style="margin-top:6px; color:var(--text-secondary); font-size:12px;">' + escapeHtml(meta) + '</div>' +
+        '<div style="margin-top:4px; color:var(--text-secondary); font-size:12px;">Printer: ' +
+        escapeHtml(job.printer_name || '-') + ' | File: ' +
+        escapeHtml(job.gcode_file || '-') + ' | Operator: ' +
+        escapeHtml(job.operator_initials || '-') + '</div>' +
+        '</div>' +
+        '<div>' + printButton + '</div>' +
+        '</div>' +
+        bodyHtml +
+        '</div>';
+}
+
+function renderWoJobs(wo) {
+    var container = document.getElementById('woJobsContainer');
+    if (!container) {
+        return;
+    }
+
+    var queueItems = wo.queue_items || [];
+    var jobs = wo.jobs || [];
+    var itemsByJobId = {};
+
+    queueItems.forEach(function(qi) {
+        var key = qi.job_id ? String(qi.job_id) : '__unassigned__';
+        if (!itemsByJobId[key]) {
+            itemsByJobId[key] = [];
+        }
+        itemsByJobId[key].push(qi);
+    });
+
+    var cards = jobs.map(function(job) {
+        return renderWoJobCard(
+            'Job #' + job.job_id,
+            job,
+            itemsByJobId[String(job.job_id)] || [],
+            false
+        );
+    });
+
+    if (itemsByJobId.__unassigned__ && itemsByJobId.__unassigned__.length) {
+        cards.push(renderWoJobCard(
+            'Unassigned Parts',
+            summarizeWoJobItems(itemsByJobId.__unassigned__),
+            itemsByJobId.__unassigned__,
+            true
+        ));
+    }
+
+    if (!cards.length) {
+        container.innerHTML = '<div class="events-empty">No queue items</div>';
+        return;
+    }
+
+    container.innerHTML = cards.join('');
+    syncWoSelectionCheckboxes();
+}
+
 async function viewWorkOrder(woId) {
     _woDetailId = woId;
     _woDetailQueueItems = [];
+    _woDetailJobs = [];
     _woSelectedQueueIds = {};
 
     // Hide all wo panels, show detail
@@ -521,6 +834,7 @@ async function viewWorkOrder(woId) {
         if (wo.error) {
             document.getElementById('woDetailHeader').innerHTML =
                 '<div class="events-empty">' + escapeHtml(wo.error) + '</div>';
+            document.getElementById('woJobsContainer').innerHTML = '';
             updateWoSelectionToolbar();
             return;
         }
@@ -533,7 +847,7 @@ async function viewWorkOrder(woId) {
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="wo-detail-head">' +
             '<div><h3 style="margin:0;">' + escapeHtml(wo.wo_id) + '</h3>' +
-            '<span style="color:var(--text-secondary);font-size:12px;">' + escapeHtml(wo.customer_name) + ' — ' + formatDateTime(wo.created_at) + '</span></div>' +
+            '<span style="color:var(--text-secondary);font-size:12px;">' + escapeHtml(wo.customer_name) + ' — ' + formatDateTime(wo.created_at) + ' — ' + escapeHtml(String(wo.job_count || (wo.jobs || []).length || 0)) + ' job' + (((wo.job_count || (wo.jobs || []).length || 0) === 1) ? '' : 's') + '</span></div>' +
             '<span class="wo-status ' + statusClass + '" style="font-size:13px;">' + escapeHtml(wo.status) + '</span>' +
             '</div>' +
             '<div class="wo-detail-progress">' +
@@ -542,45 +856,16 @@ async function viewWorkOrder(woId) {
             '</div>';
 
         var queueItems = wo.queue_items || [];
+        _woDetailJobs = wo.jobs || [];
         _woDetailQueueItems = queueItems;
-        var body = document.getElementById('woDetailBody');
-
-        if (queueItems.length === 0) {
-            body.innerHTML = '<tr><td colspan="8" class="table-empty">No queue items</td></tr>';
-            updateWoSelectionToolbar();
-            return;
-        }
-
-        body.innerHTML = queueItems.map(function(qi) {
-            var sc = getQueueStatusClass(qi.status);
-            var actions = '';
-            var canSelect = qi.status === 'queued' || qi.status === 'failed';
-            var selector = canSelect
-                ? '<input type="checkbox" class="wo-queue-select" data-queue-id="' + qi.queue_id + '" onchange="toggleWoQueueSelection(' + qi.queue_id + ', this.checked)">'
-                : '';
-            if (qi.status === 'queued') {
-                actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>';
-            } else if (qi.status === 'failed') {
-                actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
-                    ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry</button>';
-            }
-
-            return '<tr>' +
-                '<td>' + selector + '</td>' +
-                '<td>' + escapeHtml(qi.part_name) + formatQueueJobSummary(qi) + '</td>' +
-                '<td>' + escapeHtml(qi.material) + '</td>' +
-                '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
-                '<td><span class="queue-status ' + sc + '">' + escapeHtml(qi.status) + '</span></td>' +
-                '<td>' + escapeHtml(qi.assigned_printer_name || '-') + '</td>' +
-                '<td>' + escapeHtml(qi.gcode_file || '-') + '</td>' +
-                '<td>' + actions + '</td>' +
-                '</tr>';
-        }).join('');
+        renderWoJobs(wo);
         updateWoSelectionToolbar();
     } catch (e) {
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="events-empty">Error loading work order</div>';
+        document.getElementById('woJobsContainer').innerHTML = '';
         _woDetailQueueItems = [];
+        _woDetailJobs = [];
         _woSelectedQueueIds = {};
         updateWoSelectionToolbar();
     }

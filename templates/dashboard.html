@@ -474,30 +474,16 @@
                 </div>
                 <div id="woDetailHeader"></div>
                 <div class="prod-toolbar" id="woDetailSelectionBar" style="margin-top: 16px; display: none;">
+                    <label style="display:flex; align-items:center; gap:8px; color: var(--text-secondary); font-size: 12px;">
+                        <input type="checkbox" id="woSelectAllParts" onclick="toggleAllWoQueueSelections(this.checked)" disabled>
+                        Select all printable
+                    </label>
                     <span id="woDetailSelectionText" style="color: var(--text-secondary); font-size: 12px;">0 selected</span>
+                    <button class="btn btn-primary" id="woCreateJobBtn" onclick="createWoJobFromSelected()" disabled>Create Job From Selected</button>
                     <button class="btn btn-green" id="woPrintSelectedBtn" onclick="printSelectedWoParts()" disabled>Print Selected</button>
                     <button class="btn" id="woClearSelectedBtn" onclick="clearWoSelection()" disabled>Clear</button>
                 </div>
-                <div class="table-container" style="margin-top: 16px;">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th style="width: 40px;">
-                                    <input type="checkbox" id="woSelectAllParts" onclick="toggleAllWoQueueSelections(this.checked)" disabled>
-                                </th>
-                                <th>Part</th>
-                                <th>Material</th>
-                                <th>Seq</th>
-                                <th>Status</th>
-                                <th>Printer</th>
-                                <th>GCode</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="woDetailBody">
-                        </tbody>
-                    </table>
-                </div>
+                <div id="woJobsContainer" style="margin-top: 16px;"></div>
             </div>
         </div>
 

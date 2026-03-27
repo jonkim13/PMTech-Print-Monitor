@@ -25,6 +25,13 @@ def register_work_order_routes(app, wo_db, farm_manager):
     app.register_blueprint(work_order_api)
 
 
+def _validate_operator_initials(value):
+    initials = str(value or "").strip()
+    if not initials:
+        raise ValueError("operator_initials is required when starting a print")
+    return initials
+
+
 # ------------------------------------------------------------------
 # Work Orders
 # ------------------------------------------------------------------
@@ -176,6 +183,7 @@ def api_print_queue_item(queue_id):
     Expects multipart form data:
     - printer_id: which printer to use
     - file: the gcode file
+    - operator_initials: required traceability field
     """
     qi = _wo_db.get_queue_item(queue_id)
     if not qi:
@@ -189,6 +197,13 @@ def api_print_queue_item(queue_id):
     printer_id = request.form.get("printer_id")
     if not printer_id:
         return jsonify({"error": "Missing printer_id"}), 400
+
+    try:
+        operator_initials = _validate_operator_initials(
+            request.form.get("operator_initials")
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     client = _farm_manager.get_printer_client(printer_id)
     if not client:
@@ -220,8 +235,22 @@ def api_print_queue_item(queue_id):
     file_data = uploaded.read()
 
     # Upload to printer with print-after-upload
-    result = client.upload_gcode(file_data, filename, print_after=True)
+    _farm_manager.record_pending_print_start(
+        printer_id, filename, operator_initials
+    )
+
+    try:
+        result = client.upload_gcode(file_data, filename, print_after=True)
+    except Exception:
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+        raise
+
     if not result.get("success"):
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
         return jsonify({
             "error": "Upload failed: {}".format(result.get("error", "unknown"))
         }), 500

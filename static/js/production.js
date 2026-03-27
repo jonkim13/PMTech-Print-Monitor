@@ -133,6 +133,7 @@ async function showJobDetail(jobId) {
             <div class="job-detail-item"><span class="jd-label">Started</span><span class="jd-value">${escapeHtml(formatDateTime(j.started_at))}</span></div>
             <div class="job-detail-item"><span class="jd-label">Completed</span><span class="jd-value">${j.completed_at ? escapeHtml(formatDateTime(j.completed_at)) : '-'}</span></div>
             <div class="job-detail-item"><span class="jd-label">Duration</span><span class="jd-value">${formatTime(j.print_duration_sec)}</span></div>
+            <div class="job-detail-item"><span class="jd-label">Operator Initials</span><span class="jd-value">${escapeHtml(j.operator_initials || '-')}</span></div>
             <div class="job-detail-item"><span class="jd-label">Material</span><span class="jd-value">${escapeHtml(j.spool_material || j.filament_type || '-')}</span></div>
             <div class="job-detail-item"><span class="jd-label">Spool ID</span><span class="jd-value">${escapeHtml(j.spool_id || '-')}</span></div>
             <div class="job-detail-item"><span class="jd-label">Spool Brand</span><span class="jd-value">${escapeHtml(j.spool_brand || '-')}</span></div>

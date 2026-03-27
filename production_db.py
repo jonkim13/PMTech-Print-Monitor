@@ -50,6 +50,7 @@ class ProductionDB:
                 fill_density REAL,
                 nozzle_temp REAL,
                 bed_temp REAL,
+                operator_initials TEXT,
                 operator TEXT DEFAULT 'unassigned',
                 notes TEXT DEFAULT '',
                 outcome TEXT DEFAULT 'unknown',
@@ -90,6 +91,9 @@ class ProductionDB:
         # Migrate: add tool_spools column to print_jobs if missing
         self._add_column_if_missing(conn, "print_jobs", "tool_spools",
                                     "TEXT DEFAULT '{}'")
+        # Migrate: add operator_initials column to print_jobs if missing
+        self._add_column_if_missing(conn, "print_jobs", "operator_initials",
+                                    "TEXT")
         # Migrate: add tool_index column to material_usage if missing
         self._add_column_if_missing(conn, "material_usage", "tool_index",
                                     "INTEGER DEFAULT 0")
@@ -115,7 +119,7 @@ class ProductionDB:
                    spool_id=None, spool_material=None, spool_brand=None,
                    layer_height=None, nozzle_diameter=None,
                    fill_density=None, nozzle_temp=None, bed_temp=None,
-                   tool_spools=None):
+                   tool_spools=None, operator_initials=None):
         """Create a new print job record when a print starts.
         Idempotent: if a 'started' job already exists for this printer
         with the same file_name within the last 24 hours, return that
@@ -127,15 +131,23 @@ class ProductionDB:
         import json as _json
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
+        operator_initials = str(operator_initials or "").strip() or None
 
         # Check for existing active job with same file on same printer
         existing = conn.execute("""
-            SELECT job_id FROM print_jobs
+            SELECT job_id, operator_initials FROM print_jobs
             WHERE printer_id = ? AND file_name = ? AND status = 'started'
               AND started_at >= datetime('now', '-24 hours')
             ORDER BY job_id DESC LIMIT 1
         """, (printer_id, file_name)).fetchone()
         if existing:
+            if operator_initials and not existing["operator_initials"]:
+                conn.execute("""
+                    UPDATE print_jobs
+                    SET operator_initials = ?
+                    WHERE job_id = ?
+                """, (operator_initials, existing["job_id"]))
+                conn.commit()
             conn.close()
             return existing["job_id"]
 
@@ -147,14 +159,16 @@ class ProductionDB:
                  status, started_at, filament_type, filament_used_g,
                  filament_used_mm, spool_id, spool_material, spool_brand,
                  layer_height, nozzle_diameter, fill_density,
-                 nozzle_temp, bed_temp, tool_spools, created_at)
-            VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 nozzle_temp, bed_temp, tool_spools, operator_initials,
+                 created_at)
+            VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (printer_id, printer_name, file_name,
               file_display_name or file_name,
               now, filament_type, filament_used_g, filament_used_mm,
               spool_id, spool_material, spool_brand,
               layer_height, nozzle_diameter, fill_density,
-              nozzle_temp, bed_temp, tool_spools_json, now))
+              nozzle_temp, bed_temp, tool_spools_json,
+              operator_initials, now))
         job_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -457,7 +471,8 @@ class ProductionDB:
             "print_duration_sec", "filament_type", "filament_used_g",
             "filament_used_mm", "spool_id", "spool_material", "spool_brand",
             "layer_height", "nozzle_diameter", "fill_density",
-            "nozzle_temp", "bed_temp", "operator", "notes", "outcome",
+            "nozzle_temp", "bed_temp", "operator_initials", "operator",
+            "notes", "outcome",
             "tool_spools",
         ])
 

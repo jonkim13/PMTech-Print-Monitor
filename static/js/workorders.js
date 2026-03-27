@@ -164,6 +164,7 @@ async function showQueuePrintModal(queueId) {
     }
 
     document.getElementById('queuePrintFile').value = '';
+    document.getElementById('queuePrintOperatorInitials').value = '';
     showModal('queuePrintModal');
 }
 
@@ -171,6 +172,8 @@ async function submitQueuePrint() {
     var queueId = document.getElementById('queuePrintModal').dataset.queueId;
     var printerId = document.getElementById('queuePrintPrinter').value;
     var fileInput = document.getElementById('queuePrintFile');
+    var operatorInput = document.getElementById('queuePrintOperatorInitials');
+    var operatorInitials = operatorInput.value.trim();
 
     if (!printerId) {
         showToast('Please select a printer', 'error');
@@ -178,6 +181,11 @@ async function submitQueuePrint() {
     }
     if (!fileInput.files.length) {
         showToast('Please select a GCode file', 'error');
+        return;
+    }
+    if (!operatorInitials) {
+        showToast('Operator initials are required to start a print', 'error');
+        operatorInput.focus();
         return;
     }
 
@@ -189,6 +197,7 @@ async function submitQueuePrint() {
         var formData = new FormData();
         formData.append('printer_id', printerId);
         formData.append('file', fileInput.files[0]);
+        formData.append('operator_initials', operatorInitials);
 
         var resp = await fetch('/api/queue/' + queueId + '/print', {
             method: 'POST',

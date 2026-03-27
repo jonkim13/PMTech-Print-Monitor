@@ -172,22 +172,47 @@ function showUploadModal(printerId, printerName) {
     document.getElementById('uploadModal').dataset.printerId = printerId;
     document.getElementById('gcodeFile').value = '';
     document.getElementById('printAfterUpload').checked = false;
+    document.getElementById('uploadOperatorInitials').value = '';
+    toggleUploadOperatorInitials();
     showModal('uploadModal');
+}
+
+function toggleUploadOperatorInitials() {
+    const printAfter = document.getElementById('printAfterUpload').checked;
+    const group = document.getElementById('uploadOperatorGroup');
+    const input = document.getElementById('uploadOperatorInitials');
+
+    group.style.display = printAfter ? 'block' : 'none';
+    input.disabled = !printAfter;
+    input.required = printAfter;
+    if(!printAfter) {
+        input.value = '';
+    }
 }
 
 async function submitUpload() {
     const printerId = document.getElementById('uploadModal').dataset.printerId;
     const fileInput = document.getElementById('gcodeFile');
     const printAfter = document.getElementById('printAfterUpload').checked;
+    const operatorInput = document.getElementById('uploadOperatorInitials');
+    const operatorInitials = operatorInput.value.trim();
 
     if(!fileInput.files.length) {
         showToast('Please select a GCode file', 'error');
+        return;
+    }
+    if(printAfter && !operatorInitials) {
+        showToast('Operator initials are required to start a print', 'error');
+        operatorInput.focus();
         return;
     }
 
     const file = fileInput.files[0];
     const formData = new FormData();
     formData.append('file', file);
+    if(printAfter) {
+        formData.append('operator_initials', operatorInitials);
+    }
 
     const btn = document.getElementById('uploadBtn');
     btn.textContent = 'Uploading...';

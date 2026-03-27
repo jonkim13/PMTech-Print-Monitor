@@ -72,6 +72,13 @@ def _format_assignment_location(printer_id: str, tool_index: int) -> str:
     return f"{printer_label} T{tool_index + 1}"
 
 
+def _validate_operator_initials(value):
+    initials = str(value or "").strip()
+    if not initials:
+        raise ValueError("operator_initials is required when starting a print")
+    return initials
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -116,6 +123,7 @@ def api_printer_upload(printer_id):
     Upload a gcode file to a printer.
     Expects multipart form data with 'file' field.
     Optional query param: ?print_after=1
+    Requires form field 'operator_initials' when print_after is enabled.
     """
     client = _farm_manager.get_printer_client(printer_id)
     if not client:
@@ -129,6 +137,15 @@ def api_printer_upload(printer_id):
         return jsonify({"error": "Empty filename"}), 400
 
     print_after = request.args.get("print_after", "0") == "1"
+    operator_initials = None
+    if print_after:
+        try:
+            operator_initials = _validate_operator_initials(
+                request.form.get("operator_initials")
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
     file_data = uploaded.read()
     filename = secure_filename(uploaded.filename)
     if not filename:
@@ -138,8 +155,26 @@ def api_printer_upload(printer_id):
     if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
         return jsonify({"error": f"Unsupported extension: {ext}"}), 400
 
-    result = client.upload_gcode(file_data, filename,
-                                 print_after=print_after)
+    if print_after:
+        _farm_manager.record_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+
+    try:
+        result = client.upload_gcode(file_data, filename,
+                                     print_after=print_after)
+    except Exception:
+        if print_after:
+            _farm_manager.clear_pending_print_start(
+                printer_id, filename, operator_initials
+            )
+        raise
+
+    if print_after and not result.get("success"):
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+
     status_code = 200 if result.get("success") else 500
     return jsonify(result), status_code
 

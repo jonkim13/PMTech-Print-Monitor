@@ -11,7 +11,7 @@ import json
 import time
 import threading
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from prusalink import PrusaLinkClient
 from database import PrintHistoryDB, FilamentInventoryDB, FilamentAssignmentDB
@@ -44,6 +44,8 @@ class PrintFarmManager:
         self._print_start_times = {}
         # Track active production job IDs per printer
         self._active_job_ids = {}
+        # Pending operator initials for UI-initiated print starts
+        self._pending_print_starts = {}
 
         # Initialize printer clients
         for pid, pcfg in config.get("printers", {}).items():
@@ -151,6 +153,32 @@ class PrintFarmManager:
                 json.dump(states, f)
         except Exception as e:
             print(f"[STATE] Error saving state: {e}")
+
+    @staticmethod
+    def _normalize_print_filename(file_name):
+        """Normalize filenames for pending print-start matching."""
+        return os.path.basename(str(file_name or "")).strip().lower()
+
+    def _prune_pending_print_starts_locked(self):
+        """Drop stale pending print-start metadata."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
+        empty_printers = []
+        for printer_id, entries in self._pending_print_starts.items():
+            fresh_entries = []
+            for entry in entries:
+                created_at = entry.get("created_at")
+                try:
+                    created = datetime.fromisoformat(created_at)
+                except (TypeError, ValueError):
+                    continue
+                if created >= cutoff:
+                    fresh_entries.append(entry)
+            if fresh_entries:
+                self._pending_print_starts[printer_id] = fresh_entries
+            else:
+                empty_printers.append(printer_id)
+        for printer_id in empty_printers:
+            self._pending_print_starts.pop(printer_id, None)
 
     # ------------------------------------------------------------------
     # Deduplication Helpers
@@ -425,11 +453,15 @@ class PrintFarmManager:
                         "color": s.get("color") if s else None,
                     }
 
+            file_name = details.get("file_name", state["job"]["filename"])
+            operator_initials = self.get_pending_print_start(
+                printer_id, file_name
+            )
+
             job_id = self.production_db.create_job(
                 printer_id=printer_id,
                 printer_name=state["name"],
-                file_name=details.get("file_name",
-                                      state["job"]["filename"]),
+                file_name=file_name,
                 file_display_name=details.get("file_display_name",
                                               state["job"]["filename"]),
                 filament_type=details.get("filament_type"),
@@ -444,8 +476,13 @@ class PrintFarmManager:
                 nozzle_temp=details.get("nozzle_temp"),
                 bed_temp=details.get("bed_temp"),
                 tool_spools=tool_spools if tool_spools else None,
+                operator_initials=operator_initials,
             )
             self._active_job_ids[printer_id] = job_id
+            if operator_initials:
+                self.clear_pending_print_start(
+                    printer_id, file_name, operator_initials
+                )
 
             # Machine log
             self.production_db.log_machine_event(
@@ -670,6 +707,57 @@ class PrintFarmManager:
         printer_data = self.printers.get(printer_id)
         if printer_data:
             return printer_data["client"]
+        return None
+
+    def record_pending_print_start(self, printer_id: str, file_name: str,
+                                   operator_initials: str):
+        """Store initials for a UI-initiated print until polling logs it."""
+        normalized_file = self._normalize_print_filename(file_name)
+        initials = str(operator_initials or "").strip()
+        if not printer_id or not normalized_file or not initials:
+            return
+        with self._lock:
+            self._prune_pending_print_starts_locked()
+            self._pending_print_starts.setdefault(printer_id, []).append({
+                "file_name": normalized_file,
+                "operator_initials": initials,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+    def clear_pending_print_start(self, printer_id: str, file_name: str,
+                                  operator_initials: str = None):
+        """Remove pending initials when a start request fails."""
+        normalized_file = self._normalize_print_filename(file_name)
+        initials = str(operator_initials or "").strip()
+        if not printer_id or not normalized_file:
+            return
+        with self._lock:
+            self._prune_pending_print_starts_locked()
+            entries = self._pending_print_starts.get(printer_id, [])
+            for index in range(len(entries) - 1, -1, -1):
+                entry = entries[index]
+                if entry.get("file_name") != normalized_file:
+                    continue
+                if initials and entry.get("operator_initials") != initials:
+                    continue
+                entries.pop(index)
+                break
+            if not entries:
+                self._pending_print_starts.pop(printer_id, None)
+
+    def get_pending_print_start(self, printer_id: str, file_name: str):
+        """Read initials for the next matching polling-detected start."""
+        normalized_file = self._normalize_print_filename(file_name)
+        if not printer_id or not normalized_file:
+            return None
+        with self._lock:
+            self._prune_pending_print_starts_locked()
+            entries = self._pending_print_starts.get(printer_id, [])
+            for index in range(len(entries) - 1, -1, -1):
+                entry = entries[index]
+                if entry.get("file_name") != normalized_file:
+                    continue
+                return entry.get("operator_initials")
         return None
 
     def get_pending_events(self) -> list:

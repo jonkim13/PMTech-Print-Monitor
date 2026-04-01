@@ -149,6 +149,19 @@ class UploadWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.upload_calls, 1)
         self.assertEqual(self.client.start_calls, 0)
 
+    def test_create_and_upload_persists_parsed_filename_grams(self):
+        result = self.service.create_and_upload(
+            printer_id="mk4-01",
+            uploaded_file=UploadedFileStub(b"G1 X1 Y1\n"),
+            original_filename="widget_8g_PLA.gcode",
+            start_print=False,
+        )
+
+        self.assertTrue(result["ok"])
+        session = self.upload_db.get_session(result["upload_session_id"])
+        self.assertEqual(session["parsed_grams"], 8.0)
+        self.assertEqual(session["parsed_grams_source"], "filename")
+
     def test_start_failed_retry_reuses_uploaded_file_without_reupload(self):
         staged_path = os.path.join(self.tempdir.name, "retry.gcode")
         with open(staged_path, "wb") as handle:

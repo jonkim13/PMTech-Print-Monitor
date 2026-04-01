@@ -313,7 +313,7 @@ class FilamentInventoryDB:
         conn.close()
         return [r["supplier"] for r in rows]
 
-    def deduct_weight(self, spool_id: str, grams_used: int) -> bool:
+    def deduct_weight(self, spool_id: str, grams_used: float) -> bool:
         """Subtract grams_used from a spool, flooring at 0."""
         conn = self._get_conn()
         cursor = conn.execute("""

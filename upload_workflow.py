@@ -10,6 +10,11 @@ import time
 import uuid
 from typing import Optional
 
+from filament_usage import (
+    FILAMENT_SOURCE_FILENAME,
+    FILAMENT_SOURCE_NONE,
+    extract_grams_from_filename,
+)
 from werkzeug.utils import secure_filename
 
 
@@ -91,6 +96,8 @@ class UploadWorkflowService:
             "operator_initials": session.get("operator_initials"),
             "staged_path": session.get("staged_path"),
             "file_size_bytes": session.get("file_size_bytes"),
+            "parsed_grams": session.get("parsed_grams"),
+            "parsed_grams_source": session.get("parsed_grams_source"),
             "last_error": session.get("last_error"),
         }
 
@@ -490,6 +497,7 @@ class UploadWorkflowService:
                 http_status=400,
             )
 
+        parsed_grams = extract_grams_from_filename(staged["original_filename"])
         session = self.upload_session_db.create_session(
             upload_session_id=upload_session_id,
             printer_id=printer_id,
@@ -504,6 +512,11 @@ class UploadWorkflowService:
             file_size_bytes=staged["file_size_bytes"],
             status="staged",
             operator_initials=operator_initials,
+            parsed_grams=parsed_grams,
+            parsed_grams_source=(
+                FILAMENT_SOURCE_FILENAME
+                if parsed_grams is not None else FILAMENT_SOURCE_NONE
+            ),
         )
         if session.get("queue_job_id"):
             self._sync_queue_job_status(

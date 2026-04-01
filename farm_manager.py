@@ -13,6 +13,16 @@ import threading
 import copy
 from datetime import datetime, timedelta, timezone
 
+from filament_usage import (
+    FILAMENT_SOURCE_API,
+    FILAMENT_SOURCE_FILENAME,
+    FILAMENT_SOURCE_MM_ESTIMATE,
+    FILAMENT_SOURCE_NONE,
+    coerce_nonnegative_float,
+    coerce_positive_float,
+    estimate_grams_from_mm,
+    resolve_total_filament_usage,
+)
 from prusalink import PrusaLinkClient
 from database import PrintHistoryDB, FilamentInventoryDB, FilamentAssignmentDB
 
@@ -173,6 +183,58 @@ class PrintFarmManager:
     def _normalize_print_filename(file_name):
         """Normalize filenames for pending print-start matching."""
         return os.path.basename(str(file_name or "")).strip().lower()
+
+    @staticmethod
+    def _build_filename_candidates(*names):
+        """Return de-duplicated non-empty filename candidates."""
+        candidates = []
+        seen = set()
+        for name in names:
+            text = str(name or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            candidates.append(text)
+        return candidates
+
+    @staticmethod
+    def _sum_positive_values(values):
+        """Sum only positive numeric values from an iterable."""
+        total = 0.0
+        for value in values or []:
+            number = coerce_positive_float(value)
+            if number is not None:
+                total += number
+        return total
+
+    def _get_active_production_job_record(self, printer_id: str):
+        """Fetch the current production job row for a printer, if any."""
+        if not self.production_db:
+            return None
+        job_id = self._active_job_ids.get(printer_id)
+        if job_id:
+            return self.production_db.get_job(job_id)
+        return self.production_db.get_active_job(printer_id)
+
+    def _resolve_total_job_filament_usage(self, state_job: dict,
+                                          details: dict = None,
+                                          production_job: dict = None,
+                                          include_mm_estimate: bool = True):
+        """Resolve total grams with API-first, filename fallback behavior."""
+        merged = dict(state_job or {})
+        merged.update(details or {})
+        return resolve_total_filament_usage(
+            filament_used_g=merged.get("filament_used_g"),
+            filament_used_mm=merged.get("filament_used_mm"),
+            filename_candidates=self._build_filename_candidates(
+                merged.get("file_display_name"),
+                merged.get("file_name"),
+                (production_job or {}).get("file_display_name"),
+                (production_job or {}).get("file_name"),
+                (state_job or {}).get("filename"),
+            ),
+            include_mm_estimate=include_mm_estimate,
+        )
 
     def _prune_pending_print_starts_locked(self):
         """Drop stale pending print-start metadata."""
@@ -392,6 +454,7 @@ class PrintFarmManager:
         # Merge basic job data with detailed metadata
         job = dict(state.get("job", {}))
         job.update(details)
+        production_job = self._get_active_production_job_record(printer_id)
 
         # For XL printers, try per-tool deduction first
         if model == "xl":
@@ -399,33 +462,63 @@ class PrintFarmManager:
             per_tool_mm = job.get("filament_used_mm_per_tool", [])
             deducted_any = False
 
-            for tool_idx in range(len(per_tool_g) if per_tool_g
-                                  else len(per_tool_mm) if per_tool_mm
-                                  else 0):
-                grams = 0
-                if per_tool_g and tool_idx < len(per_tool_g):
-                    val = per_tool_g[tool_idx]
-                    if val:
-                        grams = int(float(val))
-                elif per_tool_mm and tool_idx < len(per_tool_mm):
-                    val = per_tool_mm[tool_idx]
-                    if val:
-                        grams = int(float(val) * 0.00298)
-
-                if grams > 0:
-                    assignment = self.assignment_db.get_assignment(
-                        printer_id, tool_index=tool_idx)
-                    if assignment:
-                        self.filament_db.deduct_weight(
-                            assignment["spool_id"], grams)
-                        print(f"[FILAMENT] Deducted ~{grams}g from spool "
-                              f"{assignment['spool_id']} (T{tool_idx + 1}) "
-                              f"on {state['name']}")
-                        deducted_any = True
+            for tool_idx, value in enumerate(per_tool_g or []):
+                grams = coerce_positive_float(value)
+                if grams is None:
+                    continue
+                assignment = self.assignment_db.get_assignment(
+                    printer_id, tool_index=tool_idx)
+                if assignment:
+                    self.filament_db.deduct_weight(
+                        assignment["spool_id"], grams)
+                    print(f"[FILAMENT] Deducted {grams:g}g from spool "
+                          f"{assignment['spool_id']} (T{tool_idx + 1}) "
+                          f"on {state['name']} [source={FILAMENT_SOURCE_API}]")
+                    deducted_any = True
 
             if deducted_any:
                 return
-            # Fall through to single-spool logic if no per-tool data
+
+            total_usage = self._resolve_total_job_filament_usage(
+                state.get("job", {}),
+                details,
+                production_job,
+                include_mm_estimate=False,
+            )
+            if total_usage["source"] in (
+                FILAMENT_SOURCE_API,
+                FILAMENT_SOURCE_FILENAME,
+            ):
+                assignment = self.assignment_db.get_assignment(
+                    printer_id, tool_index=0)
+                if assignment:
+                    self.filament_db.deduct_weight(
+                        assignment["spool_id"], total_usage["grams"])
+                    print(f"[FILAMENT] Deducted {total_usage['grams']:g}g "
+                          f"from spool {assignment['spool_id']} on "
+                          f"{state['name']} "
+                          f"[source={total_usage['source']}]")
+                return
+
+            for tool_idx, value in enumerate(per_tool_mm or []):
+                mm_used = coerce_positive_float(value)
+                grams = estimate_grams_from_mm(mm_used)
+                if grams is None:
+                    continue
+                assignment = self.assignment_db.get_assignment(
+                    printer_id, tool_index=tool_idx)
+                if assignment:
+                    self.filament_db.deduct_weight(
+                        assignment["spool_id"], grams)
+                    print(f"[FILAMENT] Deducted {grams:g}g from spool "
+                          f"{assignment['spool_id']} (T{tool_idx + 1}) "
+                          f"on {state['name']} "
+                          f"[source={FILAMENT_SOURCE_MM_ESTIMATE}]")
+                    deducted_any = True
+
+            if deducted_any:
+                return
+            # Fall through to single-spool logic if only total usage exists
 
         # Single-tool deduction (Core One, or XL fallback)
         assignment = self.assignment_db.get_assignment(
@@ -434,17 +527,17 @@ class PrintFarmManager:
             return
         spool_id = assignment["spool_id"]
 
-        grams_used = 0
-        if job.get("filament_used_g"):
-            grams_used = int(float(job["filament_used_g"]))
-        elif job.get("filament_used_mm"):
-            mm_used = float(job["filament_used_mm"])
-            grams_used = int(mm_used * 0.00298)
-
+        usage = self._resolve_total_job_filament_usage(
+            state.get("job", {}),
+            details,
+            production_job,
+        )
+        grams_used = usage["grams"]
         if grams_used > 0:
             self.filament_db.deduct_weight(spool_id, grams_used)
-            print(f"[FILAMENT] Deducted ~{grams_used}g from spool "
-                  f"{spool_id} on {state['name']}")
+            print(f"[FILAMENT] Deducted {grams_used:g}g from spool "
+                  f"{spool_id} on {state['name']} "
+                  f"[source={usage['source']}]")
 
     # ------------------------------------------------------------------
     # Production Logging Helpers
@@ -617,11 +710,87 @@ class PrintFarmManager:
         try:
             # Try to get final job details for actual filament usage
             details = client.get_job_details()
-            filament_g = 0
-            filament_mm = 0
-            if not details.get("error"):
-                filament_g = float(details.get("filament_used_g") or 0)
-                filament_mm = float(details.get("filament_used_mm") or 0)
+            if details.get("error"):
+                details = {}
+            job = self.production_db.get_job(job_id)
+            model = self._get_printer_model(printer_id)
+
+            total_usage = self._resolve_total_job_filament_usage(
+                state.get("job", {}),
+                details,
+                job,
+            )
+            filament_g = total_usage["grams"]
+            filament_mm = total_usage["mm_used"]
+            filament_source = total_usage["source"]
+            material_usage_rows = []
+
+            per_tool_g = details.get("filament_used_g_per_tool", [])
+            per_tool_mm = details.get("filament_used_mm_per_tool", [])
+
+            if model == "xl":
+                # XL filenames only expose a total grams token, so if we fall
+                # back to the filename we keep the existing single-total path
+                # instead of inventing per-tool splits.
+                for tidx, g_val in enumerate(per_tool_g or []):
+                    g = coerce_positive_float(g_val)
+                    if g is None:
+                        continue
+                    mm = (coerce_nonnegative_float(per_tool_mm[tidx])
+                          if tidx < len(per_tool_mm) else 0.0)
+                    assignment = (
+                        self.assignment_db.get_assignment(
+                            printer_id, tool_index=tidx
+                        ) if self.assignment_db else None
+                    )
+                    material_usage_rows.append({
+                        "spool_id": assignment["spool_id"] if assignment else None,
+                        "grams_used": g,
+                        "mm_used": mm,
+                        "tool_index": tidx,
+                        "usage_source": FILAMENT_SOURCE_API,
+                    })
+
+                if material_usage_rows:
+                    filament_g = (
+                        coerce_positive_float(details.get("filament_used_g"))
+                        or self._sum_positive_values(per_tool_g)
+                    )
+                    filament_mm = (
+                        coerce_positive_float(details.get("filament_used_mm"))
+                        or self._sum_positive_values(per_tool_mm)
+                    )
+                    filament_source = FILAMENT_SOURCE_API
+                elif filament_source not in (
+                    FILAMENT_SOURCE_API,
+                    FILAMENT_SOURCE_FILENAME,
+                ):
+                    for tidx, mm_val in enumerate(per_tool_mm or []):
+                        mm = coerce_positive_float(mm_val)
+                        grams = estimate_grams_from_mm(mm)
+                        if grams is None:
+                            continue
+                        assignment = (
+                            self.assignment_db.get_assignment(
+                                printer_id, tool_index=tidx
+                            ) if self.assignment_db else None
+                        )
+                        material_usage_rows.append({
+                            "spool_id": assignment["spool_id"]
+                            if assignment else None,
+                            "grams_used": grams,
+                            "mm_used": mm,
+                            "tool_index": tidx,
+                            "usage_source": FILAMENT_SOURCE_MM_ESTIMATE,
+                        })
+                    if material_usage_rows:
+                        filament_g = sum(
+                            row["grams_used"] for row in material_usage_rows
+                        )
+                        filament_mm = sum(
+                            row["mm_used"] for row in material_usage_rows
+                        )
+                        filament_source = FILAMENT_SOURCE_MM_ESTIMATE
 
             # Camera snapshot
             snapshot_path = None
@@ -643,43 +812,30 @@ class PrintFarmManager:
                 job_id, duration_sec=duration_sec,
                 filament_used_g=filament_g,
                 filament_used_mm=filament_mm,
+                filament_used_source=filament_source,
                 snapshot_path=snapshot_path,
             )
 
-            # Material usage log — per-tool for XL, single for Core One
-            job = self.production_db.get_job(job_id)
-            model = self._get_printer_model(printer_id)
-            per_tool_g = (details.get("filament_used_g_per_tool", [])
-                          if not details.get("error") else [])
-            per_tool_mm = (details.get("filament_used_mm_per_tool", [])
-                           if not details.get("error") else [])
+            if (not material_usage_rows and job and job.get("spool_id")
+                    and filament_g > 0
+                    and filament_source != FILAMENT_SOURCE_NONE):
+                material_usage_rows.append({
+                    "spool_id": job["spool_id"],
+                    "grams_used": filament_g,
+                    "mm_used": filament_mm,
+                    "tool_index": 0,
+                    "usage_source": filament_source,
+                })
 
-            if model == "xl" and per_tool_g and self.assignment_db:
-                for tidx, g_val in enumerate(per_tool_g):
-                    g = float(g_val) if g_val else 0
-                    mm = (float(per_tool_mm[tidx])
-                          if per_tool_mm and tidx < len(per_tool_mm)
-                          and per_tool_mm[tidx] else 0)
-                    if g > 0:
-                        a = self.assignment_db.get_assignment(
-                            printer_id, tool_index=tidx)
-                        sid = a["spool_id"] if a else None
-                        self.production_db.log_material_usage(
-                            spool_id=sid,
-                            job_id=job_id,
-                            printer_id=printer_id,
-                            grams_used=g,
-                            mm_used=mm,
-                            tool_index=tidx,
-                        )
-            elif job and job.get("spool_id"):
+            for row in material_usage_rows:
                 self.production_db.log_material_usage(
-                    spool_id=job["spool_id"],
+                    spool_id=row["spool_id"],
                     job_id=job_id,
                     printer_id=printer_id,
-                    grams_used=filament_g or job.get("filament_used_g", 0),
-                    mm_used=filament_mm or job.get("filament_used_mm", 0),
-                    tool_index=0,
+                    grams_used=row["grams_used"],
+                    mm_used=row["mm_used"],
+                    tool_index=row["tool_index"],
+                    usage_source=row["usage_source"],
                 )
 
             # Machine log

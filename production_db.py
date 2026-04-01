@@ -42,6 +42,7 @@ class ProductionDB:
                 filament_type TEXT,
                 filament_used_g REAL DEFAULT 0,
                 filament_used_mm REAL DEFAULT 0,
+                filament_used_source TEXT DEFAULT 'none',
                 spool_id TEXT,
                 spool_material TEXT,
                 spool_brand TEXT,
@@ -75,6 +76,7 @@ class ProductionDB:
                 printer_id TEXT NOT NULL,
                 grams_used REAL DEFAULT 0,
                 mm_used REAL DEFAULT 0,
+                usage_source TEXT DEFAULT 'none',
                 timestamp TEXT NOT NULL,
                 FOREIGN KEY (job_id) REFERENCES print_jobs(job_id)
             );
@@ -94,9 +96,19 @@ class ProductionDB:
         # Migrate: add operator_initials column to print_jobs if missing
         self._add_column_if_missing(conn, "print_jobs", "operator_initials",
                                     "TEXT")
+        # Migrate: add filament_used_source to print_jobs if missing
+        self._add_column_if_missing(
+            conn, "print_jobs", "filament_used_source",
+            "TEXT DEFAULT 'none'"
+        )
         # Migrate: add tool_index column to material_usage if missing
         self._add_column_if_missing(conn, "material_usage", "tool_index",
                                     "INTEGER DEFAULT 0")
+        # Migrate: add usage_source column to material_usage if missing
+        self._add_column_if_missing(
+            conn, "material_usage", "usage_source",
+            "TEXT DEFAULT 'none'"
+        )
         conn.close()
 
     @staticmethod
@@ -175,7 +187,8 @@ class ProductionDB:
         return job_id
 
     def complete_job(self, job_id, duration_sec=0, filament_used_g=0,
-                     filament_used_mm=0, snapshot_path=None):
+                     filament_used_mm=0, filament_used_source="none",
+                     snapshot_path=None):
         """Mark a job as completed. Idempotent: skips if already completed."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
@@ -187,11 +200,13 @@ class ProductionDB:
                 print_duration_sec = ?,
                 filament_used_g = CASE WHEN ? > 0 THEN ? ELSE filament_used_g END,
                 filament_used_mm = CASE WHEN ? > 0 THEN ? ELSE filament_used_mm END,
+                filament_used_source = ?,
                 snapshot_path = COALESCE(?, snapshot_path)
             WHERE job_id = ? AND completed_at IS NULL
         """, (now, duration_sec,
               filament_used_g, filament_used_g,
               filament_used_mm, filament_used_mm,
+              filament_used_source or "none",
               snapshot_path, job_id))
         conn.commit()
         conn.close()
@@ -417,17 +432,18 @@ class ProductionDB:
     # ------------------------------------------------------------------
 
     def log_material_usage(self, spool_id, job_id, printer_id,
-                           grams_used=0, mm_used=0, tool_index=0):
+                           grams_used=0, mm_used=0, tool_index=0,
+                           usage_source="none"):
         """Log material usage for a job, optionally per tool."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute("""
             INSERT INTO material_usage
                 (spool_id, job_id, printer_id, grams_used, mm_used,
-                 tool_index, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 tool_index, usage_source, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (spool_id, job_id, printer_id, grams_used, mm_used,
-              tool_index, now))
+              tool_index, usage_source or "none", now))
         conn.commit()
         conn.close()
 
@@ -469,10 +485,10 @@ class ProductionDB:
             "job_id", "printer_id", "printer_name", "file_name",
             "file_display_name", "status", "started_at", "completed_at",
             "print_duration_sec", "filament_type", "filament_used_g",
-            "filament_used_mm", "spool_id", "spool_material", "spool_brand",
-            "layer_height", "nozzle_diameter", "fill_density",
-            "nozzle_temp", "bed_temp", "operator_initials", "operator",
-            "notes", "outcome",
+            "filament_used_mm", "filament_used_source", "spool_id",
+            "spool_material", "spool_brand", "layer_height",
+            "nozzle_diameter", "fill_density", "nozzle_temp", "bed_temp",
+            "operator_initials", "operator", "notes", "outcome",
             "tool_spools",
         ])
 
@@ -508,7 +524,7 @@ class ProductionDB:
         return self._to_csv(data, [
             "usage_id", "spool_id", "job_id", "printer_id",
             "printer_name", "file_name", "grams_used", "mm_used",
-            "tool_index", "timestamp",
+            "tool_index", "usage_source", "timestamp",
         ])
 
     @staticmethod

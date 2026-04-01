@@ -68,6 +68,8 @@ class UploadSessionDB:
                 file_size_bytes INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 operator_initials TEXT,
+                parsed_grams REAL,
+                parsed_grams_source TEXT DEFAULT 'none',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 completed_at TEXT,
@@ -82,6 +84,13 @@ class UploadSessionDB:
         )
         self._add_column_if_missing(
             conn, "upload_sessions", "operator_initials", "TEXT"
+        )
+        self._add_column_if_missing(
+            conn, "upload_sessions", "parsed_grams", "REAL"
+        )
+        self._add_column_if_missing(
+            conn, "upload_sessions", "parsed_grams_source",
+            "TEXT DEFAULT 'none'"
         )
         self._add_column_if_missing(
             conn, "upload_sessions", "completed_at", "TEXT"
@@ -110,7 +119,9 @@ class UploadSessionDB:
                        file_size_bytes: int, status: str = "staged",
                        queue_job_id: int = None,
                        work_order_job_id: int = None,
-                       operator_initials: str = None) -> dict:
+                       operator_initials: str = None,
+                       parsed_grams: float = None,
+                       parsed_grams_source: str = "none") -> dict:
         now = self._now()
         conn = self._get_conn()
         conn.execute("""
@@ -126,10 +137,12 @@ class UploadSessionDB:
                 file_size_bytes,
                 status,
                 operator_initials,
+                parsed_grams,
+                parsed_grams_source,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             upload_session_id,
             printer_id,
@@ -142,6 +155,8 @@ class UploadSessionDB:
             int(file_size_bytes or 0),
             status,
             operator_initials,
+            parsed_grams,
+            parsed_grams_source or "none",
             now,
             now,
         ))

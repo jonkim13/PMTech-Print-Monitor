@@ -364,7 +364,7 @@
                         <span class="stat-value orange" id="queueStatQueued">0</span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-label">Printing</span>
+                        <span class="stat-label">Active</span>
                         <span class="stat-value blue" id="queueStatPrinting">0</span>
                     </div>
                     <div class="stat-item">
@@ -381,7 +381,12 @@
                     <select class="input-field" id="queueFilterStatus">
                         <option value="">All Active</option>
                         <option value="queued">Queued</option>
+                        <option value="uploading">Uploading to printer</option>
+                        <option value="uploaded">Uploaded to printer</option>
+                        <option value="starting">Starting print</option>
                         <option value="printing">Printing</option>
+                        <option value="upload_failed">Upload failed</option>
+                        <option value="start_failed">Start failed</option>
                         <option value="completed">Completed</option>
                         <option value="failed">Failed</option>
                     </select>

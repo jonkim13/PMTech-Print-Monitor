@@ -13,6 +13,38 @@ function loadWorkOrdersPage() {
     loadQueueStats();
 }
 
+function isQueueActiveStatus(status) {
+    return ['uploading', 'uploaded', 'starting', 'printing'].indexOf(status) !== -1;
+}
+
+function isQueueFailureStatus(status) {
+    return ['upload_failed', 'start_failed', 'failed'].indexOf(status) !== -1;
+}
+
+function isQueuePrintableStatus(status) {
+    return status === 'queued' || status === 'failed';
+}
+
+function isQueueRetrySessionStatus(status) {
+    return status === 'upload_failed' || status === 'start_failed';
+}
+
+function formatQueueStatusLabel(status) {
+    var map = {
+        queued: 'Queued',
+        uploading: 'Uploading to printer',
+        uploaded: 'Uploaded to printer',
+        starting: 'Starting print',
+        printing: 'Print started',
+        completed: 'Completed',
+        upload_failed: 'Upload failed',
+        start_failed: 'Start failed',
+        failed: 'Print failed',
+        cancelled: 'Cancelled'
+    };
+    return map[status] || status || 'unknown';
+}
+
 // ============================================================
 // Sub-tab switching
 // ============================================================
@@ -90,6 +122,10 @@ async function loadQueue() {
 
             if (qi.status === 'queued') {
                 actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>';
+            } else if (qi.status === 'upload_failed' || qi.status === 'start_failed') {
+                actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="retryQueueSession(' + qi.queue_id + ')">' +
+                    (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>' +
+                    ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>';
             } else if (qi.status === 'failed') {
                 actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
                     ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry</button>';
@@ -106,7 +142,7 @@ async function loadQueue() {
                 '<td>' + escapeHtml(qi.part_name) + formatQueueJobSummary(qi) + '</td>' +
                 '<td>' + escapeHtml(qi.material) + '</td>' +
                 '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
-                '<td><span class="queue-status ' + statusClass + '">' + escapeHtml(qi.status) + '</span></td>' +
+                '<td><span class="queue-status ' + statusClass + '">' + escapeHtml(formatQueueStatusLabel(qi.status)) + '</span></td>' +
                 '<td>' + escapeHtml(printerText) + '</td>' +
                 '<td>' + actions + '</td>' +
                 '</tr>';
@@ -121,8 +157,13 @@ function getQueueStatusClass(status) {
     var map = {
         queued: 'qs-queued',
         assigned: 'qs-assigned',
+        uploading: 'qs-assigned',
+        uploaded: 'qs-assigned',
+        starting: 'qs-printing',
         printing: 'qs-printing',
         completed: 'qs-completed',
+        upload_failed: 'qs-failed',
+        start_failed: 'qs-failed',
         failed: 'qs-failed'
     };
     return map[status] || '';
@@ -158,7 +199,7 @@ function formatQueueJobSummary(qi) {
 
 function getPrintableQueueItems() {
     return (_woDetailQueueItems || []).filter(function(qi) {
-        return qi.status === 'queued' || qi.status === 'failed';
+        return isQueuePrintableStatus(qi.status);
     });
 }
 
@@ -335,7 +376,7 @@ async function createWoJobFromSelected() {
 function printWoJob(jobId) {
     var printableItems = (_woDetailQueueItems || []).filter(function(qi) {
         return qi.job_id === jobId &&
-            (qi.status === 'queued' || qi.status === 'failed');
+            isQueuePrintableStatus(qi.status);
     });
 
     if (!printableItems.length) {
@@ -385,7 +426,7 @@ async function showQueuePrintModal(queueId, jobId) {
             var first = selected[0];
             var printable = isJobExecution
                 ? selected.filter(function(qi) {
-                    return qi.status === 'queued' || qi.status === 'failed';
+                    return isQueuePrintableStatus(qi.status);
                 })
                 : selected;
             var partLabels = printable.map(function(qi) {
@@ -539,6 +580,32 @@ async function submitQueuePrint() {
     }
 }
 
+async function retryQueueSession(queueId) {
+    try {
+        var resp = await fetch('/api/queue/' + queueId + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        var result = await resp.json();
+        if (result.success || result.ok) {
+            showToast(result.message || 'Retry sent to printer');
+            if (_woDetailId) {
+                var detailPanel = document.getElementById('woPanel-detail');
+                if (detailPanel && detailPanel.classList.contains('active')) {
+                    viewWorkOrder(_woDetailId);
+                }
+            }
+            loadQueue();
+            loadQueueStats();
+        } else {
+            showToast('Error: ' + (result.message || result.error || 'Unknown'), 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
 async function requeueItem(queueId) {
     try {
         var resp = await fetch('/api/queue/' + queueId, {
@@ -669,10 +736,10 @@ function summarizeWoJobItems(items) {
         statuses.push(qi.status);
         if (qi.status === 'completed') summary.completed_parts += 1;
         if (qi.status === 'queued') summary.queued_parts += 1;
-        if (qi.status === 'printing' || qi.status === 'assigned') {
+        if (isQueueActiveStatus(qi.status) || qi.status === 'assigned') {
             summary.printing_parts += 1;
         }
-        if (qi.status === 'failed') summary.failed_parts += 1;
+        if (isQueueFailureStatus(qi.status)) summary.failed_parts += 1;
         if (!summary.printer_name && qi.assigned_printer_name) {
             summary.printer_name = qi.assigned_printer_name;
         }
@@ -692,11 +759,11 @@ function summarizeWoJobItems(items) {
     })) {
         summary.status = 'completed';
     } else if (activeStatuses.some(function(status) {
-        return status === 'printing' || status === 'assigned';
+        return isQueueActiveStatus(status) || status === 'assigned';
     })) {
         summary.status = 'in_progress';
     } else if (activeStatuses.some(function(status) {
-        return status === 'failed';
+        return isQueueFailureStatus(status);
     })) {
         summary.status = 'attention';
     } else if (activeStatuses.some(function(status) {
@@ -711,7 +778,7 @@ function summarizeWoJobItems(items) {
 function renderWoQueueRow(qi) {
     var sc = getQueueStatusClass(qi.status);
     var actions = '';
-    var canSelect = qi.status === 'queued' || qi.status === 'failed';
+    var canSelect = isQueuePrintableStatus(qi.status);
     var selector = canSelect
         ? '<input type="checkbox" class="wo-queue-select" data-queue-id="' + qi.queue_id + '" onchange="toggleWoQueueSelection(' + qi.queue_id + ', this.checked)">'
         : '';
@@ -719,6 +786,10 @@ function renderWoQueueRow(qi) {
 
     if (qi.status === 'queued') {
         actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Print</button>';
+    } else if (qi.status === 'upload_failed' || qi.status === 'start_failed') {
+        actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="retryQueueSession(' + qi.queue_id + ')">' +
+            (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>' +
+            ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>';
     } else if (qi.status === 'failed') {
         actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
             ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>';
@@ -729,7 +800,7 @@ function renderWoQueueRow(qi) {
         '<td>' + escapeHtml(qi.part_name) + '</td>' +
         '<td>' + escapeHtml(qi.material) + '</td>' +
         '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
-        '<td><span class="queue-status ' + sc + '">' + escapeHtml(qi.status) + '</span></td>' +
+        '<td><span class="queue-status ' + sc + '">' + escapeHtml(formatQueueStatusLabel(qi.status)) + '</span></td>' +
         '<td>' + escapeHtml(qi.assigned_printer_name || '-') + '</td>' +
         '<td>' + escapeHtml(qi.gcode_file || '-') + '</td>' +
         '<td>' + actions + '</td>' +
@@ -738,7 +809,7 @@ function renderWoQueueRow(qi) {
 
 function renderWoJobCard(title, job, items, isUnassigned) {
     var printableCount = items.filter(function(qi) {
-        return qi.status === 'queued' || qi.status === 'failed';
+        return isQueuePrintableStatus(qi.status);
     }).length;
     var badgeClass = getWoStatusClass(job.status);
     var meta = [

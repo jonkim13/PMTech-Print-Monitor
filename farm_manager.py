@@ -27,7 +27,8 @@ class PrintFarmManager:
                  filament_db: FilamentInventoryDB = None,
                  assignment_db: FilamentAssignmentDB = None,
                  production_db=None, snapshots_dir=None,
-                 data_dir=None, work_order_db=None):
+                 data_dir=None, work_order_db=None,
+                 upload_session_db=None):
         self.printers = {}
         self.job_history = []       # in-memory recent events
         self.poll_interval = config.get("poll_interval_sec", 5)
@@ -36,6 +37,7 @@ class PrintFarmManager:
         self.assignment_db = assignment_db
         self.production_db = production_db
         self.work_order_db = work_order_db
+        self.upload_session_db = upload_session_db
         self.snapshots_dir = snapshots_dir
         self.data_dir = data_dir
         self._lock = threading.Lock()
@@ -193,6 +195,35 @@ class PrintFarmManager:
         for printer_id in empty_printers:
             self._pending_print_starts.pop(printer_id, None)
 
+    def _match_pending_print_start_locked(self, printer_id: str,
+                                          file_name: str = None,
+                                          upload_session_id: str = None):
+        """Resolve the best pending start match for a printer."""
+        entries = self._pending_print_starts.get(printer_id, [])
+        if not entries:
+            return None
+
+        if upload_session_id:
+            for entry in reversed(entries):
+                if entry.get("upload_session_id") == upload_session_id:
+                    return dict(entry)
+
+        normalized = self._normalize_print_filename(file_name)
+        if normalized:
+            for entry in reversed(entries):
+                remote_name = self._normalize_print_filename(
+                    entry.get("remote_filename")
+                )
+                original_name = self._normalize_print_filename(
+                    entry.get("original_filename")
+                )
+                if normalized in (remote_name, original_name):
+                    return dict(entry)
+
+        if len(entries) == 1:
+            return dict(entries[-1])
+        return None
+
     # ------------------------------------------------------------------
     # Deduplication Helpers
     # ------------------------------------------------------------------
@@ -241,97 +272,88 @@ class PrintFarmManager:
     # Polling
     # ------------------------------------------------------------------
 
+    def poll_printer(self, printer_id: str) -> dict:
+        """Poll one printer, update transition state, and return the state."""
+        printer_data = self.printers.get(printer_id)
+        if not printer_data:
+            return {"error": "Unknown printer"}
+
+        client = printer_data["client"]
+        prev_status = printer_data["previous_status"]
+        state = client.poll()
+        new_status = state["status"]
+
+        if prev_status != new_status:
+            event = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "printer_id": printer_id,
+                "printer_name": state["name"],
+                "from_status": prev_status,
+                "to_status": new_status,
+                "filename": state["job"]["filename"],
+                "duration_sec": 0,
+            }
+
+            if new_status == "finished" or (
+                prev_status == "printing" and new_status == "idle"
+            ):
+                event["type"] = "print_complete"
+                start = self._print_start_times.pop(printer_id, None)
+                if start:
+                    event["duration_sec"] = int(
+                        (datetime.now(timezone.utc) - start).total_seconds()
+                    )
+
+                if not self._is_duplicate_history_event(event):
+                    with self._lock:
+                        if not self._is_duplicate_pending_event(event):
+                            self.pending_events.append(event)
+                        self.job_history.append(event)
+                    self.history_db.log_event(event)
+
+                self._auto_deduct_filament(printer_id, state)
+                self._production_complete(
+                    printer_id, client, state, event["duration_sec"]
+                )
+                self._wo_complete(printer_id, state)
+                print(f"[EVENT] Print complete on {state['name']}: "
+                      f"{state['job']['filename']}")
+
+            elif new_status == "printing" and prev_status != "printing":
+                event["type"] = "print_started"
+                self._print_start_times[printer_id] = datetime.now(timezone.utc)
+
+                if not self._is_duplicate_history_event(event):
+                    with self._lock:
+                        self.job_history.append(event)
+                    self.history_db.log_event(event)
+
+                self._production_start(printer_id, client, state)
+                print(f"[EVENT] Print started on {state['name']}: "
+                      f"{state['job']['filename']}")
+
+            elif new_status in ("error",):
+                event["type"] = "printer_error"
+
+                if not self._is_duplicate_history_event(event):
+                    with self._lock:
+                        if not self._is_duplicate_pending_event(event):
+                            self.pending_events.append(event)
+                        self.job_history.append(event)
+                    self.history_db.log_event(event)
+
+                self._production_fail(printer_id, state)
+                self._wo_fail(printer_id, state)
+                print(f"[EVENT] Error on {state['name']}!")
+
+            printer_data["previous_status"] = new_status
+
+        return state
+
     def poll_all(self):
         """Poll all printers and detect state changes."""
-        for pid, printer_data in self.printers.items():
-            client = printer_data["client"]
-            prev_status = printer_data["previous_status"]
-
-            state = client.poll()
-            new_status = state["status"]
-
-            # Detect state transitions
-            if prev_status != new_status:
-                event = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "printer_id": pid,
-                    "printer_name": state["name"],
-                    "from_status": prev_status,
-                    "to_status": new_status,
-                    "filename": state["job"]["filename"],
-                    "duration_sec": 0,
-                }
-
-                # Print finished -- this is what triggers the drone
-                if new_status == "finished" or (
-                    prev_status == "printing" and new_status == "idle"
-                ):
-                    event["type"] = "print_complete"
-                    # Calculate duration
-                    start = self._print_start_times.pop(pid, None)
-                    if start:
-                        event["duration_sec"] = int(
-                            (datetime.now(timezone.utc) - start
-                             ).total_seconds()
-                        )
-
-                    # Deduplicate before logging
-                    if not self._is_duplicate_history_event(event):
-                        with self._lock:
-                            if not self._is_duplicate_pending_event(event):
-                                self.pending_events.append(event)
-                            self.job_history.append(event)
-                        self.history_db.log_event(event)
-
-                    # Auto-deduct filament from assigned spool
-                    self._auto_deduct_filament(pid, state)
-
-                    # Production logging: complete job
-                    self._production_complete(pid, client, state,
-                                              event["duration_sec"])
-
-                    # Work order queue: auto-complete matching item
-                    self._wo_complete(pid, state)
-
-                    print(f"[EVENT] Print complete on {state['name']}: "
-                          f"{state['job']['filename']}")
-
-                elif new_status == "printing" and prev_status != "printing":
-                    event["type"] = "print_started"
-                    self._print_start_times[pid] = datetime.now(timezone.utc)
-
-                    # Deduplicate before logging
-                    if not self._is_duplicate_history_event(event):
-                        with self._lock:
-                            self.job_history.append(event)
-                        self.history_db.log_event(event)
-
-                    # Production logging: create job
-                    self._production_start(pid, client, state)
-
-                    print(f"[EVENT] Print started on {state['name']}: "
-                          f"{state['job']['filename']}")
-
-                elif new_status in ("error",):
-                    event["type"] = "printer_error"
-
-                    # Deduplicate before logging
-                    if not self._is_duplicate_history_event(event):
-                        with self._lock:
-                            if not self._is_duplicate_pending_event(event):
-                                self.pending_events.append(event)
-                            self.job_history.append(event)
-                        self.history_db.log_event(event)
-
-                    # Production logging: fail job
-                    self._production_fail(pid, state)
-
-                    # Work order queue: auto-fail matching item
-                    self._wo_fail(pid, state)
-
-                    print(f"[EVENT] Error on {state['name']}!")
-
-                printer_data["previous_status"] = new_status
+        for printer_id in self.printers:
+            self.poll_printer(printer_id)
 
         # Save state after every poll cycle
         self._save_state()
@@ -466,21 +488,40 @@ class PrintFarmManager:
                         "color": s.get("color") if s else None,
                     }
 
-            file_name = details.get("file_name", state["job"]["filename"])
             pending_start = self.get_pending_print_start_entry(
-                printer_id, file_name
+                printer_id, file_name=state["job"]["filename"]
             )
+            upload_session = None
+            upload_session_id = None
+            if pending_start:
+                upload_session_id = pending_start.get("upload_session_id")
+            if self.upload_session_db and upload_session_id:
+                upload_session = self.upload_session_db.get_session(
+                    upload_session_id
+                )
+
+            file_name = details.get("file_name", state["job"]["filename"])
+            file_display_name = details.get(
+                "file_display_name", state["job"]["filename"]
+            )
+            if upload_session:
+                file_name = upload_session.get("remote_filename") or file_name
+                file_display_name = (
+                    upload_session.get("original_filename")
+                    or file_display_name
+                )
             operator_initials = (
                 pending_start.get("operator_initials")
                 if pending_start else None
             )
+            if not operator_initials and upload_session:
+                operator_initials = upload_session.get("operator_initials")
 
             job_id = self.production_db.create_job(
                 printer_id=printer_id,
                 printer_name=state["name"],
                 file_name=file_name,
-                file_display_name=details.get("file_display_name",
-                                              state["job"]["filename"]),
+                file_display_name=file_display_name,
                 filament_type=details.get("filament_type"),
                 filament_used_g=float(details.get("filament_used_g") or 0),
                 filament_used_mm=float(details.get("filament_used_mm") or 0),
@@ -496,6 +537,16 @@ class PrintFarmManager:
                 operator_initials=operator_initials,
             )
             self._active_job_ids[printer_id] = job_id
+
+            if self.upload_session_db and upload_session_id:
+                self.upload_session_db.set_status(
+                    upload_session_id,
+                    "printing",
+                    last_error=None,
+                    operator_initials=operator_initials,
+                    completed=True,
+                )
+
             if self.work_order_db:
                 queue_job = None
                 pending_queue_job_id = (
@@ -506,13 +557,27 @@ class PrintFarmManager:
                     queue_job = self.work_order_db.get_queue_job(
                         pending_queue_job_id
                     )
-                    if queue_job and queue_job.get("status") != "printing":
+                    if queue_job and queue_job.get("status") not in (
+                        "uploading", "uploaded", "starting", "printing"
+                    ):
                         queue_job = None
                 if not queue_job:
+                    queue_job = self.work_order_db.get_active_queue_job_for_printer(
+                        printer_id
+                    )
+                if (not queue_job and upload_session
+                        and upload_session.get("queue_job_id")):
+                    queue_job = self.work_order_db.get_queue_job(
+                        upload_session["queue_job_id"]
+                    )
+                if not queue_job:
                     queue_job = self.work_order_db.find_printing_queue_job_by_filename(
-                        printer_id, file_name
+                        printer_id, state["job"]["filename"]
                     )
                 if queue_job:
+                    self.work_order_db.mark_queue_job_printing(
+                        queue_job["queue_job_id"]
+                    )
                     self._active_queue_job_ids[printer_id] = (
                         queue_job["queue_job_id"]
                     )
@@ -523,7 +588,12 @@ class PrintFarmManager:
                     self._active_queue_job_ids.pop(printer_id, None)
             if pending_start:
                 self.clear_pending_print_start(
-                    printer_id, file_name, operator_initials
+                    printer_id,
+                    upload_session_id=upload_session_id,
+                    remote_filename=(
+                        upload_session.get("remote_filename")
+                        if upload_session else state["job"]["filename"]
+                    ),
                 )
 
             # Machine log
@@ -673,6 +743,18 @@ class PrintFarmManager:
         if not filename:
             return
         try:
+            queue_job = self.work_order_db.get_active_queue_job_for_printer(
+                printer_id
+            )
+            if queue_job:
+                self.work_order_db.complete_queue_job(
+                    queue_job["queue_job_id"],
+                    print_job_id=queue_job.get("print_job_id"),
+                )
+                print(f"[WORKORDER] Queue job #{queue_job['queue_job_id']} "
+                      f"completed")
+                return
+
             queue_job = self.work_order_db.find_printing_queue_job_by_filename(
                 printer_id, filename)
             if queue_job:
@@ -722,6 +804,15 @@ class PrintFarmManager:
         if not filename:
             return
         try:
+            queue_job = self.work_order_db.get_active_queue_job_for_printer(
+                printer_id
+            )
+            if queue_job:
+                self.work_order_db.fail_queue_job(queue_job["queue_job_id"])
+                print(f"[WORKORDER] Queue job #{queue_job['queue_job_id']} "
+                      f"failed")
+                return
+
             queue_job = self.work_order_db.find_printing_queue_job_by_filename(
                 printer_id, filename)
             if queue_job:
@@ -802,80 +893,125 @@ class PrintFarmManager:
             return printer_data["client"]
         return None
 
-    def record_pending_print_start(self, printer_id: str, file_name: str,
+    def record_pending_print_start(self, printer_id: str,
+                                   upload_session_id: str,
+                                   remote_filename: str,
+                                   original_filename: str,
                                    operator_initials: str,
                                    queue_job_id: int = None,
                                    job_id: int = None):
-        """Store initials for a UI-initiated print until polling logs it."""
-        normalized_file = self._normalize_print_filename(file_name)
+        """Store structured start metadata until polling confirms printing."""
+        normalized_remote = self._normalize_print_filename(remote_filename)
+        normalized_original = self._normalize_print_filename(original_filename)
         initials = str(operator_initials or "").strip()
-        if not printer_id or not normalized_file or not initials:
+        if not printer_id or not upload_session_id or not initials:
             return
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             self._prune_pending_print_starts_locked()
             entries = self._pending_print_starts.setdefault(printer_id, [])
             for entry in reversed(entries):
-                if entry.get("file_name") != normalized_file:
-                    continue
-                if entry.get("operator_initials") != initials:
+                if entry.get("upload_session_id") != upload_session_id:
                     continue
                 entry["created_at"] = now
+                entry["remote_filename"] = normalized_remote
+                entry["original_filename"] = normalized_original
+                entry["operator_initials"] = initials
                 if queue_job_id is not None:
                     entry["queue_job_id"] = queue_job_id
                 if job_id is not None:
                     entry["job_id"] = job_id
                 return
             entries.append({
-                "file_name": normalized_file,
+                "upload_session_id": upload_session_id,
+                "remote_filename": normalized_remote,
+                "original_filename": normalized_original,
                 "operator_initials": initials,
                 "queue_job_id": queue_job_id,
                 "job_id": job_id,
                 "created_at": now,
             })
 
-    def clear_pending_print_start(self, printer_id: str, file_name: str,
-                                  operator_initials: str = None):
-        """Remove pending initials when a start request fails."""
-        normalized_file = self._normalize_print_filename(file_name)
-        initials = str(operator_initials or "").strip()
-        if not printer_id or not normalized_file:
+    def clear_pending_print_start(self, printer_id: str,
+                                  upload_session_id: str = None,
+                                  remote_filename: str = None):
+        """Remove pending print-start metadata when a start fails."""
+        normalized_remote = self._normalize_print_filename(remote_filename)
+        if not printer_id:
             return
         with self._lock:
             self._prune_pending_print_starts_locked()
             entries = self._pending_print_starts.get(printer_id, [])
             for index in range(len(entries) - 1, -1, -1):
                 entry = entries[index]
-                if entry.get("file_name") != normalized_file:
+                if upload_session_id and (
+                    entry.get("upload_session_id") != upload_session_id
+                ):
                     continue
-                if initials and entry.get("operator_initials") != initials:
+                if normalized_remote and (
+                    entry.get("remote_filename") != normalized_remote
+                ):
                     continue
                 entries.pop(index)
                 break
             if not entries:
                 self._pending_print_starts.pop(printer_id, None)
 
-    def get_pending_print_start(self, printer_id: str, file_name: str):
+    def get_pending_print_start(self, printer_id: str, file_name: str = None,
+                                upload_session_id: str = None):
         """Read initials for the next matching polling-detected start."""
-        entry = self.get_pending_print_start_entry(printer_id, file_name)
+        entry = self.get_pending_print_start_entry(
+            printer_id, file_name=file_name,
+            upload_session_id=upload_session_id
+        )
         if not entry:
             return None
         return entry.get("operator_initials")
 
-    def get_pending_print_start_entry(self, printer_id: str, file_name: str):
-        """Read pending print-start metadata for a matching file."""
-        normalized_file = self._normalize_print_filename(file_name)
-        if not printer_id or not normalized_file:
+    def get_pending_print_start_entry(self, printer_id: str,
+                                      file_name: str = None,
+                                      upload_session_id: str = None):
+        """Read pending print-start metadata for a matching printer."""
+        if not printer_id:
             return None
         with self._lock:
             self._prune_pending_print_starts_locked()
-            entries = self._pending_print_starts.get(printer_id, [])
-            for index in range(len(entries) - 1, -1, -1):
-                entry = entries[index]
-                if entry.get("file_name") != normalized_file:
-                    continue
-                return dict(entry)
-        return None
+            return self._match_pending_print_start_locked(
+                printer_id,
+                file_name=file_name,
+                upload_session_id=upload_session_id,
+            )
+
+    def wait_for_print_confirmation(self, printer_id: str,
+                                    upload_session_id: str,
+                                    timeout_sec: int = 30) -> dict:
+        """Poll the printer until printing is observed or the timeout expires."""
+        deadline = time.monotonic() + max(1, int(timeout_sec or 0))
+        while time.monotonic() < deadline:
+            state = self.poll_printer(printer_id)
+            if state.get("status") == "printing":
+                return {
+                    "ok": True,
+                    "success": True,
+                    "message": "Printer entered printing state",
+                    "details": {
+                        "printer_id": printer_id,
+                        "upload_session_id": upload_session_id,
+                        "filename": state.get("job", {}).get("filename"),
+                    },
+                }
+            time.sleep(min(2, self.poll_interval))
+        return {
+            "ok": False,
+            "success": False,
+            "message": "Printer never entered printing state after the start request",
+            "error_type": "start_timeout",
+            "details": {
+                "printer_id": printer_id,
+                "upload_session_id": upload_session_id,
+                "last_status": self.get_printer_status(printer_id).get("status"),
+            },
+        }
 
     def get_pending_events(self) -> list:
         """

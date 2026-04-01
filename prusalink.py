@@ -113,56 +113,180 @@ class PrusaLinkClient:
         return resp
 
     @staticmethod
-    def _result(success, status_code=None, **kwargs):
-        # type: (bool, Optional[int], ...) -> dict
-        result = {"success": success}
-        if status_code is not None:
-            result["status_code"] = status_code
+    def _result(ok, message, http_status=None, error_type=None,
+                details=None, **kwargs):
+        # type: (bool, str, Optional[int], Optional[str], Optional[dict], ...) -> dict
+        result = {
+            "ok": ok,
+            "success": ok,
+            "message": message,
+            "error_type": error_type,
+            "http_status": http_status,
+            "details": details or {},
+        }
+        if http_status is not None:
+            result["status_code"] = http_status
+        if not ok:
+            result["error"] = message
         result.update(kwargs)
         return result
 
-    def _file_endpoint(self, filename):
-        # type: (str) -> str
-        """Build the PrusaLink file endpoint for local storage."""
-        quoted = quote(filename, safe="")
-        return "/api/v1/files/local/{}".format(quoted)
-
-    def upload_gcode(self, local_path, filename, print_after=False):
-        # type: (str, str, bool) -> dict
+    @staticmethod
+    def _normalize_storage(storage):
+        # type: (Optional[str]) -> str
         """
-        Upload a gcode file to the printer via PrusaLink HTTP API.
-
-        PUT /api/v1/files/local/{filename}
-        Uses HTTP Digest auth. Retries up to 3 times on failure.
-
-        Args:
-            local_path: Path to the gcode file on the Pi/server.
-            filename: The filename to use on the printer.
-            print_after: If True, include Print-After-Upload header.
-
-        Returns:
-            dict with success, status_code, error, etc.
+        PrusaLink commonly exposes printer storage as `local`, even when the
+        user-facing destination is the printer's USB/local media.
         """
-        file_size = os.path.getsize(local_path)
-        endpoint = self._file_endpoint(filename)
+        normalized = str(storage or "usb").strip().lower()
+        if normalized in ("", "usb", "local"):
+            return "local"
+        return normalized
 
-        last_error = None
+    @staticmethod
+    def _classify_http_status(status_code):
+        # type: (int) -> str
+        if status_code in (401, 403):
+            return "auth_error"
+        if status_code == 404:
+            return "not_found"
+        if status_code in (408, 504):
+            return "timeout"
+        if status_code in (409, 423):
+            return "printer_busy"
+        if status_code in (413, 507):
+            return "storage_full"
+        if status_code >= 500:
+            return "printer_api_error"
+        return "request_rejected"
+
+    @classmethod
+    def _http_error_result(cls, exc, action, details=None):
+        # type: (requests.exceptions.HTTPError, str, Optional[dict]) -> dict
+        status_code = exc.response.status_code if exc.response else 502
+        error_type = cls._classify_http_status(status_code)
+        message = "{} failed with HTTP {}".format(action, status_code)
+        return cls._result(
+            False,
+            message,
+            http_status=status_code,
+            error_type=error_type,
+            details=details or {},
+        )
+
+    @classmethod
+    def _request_error_result(cls, exc, action, details=None):
+        # type: (Exception, str, Optional[dict]) -> dict
+        if isinstance(exc, requests.exceptions.Timeout):
+            return cls._result(
+                False,
+                "{} timed out".format(action),
+                http_status=504,
+                error_type="timeout",
+                details=details or {},
+            )
+        if isinstance(exc, requests.exceptions.ConnectionError):
+            return cls._result(
+                False,
+                "{} failed: printer connection error".format(action),
+                http_status=502,
+                error_type="connection_error",
+                details=details or {},
+            )
+        if isinstance(exc, requests.exceptions.HTTPError):
+            return cls._http_error_result(exc, action, details=details)
+        if isinstance(exc, requests.exceptions.RequestException):
+            return cls._result(
+                False,
+                "{} failed: {}".format(action, exc),
+                http_status=502,
+                error_type="request_error",
+                details=details or {},
+            )
+        return cls._result(
+            False,
+            "{} failed: {}".format(action, exc),
+            http_status=500,
+            error_type="unexpected_error",
+            details=details or {},
+        )
+
+    @staticmethod
+    def _should_retry_result(result):
+        # type: (dict) -> bool
+        return result.get("error_type") in (
+            "timeout",
+            "connection_error",
+            "printer_api_error",
+            "request_error",
+        )
+
+    @staticmethod
+    def _collect_storage_candidates(node):
+        # type: (object) -> list
+        candidates = []
+        if isinstance(node, dict):
+            for key in ("path", "name", "display_name", "display"):
+                value = node.get(key)
+                if isinstance(value, str) and value:
+                    candidates.append(value)
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    candidates.extend(
+                        PrusaLinkClient._collect_storage_candidates(value)
+                    )
+        elif isinstance(node, list):
+            for item in node:
+                candidates.extend(
+                    PrusaLinkClient._collect_storage_candidates(item)
+                )
+        return candidates
+
+    def _file_endpoint(self, filename, storage="usb"):
+        # type: (str, str) -> str
+        """Build the PrusaLink file endpoint for printer storage."""
+        quoted = quote(filename, safe="/")
+        return "/api/v1/files/{}/{}".format(
+            self._normalize_storage(storage), quoted
+        )
+
+    def upload_file(self, local_path, remote_filename, storage="usb"):
+        # type: (str, str, str) -> dict
+        """Upload a G-code file to printer storage without starting it."""
+        if not os.path.exists(local_path):
+            return self._result(
+                False,
+                "Local staged file not found",
+                http_status=404,
+                error_type="local_file_missing",
+                details={"local_path": local_path},
+            )
+
+        try:
+            file_size = os.path.getsize(local_path)
+        except OSError as exc:
+            return self._result(
+                False,
+                "Could not read local staged file",
+                http_status=500,
+                error_type="local_file_error",
+                details={"local_path": local_path, "error": str(exc)},
+            )
+
+        endpoint = self._file_endpoint(remote_filename, storage=storage)
+        last_result = None
+
         for attempt in range(1, self.upload_retries + 1):
             start_time = time.monotonic()
-            print("[UPLOAD] Attempt {}/{} to {}: file={} size={}B "
-                  "print_after={}".format(
-                      attempt, self.upload_retries, self.printer_id,
-                      filename, file_size,
-                      "yes" if print_after else "no"))
+            print("[UPLOAD] Attempt {}/{} to {}: remote_file={} size={}B".format(
+                attempt, self.upload_retries, self.printer_id,
+                remote_filename, file_size))
             try:
                 headers = {
                     "Content-Type": "application/octet-stream",
                     "Content-Length": str(file_size),
                     "Overwrite": "?1",
                 }
-                if print_after:
-                    headers["Print-After-Upload"] = "?1"
-
                 with open(local_path, "rb") as fh:
                     resp = self._request(
                         endpoint,
@@ -173,69 +297,177 @@ class PrusaLinkClient:
                     )
 
                 elapsed = time.monotonic() - start_time
-                print("[UPLOAD] Success on {} (attempt {}): file={} "
+                print("[UPLOAD] Success on {} (attempt {}): remote_file={} "
                       "size={}B status={} elapsed={:.1f}s".format(
-                          self.printer_id, attempt, filename,
+                          self.printer_id, attempt, remote_filename,
                           file_size, resp.status_code, elapsed))
                 return self._result(
                     True,
-                    status_code=200,
-                    upload_completed=True,
-                    print_started=bool(print_after),
-                    attempt=attempt,
+                    "File uploaded to printer storage",
+                    http_status=resp.status_code,
+                    details={
+                        "attempt": attempt,
+                        "elapsed_sec": round(elapsed, 2),
+                        "remote_filename": remote_filename,
+                        "storage": storage,
+                        "file_size_bytes": file_size,
+                    },
                 )
-
-            except requests.exceptions.Timeout as exc:
-                elapsed = time.monotonic() - start_time
-                last_error = ("Upload timed out (attempt {}/{}, "
-                              "{:.0f}s)".format(attempt, self.upload_retries,
-                                                elapsed))
-                print("[UPLOAD] Timeout on {} (attempt {}): file={} "
-                      "elapsed={:.1f}s".format(
-                          self.printer_id, attempt, filename, elapsed))
-
-            except requests.exceptions.HTTPError as exc:
-                elapsed = time.monotonic() - start_time
-                sc = exc.response.status_code if exc.response else 502
-                last_error = ("Printer rejected upload with HTTP {} "
-                              "(attempt {}/{})".format(
-                                  sc, attempt, self.upload_retries))
-                print("[UPLOAD] HTTP {} on {} (attempt {}): file={} "
-                      "elapsed={:.1f}s".format(
-                          sc, self.printer_id, attempt, filename, elapsed))
-
-            except requests.exceptions.RequestException as exc:
-                elapsed = time.monotonic() - start_time
-                last_error = ("Connection error: {} (attempt {}/{})".format(
-                    exc, attempt, self.upload_retries))
-                print("[UPLOAD] Connection error on {} (attempt {}): "
-                      "file={} error={}".format(
-                          self.printer_id, attempt, filename, exc))
 
             except Exception as exc:
                 elapsed = time.monotonic() - start_time
-                last_error = str(exc)
-                print("[UPLOAD] Unexpected error on {} (attempt {}): "
-                      "file={} error={}".format(
-                          self.printer_id, attempt, filename, exc))
-
-            # Wait before retry (except on last attempt)
-            if attempt < self.upload_retries:
+                last_result = self._request_error_result(
+                    exc,
+                    "upload",
+                    details={
+                        "attempt": attempt,
+                        "elapsed_sec": round(elapsed, 2),
+                        "remote_filename": remote_filename,
+                        "storage": storage,
+                        "file_size_bytes": file_size,
+                    },
+                )
+                print("[UPLOAD] Failure on {} (attempt {}): remote_file={} "
+                      "error_type={} elapsed={:.1f}s".format(
+                          self.printer_id, attempt, remote_filename,
+                          last_result.get("error_type"), elapsed))
+                if (attempt >= self.upload_retries
+                        or not self._should_retry_result(last_result)):
+                    break
                 print("[UPLOAD] Retrying in {}s...".format(
                     self.upload_retry_delay))
                 time.sleep(self.upload_retry_delay)
 
-        # All retries exhausted
-        print("[UPLOAD] All {} attempts failed for {} on {}".format(
-            self.upload_retries, filename, self.printer_id))
-        return self._result(
+        return last_result or self._result(
             False,
-            status_code=504,
-            error=("Upload failed after {} attempts: {}".format(
-                self.upload_retries, last_error)),
-            error_type="upload_timeout",
-            upload_completed=False,
-            print_started=False,
+            "Upload failed",
+            http_status=500,
+            error_type="upload_failed",
+            details={"remote_filename": remote_filename, "storage": storage},
+        )
+
+    def get_transfer_status(self):
+        # type: () -> dict
+        """Read the current upload/transfer status from PrusaLink."""
+        try:
+            resp = self._request("/api/v1/transfer")
+            payload = {}
+            if resp.content:
+                payload = resp.json()
+            return self._result(
+                True,
+                "Transfer status fetched",
+                http_status=resp.status_code,
+                details=payload,
+            )
+        except Exception as exc:
+            return self._request_error_result(exc, "transfer status lookup")
+
+    def file_exists(self, remote_filename, storage="usb"):
+        # type: (str, str) -> dict
+        """Check whether a file is visible on printer storage."""
+        normalized_storage = self._normalize_storage(storage)
+        try:
+            resp = self._request(
+                "/api/v1/storage/{}".format(normalized_storage)
+            )
+            payload = resp.json() if resp.content else {}
+            target = str(remote_filename or "").strip().lower()
+            target_bare = os.path.basename(target)
+            matches = []
+            for candidate in self._collect_storage_candidates(payload):
+                normalized = str(candidate).strip().lower()
+                if (normalized == target
+                        or normalized.endswith("/" + target)
+                        or normalized == target_bare
+                        or normalized.endswith("/" + target_bare)):
+                    matches.append(candidate)
+            exists = bool(matches)
+            return self._result(
+                True,
+                "File {} on printer storage".format(
+                    "found" if exists else "not found"
+                ),
+                http_status=resp.status_code,
+                details={
+                    "exists": exists,
+                    "matches": matches[:5],
+                    "remote_filename": remote_filename,
+                    "storage": storage,
+                },
+            )
+        except Exception as exc:
+            return self._request_error_result(
+                exc,
+                "file existence check",
+                details={
+                    "remote_filename": remote_filename,
+                    "storage": storage,
+                },
+            )
+
+    def start_file_print(self, remote_filename, storage="usb"):
+        # type: (str, str) -> dict
+        """Start printing a file that already exists on printer storage."""
+        try:
+            endpoint = self._file_endpoint(remote_filename, storage=storage)
+            resp = self._request(endpoint, method="POST")
+            return self._result(
+                True,
+                "Print start requested",
+                http_status=resp.status_code,
+                details={
+                    "remote_filename": remote_filename,
+                    "storage": storage,
+                },
+            )
+        except Exception as exc:
+            return self._request_error_result(
+                exc,
+                "print start",
+                details={
+                    "remote_filename": remote_filename,
+                    "storage": storage,
+                },
+            )
+
+    def upload_gcode(self, local_path, filename, print_after=False):
+        # type: (str, str, bool) -> dict
+        """
+        Backward-compatible wrapper. Active routes use upload/verify/start
+        separately, but older call sites may still rely on this helper.
+        """
+        upload_result = self.upload_file(local_path, filename)
+        if not upload_result.get("ok") or not print_after:
+            upload_result["upload_completed"] = upload_result.get("ok")
+            upload_result["print_started"] = False
+            return upload_result
+
+        start_result = self.start_file_print(filename)
+        if not start_result.get("ok"):
+            return self._result(
+                False,
+                start_result.get("message"),
+                http_status=start_result.get("http_status"),
+                error_type=start_result.get("error_type"),
+                details={
+                    "upload": upload_result.get("details"),
+                    "start": start_result.get("details"),
+                },
+                upload_completed=True,
+                print_started=False,
+            )
+
+        return self._result(
+            True,
+            "File uploaded and print start requested",
+            http_status=start_result.get("http_status"),
+            details={
+                "upload": upload_result.get("details"),
+                "start": start_result.get("details"),
+            },
+            upload_completed=True,
+            print_started=True,
         )
 
     def poll(self):
@@ -319,7 +551,9 @@ class PrusaLinkClient:
         try:
             endpoint = "/api/v1/storage"
             if storage:
-                endpoint = "/api/v1/storage/{}".format(storage)
+                endpoint = "/api/v1/storage/{}".format(
+                    self._normalize_storage(storage)
+                )
             resp = self._request(endpoint)
             return resp.json()
         except Exception as e:

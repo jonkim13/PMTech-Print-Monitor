@@ -220,16 +220,16 @@ async function submitUpload() {
 
     try {
         const url = '/api/printers/' + printerId + '/upload' + (printAfter ? '?print_after=1' : '');
-        btn.textContent = 'Sending to printer...';
+        btn.textContent = printAfter ? 'Uploading, verifying, then starting...' : 'Uploading to printer...';
         const resp = await fetch(url, { method: 'POST', body: formData });
         const result = await resp.json();
 
         if(result.success) {
-            showToast('Uploaded ' + file.name + ' successfully');
+            showToast(result.message || ('Uploaded ' + file.name + ' successfully'));
             hideModal('uploadModal');
         } else {
             var errMsg = formatUploadError(result, resp.status);
-            if(result.stored_on_server && result.filename) {
+            if(result.stored_on_server && (result.filename || result.upload_session_id)) {
                 errMsg += ' — File saved on server, you can retry without re-uploading.';
             }
             showToast(errMsg, 'error');
@@ -243,19 +243,25 @@ async function submitUpload() {
 }
 
 function formatUploadError(result, statusCode) {
-    if(result && result.error_type === 'upload_timeout') {
-        return result.error || 'Upload timed out while sending the file to the printer';
+    if(result && result.error_type === 'timeout') {
+        return result.message || result.error || 'Upload timed out while sending the file to the printer';
     }
-    if(result && result.error_type === 'print_start_error') {
-        return result.error || 'File uploaded, but the printer could not start the print';
+    if(result && result.error_type === 'verification_failed') {
+        return result.message || 'The upload finished, but the file never appeared on the printer';
+    }
+    if(result && (result.error_type === 'start_failed' || result.error_type === 'start_timeout')) {
+        return result.message || 'File uploaded, but the printer did not confirm the print start';
+    }
+    if(result && result.error_type === 'remote_file_missing') {
+        return result.message || 'The uploaded file could not be found on the printer anymore';
     }
     if(statusCode === 400) {
-        return 'Invalid upload: ' + (result.error || 'Check the selected file and try again.');
+        return 'Invalid upload: ' + ((result && (result.message || result.error)) || 'Check the selected file and try again.');
     }
-    if(result && result.error_type === 'printer_api_error') {
-        return result.error || 'Printer upload failed';
+    if(result && (result.error_type === 'printer_api_error' || result.error_type === 'printer_busy')) {
+        return result.message || result.error || 'Printer upload failed';
     }
-    return 'Upload failed: ' + (result && result.error ? result.error : 'Unknown error');
+    return 'Upload failed: ' + ((result && (result.message || result.error)) ? (result.message || result.error) : 'Unknown error');
 }
 
 async function stopPrint(printerId, printerName) {

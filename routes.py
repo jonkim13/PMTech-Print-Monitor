@@ -5,7 +5,6 @@ All API endpoints and the dashboard route, organized as a Blueprint.
 """
 
 import os
-import tempfile
 import time
 
 from flask import Blueprint, jsonify, render_template, request
@@ -21,16 +20,17 @@ _drone_controller = None
 _assignment_db = None
 _ui_config = {}
 _gcode_uploads_dir = None
+_upload_workflow = None
 _ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 
 
 def register_routes(app, farm_manager, filament_db, history_db,
                     drone_controller, assignment_db=None, ui_config=None,
-                    gcode_uploads_dir=None):
+                    gcode_uploads_dir=None, upload_workflow=None):
     """Wire up the blueprint with the application's shared objects."""
     global _farm_manager, _filament_db, _history_db, _drone_controller
-    global _assignment_db, _ui_config, _gcode_uploads_dir
+    global _assignment_db, _ui_config, _gcode_uploads_dir, _upload_workflow
     _farm_manager = farm_manager
     _filament_db = filament_db
     _history_db = history_db
@@ -38,6 +38,7 @@ def register_routes(app, farm_manager, filament_db, history_db,
     _assignment_db = assignment_db
     _ui_config = ui_config or {}
     _gcode_uploads_dir = gcode_uploads_dir
+    _upload_workflow = upload_workflow
     app.register_blueprint(api)
 
 
@@ -85,6 +86,13 @@ def _validate_operator_initials(value):
     return initials
 
 
+def _workflow_status_code(result):
+    status_code = result.get("http_status") or result.get("status_code")
+    if status_code is None:
+        status_code = 200 if result.get("ok") or result.get("success") else 500
+    return status_code
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -126,17 +134,13 @@ def api_printer_files(printer_id):
 @api.route("/api/printers/<printer_id>/upload", methods=["POST"])
 def api_printer_upload(printer_id):
     """
-    Upload a gcode file to a printer via Pi relay.
-
-    Flow: Browser -> Pi (data/gcode_uploads/) -> Printer (PrusaLink HTTP API)
-
-    Expects multipart form data with 'file' field.
-    Optional query param: ?print_after=1
-    Requires form field 'operator_initials' when print_after is enabled.
+    Upload a G-code file to printer storage and optionally start it after the
+    upload has been verified.
     """
-    client = _farm_manager.get_printer_client(printer_id)
-    if not client:
+    if not _farm_manager.get_printer_client(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
+    if not _upload_workflow:
+        return jsonify({"error": "Upload workflow unavailable"}), 500
 
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -145,9 +149,9 @@ def api_printer_upload(printer_id):
     if not uploaded.filename:
         return jsonify({"error": "Empty filename"}), 400
 
-    print_after = request.args.get("print_after", "0") == "1"
+    start_print = request.args.get("print_after", "0") == "1"
     operator_initials = None
-    if print_after:
+    if start_print:
         try:
             operator_initials = _validate_operator_initials(
                 request.form.get("operator_initials")
@@ -163,135 +167,109 @@ def api_printer_upload(printer_id):
     if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
         return jsonify({"error": "Unsupported extension: {}".format(ext)}), 400
 
-    # Stage file to gcode_uploads directory (kept for 24h for retries)
-    local_path = _stage_gcode_file(uploaded, filename, printer_id)
-    if not local_path:
-        return jsonify({
-            "error": "Failed to save uploaded file",
-            "error_type": "upload_error",
-        }), 500
-
-    staged_size = os.path.getsize(local_path)
-    if staged_size <= 0:
-        return jsonify({"error": "Uploaded file is empty"}), 400
-
-    if print_after:
-        _farm_manager.record_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-
-    # Relay to printer (with retries built into prusalink client)
-    try:
-        result = client.upload_gcode(local_path, filename,
-                                     print_after=print_after)
-    except Exception:
-        if print_after:
-            _farm_manager.clear_pending_print_start(
-                printer_id, filename, operator_initials
-            )
-        raise
-
-    if print_after and not result.get("success"):
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-
-    # Keep file on Pi for retry — don't delete
-    result["filename"] = filename
+    result = _upload_workflow.create_and_upload(
+        printer_id=printer_id,
+        uploaded_file=uploaded,
+        original_filename=filename,
+        start_print=start_print,
+        operator_initials=operator_initials,
+    )
     result["stored_on_server"] = True
+    status_code = _workflow_status_code(result)
+    return jsonify(result), status_code
 
-    status_code = result.get("status_code")
-    if status_code is None:
-        status_code = 200 if result.get("success") else 500
-    if result.get("error_type") == "upload_timeout":
-        status_code = 504
+
+@api.route("/api/printers/<printer_id>/start-uploaded", methods=["POST"])
+def api_printer_start_uploaded(printer_id):
+    """Start a previously verified upload session without re-uploading it."""
+    if not _farm_manager.get_printer_client(printer_id):
+        return jsonify({"error": "Unknown printer"}), 404
+    if not _upload_workflow:
+        return jsonify({"error": "Upload workflow unavailable"}), 500
+
+    data = request.get_json() or {}
+    upload_session_id = str(data.get("upload_session_id") or "").strip()
+    if not upload_session_id:
+        return jsonify({"error": "Missing upload_session_id"}), 400
+
+    session = _upload_workflow.upload_session_db.get_session(upload_session_id)
+    if not session or session.get("printer_id") != printer_id:
+        return jsonify({"error": "Upload session not found"}), 404
+
+    try:
+        operator_initials = _validate_operator_initials(
+            data.get("operator_initials") or session.get("operator_initials")
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    result = _upload_workflow.start_existing_session(
+        upload_session_id, operator_initials=operator_initials
+    )
+    result["stored_on_server"] = True
+    status_code = _workflow_status_code(result)
     return jsonify(result), status_code
 
 
 @api.route("/api/printers/<printer_id>/retry-upload", methods=["POST"])
 def api_printer_retry_upload(printer_id):
-    """Retry sending a previously uploaded file to the printer.
-
-    Body: {"filename": "part.gcode", "print_after": true}
-    The file must already exist in data/gcode_uploads/.
-    """
-    client = _farm_manager.get_printer_client(printer_id)
-    if not client:
+    """Retry an upload session by session id, with optional print start."""
+    if not _farm_manager.get_printer_client(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
+    if not _upload_workflow:
+        return jsonify({"error": "Upload workflow unavailable"}), 500
 
-    data = request.get_json()
-    if not data or not data.get("filename"):
-        return jsonify({"error": "Missing filename"}), 400
+    data = request.get_json() or {}
+    upload_session_id = str(data.get("upload_session_id") or "").strip()
+    if not upload_session_id:
+        return jsonify({"error": "Missing upload_session_id"}), 400
 
-    filename = secure_filename(data["filename"])
-    print_after = bool(data.get("print_after", False))
+    session = _upload_workflow.upload_session_db.get_session(upload_session_id)
+    if not session or session.get("printer_id") != printer_id:
+        return jsonify({"error": "Upload session not found"}), 404
 
-    local_path = os.path.join(_gcode_uploads_dir, filename) if _gcode_uploads_dir else None
-    if not local_path or not os.path.exists(local_path):
-        return jsonify({"error": "File not found on server — please re-upload"}), 404
-
-    operator_initials = None
-    if print_after:
+    start_print = bool(data.get("print_after", False))
+    operator_initials = data.get("operator_initials")
+    if start_print and operator_initials:
         try:
-            operator_initials = _validate_operator_initials(
-                data.get("operator_initials")
-            )
+            operator_initials = _validate_operator_initials(operator_initials)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
-        _farm_manager.record_pending_print_start(
-            printer_id, filename, operator_initials
-        )
 
-    result = client.upload_gcode(local_path, filename, print_after=print_after)
-
-    if print_after and not result.get("success"):
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-
-    result["filename"] = filename
+    result = _upload_workflow.retry_session(
+        upload_session_id,
+        start_print=start_print,
+        operator_initials=operator_initials,
+    )
     result["stored_on_server"] = True
-
-    status_code = result.get("status_code")
-    if status_code is None:
-        status_code = 200 if result.get("success") else 500
+    status_code = _workflow_status_code(result)
     return jsonify(result), status_code
 
 
-def _stage_gcode_file(uploaded_file, filename, printer_id):
-    """Save an uploaded gcode file to the gcode_uploads directory.
-
-    Returns the local path on success, None on failure.
-    """
-    if not _gcode_uploads_dir:
-        return None
-    try:
-        os.makedirs(_gcode_uploads_dir, exist_ok=True)
-        local_path = os.path.join(_gcode_uploads_dir, filename)
-        uploaded_file.save(local_path)
-        return local_path
-    except Exception as exc:
-        print("[UPLOAD] Failed to stage file {}: {}".format(filename, exc))
-        return None
-
-
 def cleanup_old_gcode_uploads(uploads_dir):
-    """Delete gcode files older than 24 hours from the uploads directory."""
+    """Delete old staged upload trees from the uploads directory."""
     if not uploads_dir or not os.path.isdir(uploads_dir):
         return
     cutoff = time.time() - _GCODE_MAX_AGE_SEC
     count = 0
-    for fname in os.listdir(uploads_dir):
-        fpath = os.path.join(uploads_dir, fname)
-        if os.path.isfile(fpath):
+    for root, dirs, files in os.walk(uploads_dir, topdown=False):
+        for fname in files:
+            fpath = os.path.join(root, fname)
             try:
                 if os.path.getmtime(fpath) < cutoff:
                     os.remove(fpath)
                     count += 1
             except OSError:
                 pass
+        for dname in dirs:
+            dpath = os.path.join(root, dname)
+            try:
+                if not os.listdir(dpath):
+                    os.rmdir(dpath)
+            except OSError:
+                pass
     if count:
-        print("[CLEANUP] Removed {} old gcode file(s)".format(count))
+        print("[CLEANUP] Removed {} old staged gcode file(s)".format(count))
 
 
 @api.route("/api/printers/<printer_id>/stop", methods=["POST"])

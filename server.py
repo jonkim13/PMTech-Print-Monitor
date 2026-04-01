@@ -29,6 +29,8 @@ from routes import register_routes, cleanup_old_gcode_uploads
 from production_routes import register_production_routes
 from work_orders_db import WorkOrderDB
 from work_order_routes import register_work_order_routes
+from upload_sessions_db import UploadSessionDB
+from upload_workflow import UploadWorkflowService
 
 # ============================================================
 # CONFIGURATION
@@ -98,6 +100,8 @@ def main():
                                  snapshots_dir=snapshots_dir)
     work_order_db_path = os.path.join(DATA_DIR, "work_orders.db")
     work_order_db = WorkOrderDB(work_order_db_path)
+    upload_session_db_path = os.path.join(DATA_DIR, "upload_sessions.db")
+    upload_session_db = UploadSessionDB(upload_session_db_path)
 
     # --- Initialize managers ---
     farm_manager = PrintFarmManager(config, history_db,
@@ -106,13 +110,20 @@ def main():
                                     production_db=production_db,
                                     snapshots_dir=snapshots_dir,
                                     data_dir=DATA_DIR,
-                                    work_order_db=work_order_db)
+                                    work_order_db=work_order_db,
+                                    upload_session_db=upload_session_db)
     drone_controller = DroneController()
 
     # --- GCode uploads directory ---
     gcode_uploads_dir = os.path.join(DATA_DIR, "gcode_uploads")
     os.makedirs(gcode_uploads_dir, exist_ok=True)
     cleanup_old_gcode_uploads(gcode_uploads_dir)
+    upload_workflow = UploadWorkflowService(
+        gcode_uploads_dir,
+        upload_session_db,
+        farm_manager=farm_manager,
+        work_order_db=work_order_db,
+    )
 
     # --- Flask app ---
     app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -132,11 +143,13 @@ def main():
             ),
         },
         gcode_uploads_dir=gcode_uploads_dir,
+        upload_workflow=upload_workflow,
     )
     register_production_routes(app, production_db, farm_manager,
                                snapshots_dir=snapshots_dir)
     register_work_order_routes(app, work_order_db, farm_manager,
-                               gcode_uploads_dir=gcode_uploads_dir)
+                               gcode_uploads_dir=gcode_uploads_dir,
+                               upload_workflow=upload_workflow)
 
     # Start background polling
     farm_manager.start_polling()
@@ -151,6 +164,7 @@ def main():
     print(f"  History:    {history_db_path}")
     print(f"  Production: {production_db_path}")
     print(f"  WorkOrders: {work_order_db_path}")
+    print(f"  Uploads:    {upload_session_db_path}")
     print(f"  Snapshots:  {snapshots_dir}")
     print(f"{'='*50}\n")
 

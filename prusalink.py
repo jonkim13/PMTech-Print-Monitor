@@ -100,6 +100,8 @@ class PrusaLinkClient:
 
         # If Digest fails with 401, try Basic
         if resp.status_code == 401 and not self.use_basic:
+            print("[PRUSALINK] {} auth fallback: digest received HTTP 401, "
+                  "retrying with basic auth".format(self.printer_id))
             if hasattr(body, "seek"):
                 try:
                     body.seek(0)
@@ -111,6 +113,61 @@ class PrusaLinkClient:
 
         resp.raise_for_status()
         return resp
+
+    @staticmethod
+    def _truncate_text(value, limit=500):
+        # type: (object, int) -> str
+        text = str(value or "")
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "...[truncated]"
+
+    def _auth_mode_label(self):
+        # type: () -> str
+        return "basic" if self.use_basic else "digest"
+
+    @classmethod
+    def _response_debug_details(cls, response):
+        # type: (Optional[requests.Response]) -> dict
+        if response is None:
+            return {
+                "http_status": None,
+                "reason": None,
+                "response_text": "",
+                "downstream_message": None,
+            }
+        try:
+            response_text = response.text
+        except Exception as exc:
+            response_text = "<unavailable: {}>".format(exc)
+        truncated = cls._truncate_text(response_text, 500)
+        downstream = truncated or str(response.reason or "").strip() or None
+        return {
+            "http_status": response.status_code,
+            "reason": response.reason,
+            "response_text": truncated,
+            "downstream_message": downstream,
+        }
+
+    @staticmethod
+    def _exception_flags(exc):
+        # type: (Exception) -> dict
+        return {
+            "is_connect_timeout": isinstance(
+                exc, requests.exceptions.ConnectTimeout
+            ),
+            "is_read_timeout": isinstance(
+                exc, requests.exceptions.ReadTimeout
+            ),
+            "is_timeout": isinstance(exc, requests.exceptions.Timeout),
+            "is_connection_error": isinstance(
+                exc, requests.exceptions.ConnectionError
+            ),
+            "is_http_error": isinstance(exc, requests.exceptions.HTTPError),
+            "is_request_exception": isinstance(
+                exc, requests.exceptions.RequestException
+            ),
+        }
 
     @staticmethod
     def _result(ok, message, http_status=None, error_type=None,
@@ -165,25 +222,48 @@ class PrusaLinkClient:
         # type: (requests.exceptions.HTTPError, str, Optional[dict]) -> dict
         status_code = exc.response.status_code if exc.response else 502
         error_type = cls._classify_http_status(status_code)
-        message = "{} failed with HTTP {}".format(action, status_code)
+        response_info = cls._response_debug_details(exc.response)
+        reason = response_info.get("reason")
+        message = "{} failed with HTTP {}{}".format(
+            action,
+            status_code,
+            " {}".format(reason) if reason else "",
+        )
+        merged = dict(details or {})
+        merged.update({
+            "exception_class": exc.__class__.__name__,
+            "exception_message": str(exc),
+            "http_status": response_info.get("http_status"),
+            "reason": response_info.get("reason"),
+            "response_text": response_info.get("response_text"),
+            "downstream_message": response_info.get("downstream_message"),
+        })
+        merged.update(cls._exception_flags(exc))
         return cls._result(
             False,
             message,
             http_status=status_code,
             error_type=error_type,
-            details=details or {},
+            details=merged,
         )
 
     @classmethod
     def _request_error_result(cls, exc, action, details=None):
         # type: (Exception, str, Optional[dict]) -> dict
+        merged = dict(details or {})
+        merged.update({
+            "exception_class": exc.__class__.__name__,
+            "exception_message": str(exc),
+            "downstream_message": cls._truncate_text(str(exc), 500),
+        })
+        merged.update(cls._exception_flags(exc))
         if isinstance(exc, requests.exceptions.Timeout):
             return cls._result(
                 False,
                 "{} timed out".format(action),
                 http_status=504,
                 error_type="timeout",
-                details=details or {},
+                details=merged,
             )
         if isinstance(exc, requests.exceptions.ConnectionError):
             return cls._result(
@@ -191,24 +271,24 @@ class PrusaLinkClient:
                 "{} failed: printer connection error".format(action),
                 http_status=502,
                 error_type="connection_error",
-                details=details or {},
+                details=merged,
             )
         if isinstance(exc, requests.exceptions.HTTPError):
-            return cls._http_error_result(exc, action, details=details)
+            return cls._http_error_result(exc, action, details=merged)
         if isinstance(exc, requests.exceptions.RequestException):
             return cls._result(
                 False,
                 "{} failed: {}".format(action, exc),
                 http_status=502,
                 error_type="request_error",
-                details=details or {},
+                details=merged,
             )
         return cls._result(
             False,
             "{} failed: {}".format(action, exc),
             http_status=500,
             error_type="unexpected_error",
-            details=details or {},
+            details=merged,
         )
 
     @staticmethod
@@ -274,13 +354,19 @@ class PrusaLinkClient:
             )
 
         endpoint = self._file_endpoint(remote_filename, storage=storage)
+        upload_url = "{}{}".format(self.base_url, endpoint)
+        normalized_storage = self._normalize_storage(storage)
         last_result = None
 
         for attempt in range(1, self.upload_retries + 1):
             start_time = time.monotonic()
-            print("[UPLOAD] Attempt {}/{} to {}: remote_file={} size={}B".format(
-                attempt, self.upload_retries, self.printer_id,
-                remote_filename, file_size))
+            print("[UPLOAD] Attempt {}/{} to {}: url={} remote_file={} "
+                  "local_path={} size={}B timeout={} auth_mode={} "
+                  "storage={}".format(
+                      attempt, self.upload_retries, self.printer_id,
+                      upload_url, remote_filename, local_path, file_size,
+                      self.upload_timeout, self._auth_mode_label(),
+                      normalized_storage))
             try:
                 headers = {
                     "Content-Type": "application/octet-stream",
@@ -309,28 +395,66 @@ class PrusaLinkClient:
                         "attempt": attempt,
                         "elapsed_sec": round(elapsed, 2),
                         "remote_filename": remote_filename,
-                        "storage": storage,
+                        "storage": normalized_storage,
+                        "upload_url": upload_url,
+                        "local_path": local_path,
+                        "timeout": self.upload_timeout,
+                        "auth_mode": self._auth_mode_label(),
                         "file_size_bytes": file_size,
                     },
                 )
 
             except Exception as exc:
                 elapsed = time.monotonic() - start_time
+                response = exc.response if hasattr(exc, "response") else None
+                response_info = self._response_debug_details(response)
                 last_result = self._request_error_result(
                     exc,
                     "upload",
                     details={
                         "attempt": attempt,
                         "elapsed_sec": round(elapsed, 2),
+                        "upload_url": upload_url,
                         "remote_filename": remote_filename,
-                        "storage": storage,
+                        "local_path": local_path,
+                        "storage": normalized_storage,
+                        "timeout": self.upload_timeout,
+                        "auth_mode": self._auth_mode_label(),
                         "file_size_bytes": file_size,
                     },
                 )
+                if response is not None:
+                    print("[UPLOAD] HTTP response on {} (attempt {}): "
+                          "status={} reason={} body={}".format(
+                              self.printer_id, attempt,
+                              response_info.get("http_status"),
+                              response_info.get("reason"),
+                              response_info.get("response_text")))
+                flags = self._exception_flags(exc)
+                print("[UPLOAD] Exception on {} (attempt {}): class={} "
+                      "message={} connect_timeout={} read_timeout={} "
+                      "timeout={} connection_error={} http_error={} "
+                      "request_exception={}".format(
+                          self.printer_id, attempt, exc.__class__.__name__,
+                          str(exc), flags["is_connect_timeout"],
+                          flags["is_read_timeout"], flags["is_timeout"],
+                          flags["is_connection_error"],
+                          flags["is_http_error"],
+                          flags["is_request_exception"]))
                 print("[UPLOAD] Failure on {} (attempt {}): remote_file={} "
-                      "error_type={} elapsed={:.1f}s".format(
+                      "error_type={} http_status={} exception_class={} "
+                      "downstream_message={} elapsed={:.1f}s".format(
                           self.printer_id, attempt, remote_filename,
-                          last_result.get("error_type"), elapsed))
+                          last_result.get("error_type"),
+                          last_result.get("http_status"),
+                          last_result.get("details", {}).get(
+                              "exception_class"),
+                          self._truncate_text(
+                              last_result.get("details", {}).get(
+                                  "downstream_message"
+                              ), 200
+                          ),
+                          elapsed))
                 if (attempt >= self.upload_retries
                         or not self._should_retry_result(last_result)):
                     break

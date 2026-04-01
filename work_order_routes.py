@@ -45,6 +45,26 @@ def _workflow_status_code(result):
     return status_code
 
 
+def _log_route_failure(route_name: str, printer_id: str,
+                       result: dict, status_code: int) -> None:
+    downstream = result.get("downstream_result") or result
+    details = downstream.get("details") or {}
+    downstream_message = (
+        details.get("downstream_message")
+        or result.get("message")
+        or result.get("error")
+    )
+    print("[UPLOAD][ROUTE] {} failure for {}: status_code={} "
+          "error_type={} http_status={} downstream_message={}".format(
+              route_name, printer_id, status_code,
+              result.get("error_type"),
+              result.get("http_status"),
+              downstream_message))
+    print("[UPLOAD][ROUTE] {} structured_result={}".format(
+        route_name, downstream
+    ))
+
+
 def _parse_queue_ids(values, default_queue_id=None):
     """Parse queue ids from form values or a route parameter."""
     raw_ids = list(values or [])
@@ -248,11 +268,15 @@ def _print_queue_items(queue_ids):
     })
 
     if not result.get("ok"):
+        status_code = _workflow_status_code(result)
+        if status_code >= 500:
+            _log_route_failure("_print_queue_items", printer_id, result,
+                               status_code)
         print("[WORKORDER] Queue job #{} did not reach printing for job #{} "
               "on {}: {} ({})".format(
                   queue_job_id, work_order_job_id, printer_name,
                   result.get("message"), result.get("error_type")))
-        return jsonify(result), _workflow_status_code(result)
+        return jsonify(result), status_code
 
     print("[WORKORDER] Queue job #{} confirmed printing for job #{} on {} "
           "with {} part{}".format(
@@ -530,4 +554,9 @@ def api_retry_queue_item(queue_id):
         "printer_id": item.get("assigned_printer_id"),
         "wo_id": item.get("wo_id"),
     })
-    return jsonify(result), _workflow_status_code(result)
+    status_code = _workflow_status_code(result)
+    if status_code >= 500:
+        _log_route_failure("api_retry_queue_item",
+                           item.get("assigned_printer_id"), result,
+                           status_code)
+    return jsonify(result), status_code

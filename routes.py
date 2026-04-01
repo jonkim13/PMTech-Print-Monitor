@@ -93,6 +93,26 @@ def _workflow_status_code(result):
     return status_code
 
 
+def _log_route_failure(route_name: str, printer_id: str,
+                       result: dict, status_code: int) -> None:
+    downstream = result.get("downstream_result") or result
+    details = downstream.get("details") or {}
+    downstream_message = (
+        details.get("downstream_message")
+        or result.get("message")
+        or result.get("error")
+    )
+    print("[UPLOAD][ROUTE] {} failure for {}: status_code={} "
+          "error_type={} http_status={} downstream_message={}".format(
+              route_name, printer_id, status_code,
+              result.get("error_type"),
+              result.get("http_status"),
+              downstream_message))
+    print("[UPLOAD][ROUTE] {} structured_result={}".format(
+        route_name, downstream
+    ))
+
+
 # --- Dashboard ---
 
 @api.route("/")
@@ -176,6 +196,9 @@ def api_printer_upload(printer_id):
     )
     result["stored_on_server"] = True
     status_code = _workflow_status_code(result)
+    if status_code >= 500:
+        _log_route_failure("api_printer_upload", printer_id, result,
+                           status_code)
     return jsonify(result), status_code
 
 
@@ -208,6 +231,9 @@ def api_printer_start_uploaded(printer_id):
     )
     result["stored_on_server"] = True
     status_code = _workflow_status_code(result)
+    if status_code >= 500:
+        _log_route_failure("api_printer_start_uploaded", printer_id, result,
+                           status_code)
     return jsonify(result), status_code
 
 
@@ -243,6 +269,9 @@ def api_printer_retry_upload(printer_id):
     )
     result["stored_on_server"] = True
     status_code = _workflow_status_code(result)
+    if status_code >= 500:
+        _log_route_failure("api_printer_retry_upload", printer_id, result,
+                           status_code)
     return jsonify(result), status_code
 
 

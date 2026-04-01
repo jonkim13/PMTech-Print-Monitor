@@ -249,6 +249,7 @@ class UploadWorkflowService:
                     "session": self._serialize_session(session),
                     "upload": upload_result.get("details"),
                 },
+                downstream_result=upload_result,
                 upload_session_id=session["upload_session_id"],
             )
 
@@ -275,6 +276,7 @@ class UploadWorkflowService:
                     "session": self._serialize_session(session),
                     "verification": verify_result.get("details"),
                 },
+                downstream_result=verify_result,
                 upload_session_id=session["upload_session_id"],
             )
 

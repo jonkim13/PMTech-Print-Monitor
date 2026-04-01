@@ -6,6 +6,7 @@ and integrated print-from-queue functionality.
 """
 
 import os
+import tempfile
 
 from flask import Blueprint, jsonify, request
 from werkzeug.utils import secure_filename
@@ -14,14 +15,17 @@ work_order_api = Blueprint("work_order_api", __name__)
 
 _wo_db = None
 _farm_manager = None
+_gcode_uploads_dir = None
 _ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 
 
-def register_work_order_routes(app, wo_db, farm_manager):
+def register_work_order_routes(app, wo_db, farm_manager,
+                               gcode_uploads_dir=None):
     """Wire up the work order blueprint."""
-    global _wo_db, _farm_manager
+    global _wo_db, _farm_manager, _gcode_uploads_dir
     _wo_db = wo_db
     _farm_manager = farm_manager
+    _gcode_uploads_dir = gcode_uploads_dir
     app.register_blueprint(work_order_api)
 
 
@@ -66,7 +70,15 @@ def _validate_queue_print_items(queue_ids):
     if len(items) != len(queue_ids):
         raise LookupError("One or more selected parts were not found")
 
-    if any(item["status"] not in ("queued", "failed") for item in items):
+    if any(item["status"] in ("printing", "assigned") for item in items):
+        raise RuntimeError("items already in progress")
+
+    printable_items = [
+        item for item in items if item["status"] in ("queued", "failed")
+    ]
+    if not printable_items:
+        raise ValueError("no items to print")
+    if len(printable_items) != len(items):
         raise ValueError(
             "Selected parts must be queued or failed before printing"
         )
@@ -78,6 +90,40 @@ def _validate_queue_print_items(queue_ids):
         )
 
     return items
+
+
+def _resolve_print_request_items(queue_ids, requested_job_id=None):
+    """Resolve the explicit queue items to print for this request."""
+    parsed_queue_ids = _parse_queue_ids(queue_ids) if queue_ids else []
+
+    if requested_job_id is not None:
+        job_items = _wo_db.get_job_queue_items(requested_job_id)
+        if job_items is None:
+            raise LookupError("job not found")
+
+        if parsed_queue_ids:
+            job_item_ids = {item["queue_id"] for item in job_items}
+            if any(queue_id not in job_item_ids for queue_id in parsed_queue_ids):
+                raise ValueError(
+                    "selected parts must belong to the requested job"
+                )
+
+        if any(item["status"] in ("printing", "assigned")
+               for item in job_items):
+            raise RuntimeError("items already in progress")
+
+        printable_items = [
+            item for item in job_items
+            if item["status"] in ("queued", "failed")
+        ]
+        if not printable_items:
+            raise ValueError("no items to print")
+
+        return [item["queue_id"] for item in printable_items], printable_items
+
+    queue_items = _validate_queue_print_items(parsed_queue_ids)
+    _validate_selected_job(queue_items)
+    return parsed_queue_ids, queue_items
 
 
 def _validate_selected_job(queue_items, requested_job_id=None):
@@ -102,13 +148,17 @@ def _validate_selected_job(queue_items, requested_job_id=None):
 
 def _print_queue_items(queue_ids):
     """Assign one or more queue items, upload gcode, and start printing."""
+    requested_job_id = request.form.get("job_id", type=int)
     try:
-        queue_ids = _parse_queue_ids(queue_ids)
-        queue_items = _validate_queue_print_items(queue_ids)
+        queue_ids, queue_items = _resolve_print_request_items(
+            queue_ids, requested_job_id=requested_job_id
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except LookupError as exc:
         return jsonify({"error": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 409
 
     printer_id = request.form.get("printer_id")
     if not printer_id:
@@ -118,12 +168,6 @@ def _print_queue_items(queue_ids):
         operator_initials = _validate_operator_initials(
             request.form.get("operator_initials")
         )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    requested_job_id = request.form.get("job_id", type=int)
-    try:
-        _validate_selected_job(queue_items, requested_job_id)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -153,59 +197,83 @@ def _print_queue_items(queue_ids):
     if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
         return jsonify({"error": "Unsupported file type: {}".format(ext)}), 400
 
-    file_data = uploaded.read()
-
-    _farm_manager.record_pending_print_start(
-        printer_id, filename, operator_initials
-    )
-
-    try:
-        result = client.upload_gcode(file_data, filename, print_after=True)
-    except Exception:
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-        raise
-
-    if not result.get("success"):
-        _farm_manager.clear_pending_print_start(
-            printer_id, filename, operator_initials
-        )
-        return jsonify({
-            "error": "Upload failed: {}".format(result.get("error", "unknown"))
-        }), 500
+    # Stage file to gcode_uploads directory
+    local_path = None
+    if _gcode_uploads_dir:
+        os.makedirs(_gcode_uploads_dir, exist_ok=True)
+        local_path = os.path.join(_gcode_uploads_dir, filename)
+        uploaded.save(local_path)
+    else:
+        fd, local_path = tempfile.mkstemp(suffix=ext)
+        os.close(fd)
+        uploaded.save(local_path)
 
     printer_name = status.get("name", printer_id)
-    queue_job_id = _wo_db.assign_queue_items(
-        queue_ids, printer_id, printer_name, filename,
-        operator_initials=operator_initials,
-        job_id=requested_job_id,
-    )
-    if queue_job_id is None:
-        return jsonify({
-            "error": "Selected parts could not be assigned to a print job"
-        }), 409
+    try:
+        execution = _wo_db.start_queue_job_execution(
+            queue_ids,
+            printer_id,
+            printer_name,
+            filename,
+            operator_initials=operator_initials,
+            job_id=requested_job_id,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 409
 
-    updated_items = _wo_db.get_queue_items(queue_ids)
-    work_order_job_id = (updated_items[0].get("job_id")
-                         if updated_items else requested_job_id)
+    queue_job_id = execution["queue_job_id"]
+    work_order_job_id = execution["job_id"]
+    queue_ids = execution["queue_ids"]
+
     _farm_manager.record_pending_print_start(
         printer_id, filename, operator_initials,
         queue_job_id=queue_job_id,
         job_id=work_order_job_id,
     )
 
+    try:
+        result = client.upload_gcode(local_path, filename, print_after=True)
+    except Exception as exc:
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+        _wo_db.fail_queue_job(queue_job_id, requeue_items=True)
+        print("[WORKORDER] Queue job #{} failed for job #{} on {}: {}"
+              .format(queue_job_id, work_order_job_id, printer_name, exc))
+        return jsonify({"error": "Upload failed: {}".format(exc)}), 500
+
+    if not result.get("success"):
+        _farm_manager.clear_pending_print_start(
+            printer_id, filename, operator_initials
+        )
+        _wo_db.fail_queue_job(queue_job_id, requeue_items=True)
+        print("[WORKORDER] Queue job #{} failed for job #{} on {}: {}"
+              .format(queue_job_id, work_order_job_id, printer_name,
+                      result.get("error", "unknown")))
+        status_code = 504 if result.get("error_type") == "upload_timeout" else 500
+        return jsonify({
+            "error": "Upload failed: {}".format(result.get("error", "unknown"))
+        }), status_code
+
+    print("[WORKORDER] Queue job #{} started for job #{} on {} with {} part{}"
+          .format(queue_job_id, work_order_job_id, printer_name, len(queue_ids),
+                  "" if len(queue_ids) == 1 else "s"))
+
     return jsonify({
         "success": True,
-        "message": "Uploaded {} to {} and started printing {} part{}".format(
-            filename, printer_name, len(queue_items),
-            "" if len(queue_items) == 1 else "s"
+        "message": "Started Job #{} on {} with {} part{}".format(
+            work_order_job_id, printer_name, len(queue_ids),
+            "" if len(queue_ids) == 1 else "s"
         ),
         "queue_ids": queue_ids,
         "queue_job_id": queue_job_id,
         "job_id": work_order_job_id,
         "printer_id": printer_id,
-        "wo_id": queue_items[0]["wo_id"],
+        "wo_id": execution["wo_id"],
     })
 
 

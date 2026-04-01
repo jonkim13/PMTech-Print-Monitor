@@ -11,6 +11,7 @@ data/print_history.db
 data/production_log.db
 data/server_state.json
 data/snapshots/
+data/gcode_uploads/
 
 # Virtual environment
 venv/

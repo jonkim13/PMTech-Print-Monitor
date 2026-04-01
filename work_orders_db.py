@@ -274,9 +274,7 @@ class WorkOrderDB:
                for status in active_statuses):
             return "in_progress"
         if any(status == "failed" for status in active_statuses):
-            non_failed = [status for status in active_statuses
-                          if status != "failed"]
-            return "failed" if not non_failed else "in_progress"
+            return "attention"
         if any(status == "completed" for status in active_statuses):
             return "in_progress"
         return "open"
@@ -828,6 +826,31 @@ class WorkOrderDB:
         conn.close()
         return items
 
+    def get_job_queue_items(self, job_id: int) -> Optional[list]:
+        """Get queue items assigned to one persisted work-order job."""
+        conn = self._get_conn()
+        try:
+            job = conn.execute("""
+                SELECT job_id
+                FROM jobs
+                WHERE job_id = ?
+            """, (job_id,)).fetchone()
+            if not job:
+                return None
+
+            rows = conn.execute("""
+                SELECT qi.*, qj.status AS queue_job_status
+                FROM queue_items qi
+                LEFT JOIN queue_jobs qj ON qi.queue_job_id = qj.queue_job_id
+                WHERE qi.job_id = ?
+                ORDER BY qi.item_id ASC, qi.sequence_number ASC, qi.queue_id ASC
+            """, (job_id,)).fetchall()
+            items = [dict(row) for row in rows]
+            self._attach_queue_job_metadata(conn, items)
+            return items
+        finally:
+            conn.close()
+
     def _get_queue_items_by_ids(self, conn, queue_ids) -> list:
         """Fetch queue items by id using an existing connection."""
         queue_ids = self._normalize_queue_ids(queue_ids)
@@ -887,88 +910,88 @@ class WorkOrderDB:
             operator_initials=operator_initials, job_id=job_id)
         return queue_job_id is not None
 
-    def assign_queue_items(self, queue_ids, printer_id: str,
-                           printer_name: str,
-                           gcode_file: str,
-                           operator_initials: Optional[str] = None,
-                           job_id: Optional[int] = None) -> Optional[int]:
-        """Assign one or more queue items to the same print job."""
+    def start_queue_job_execution(self, queue_ids, printer_id: str,
+                                  printer_name: str,
+                                  gcode_file: str,
+                                  operator_initials: Optional[str] = None,
+                                  job_id: Optional[int] = None) -> dict:
+        """Create and lock a new queue-job execution attempt."""
         queue_ids = self._normalize_queue_ids(queue_ids)
         if not queue_ids:
-            return None
+            raise ValueError("no items to print")
 
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
 
-        items = self._get_queue_items_by_ids(conn, queue_ids)
-        if len(items) != len(queue_ids):
-            conn.close()
-            return None
+        try:
+            items = self._get_queue_items_by_ids(conn, queue_ids)
+            if len(items) != len(queue_ids):
+                raise LookupError("one or more selected parts were not found")
 
-        wo_ids = {item["wo_id"] for item in items}
-        if len(wo_ids) != 1:
-            conn.close()
-            return None
+            wo_ids = {item["wo_id"] for item in items}
+            if len(wo_ids) != 1:
+                raise ValueError(
+                    "selected parts must belong to the same work order"
+                )
 
-        if any(item["status"] not in ("queued", "failed") for item in items):
-            conn.close()
-            return None
+            if any(item["status"] in ("printing", "assigned")
+                   for item in items):
+                raise RuntimeError("items already in progress")
 
-        work_order_job_id = self._resolve_work_order_job_id(
-            conn, items, requested_job_id=job_id
-        )
-        if work_order_job_id is None:
-            conn.rollback()
-            conn.close()
-            return None
+            printable_items = [
+                item for item in items
+                if item["status"] in ("queued", "failed")
+            ]
+            if not printable_items:
+                raise ValueError("no items to print")
+            if len(printable_items) != len(items):
+                raise ValueError(
+                    "selected parts must be queued or failed before printing"
+                )
 
-        placeholders = ",".join("?" for _ in queue_ids)
+            work_order_job_id = self._resolve_work_order_job_id(
+                conn, items, requested_job_id=job_id
+            )
+            if work_order_job_id is None:
+                if job_id is not None:
+                    raise LookupError("job not found")
+                raise ValueError(
+                    "selected parts must belong to the same job before printing"
+                )
 
-        queue_job_id = self._create_queue_job_session(
-            conn,
-            items[0]["wo_id"],
-            work_order_job_id,
-            printer_id,
-            printer_name,
-            gcode_file,
-            operator_initials,
-            now,
-        )
+            placeholders = ",".join("?" for _ in queue_ids)
+            queue_job_id = self._create_queue_job_session(
+                conn,
+                items[0]["wo_id"],
+                work_order_job_id,
+                printer_id,
+                printer_name,
+                gcode_file,
+                operator_initials,
+                now,
+            )
 
-        conn.execute("""
-            UPDATE queue_items
-            SET status = 'queued',
-                queue_job_id = NULL,
-                assigned_printer_id = NULL,
-                assigned_printer_name = NULL,
-                gcode_file = NULL,
-                print_job_id = NULL,
-                assigned_at = NULL,
-                started_at = NULL,
-                completed_at = NULL
-            WHERE queue_id IN ({}) AND status = 'failed'
-        """.format(placeholders), queue_ids)
+            cursor = conn.execute("""
+                UPDATE queue_items
+                SET status = 'printing',
+                    job_id = ?,
+                    queue_job_id = ?,
+                    assigned_printer_id = ?,
+                    assigned_printer_name = ?,
+                    gcode_file = ?,
+                    print_job_id = NULL,
+                    assigned_at = ?,
+                    started_at = ?,
+                    completed_at = NULL
+                WHERE queue_id IN ({}) AND status IN ('queued', 'failed')
+            """.format(placeholders),
+                                  [work_order_job_id, queue_job_id, printer_id,
+                                   printer_name, gcode_file, now, now]
+                                  + queue_ids)
 
-        cursor = conn.execute("""
-            UPDATE queue_items
-            SET status = 'printing',
-                job_id = ?,
-                queue_job_id = ?,
-                assigned_printer_id = ?,
-                assigned_printer_name = ?,
-                gcode_file = ?,
-                print_job_id = NULL,
-                assigned_at = ?,
-                started_at = ?,
-                completed_at = NULL
-            WHERE queue_id IN ({}) AND status IN ('queued', 'assigned')
-        """.format(placeholders),
-                              [work_order_job_id, queue_job_id, printer_id,
-                               printer_name, gcode_file, now, now]
-                              + queue_ids)
+            if cursor.rowcount != len(queue_ids):
+                raise RuntimeError("items already in progress")
 
-        changed = cursor.rowcount == len(queue_ids)
-        if changed:
             conn.execute("""
                 UPDATE jobs
                 SET status = 'in_progress',
@@ -984,12 +1007,36 @@ class WorkOrderDB:
             self._sync_job_status(conn, work_order_job_id)
             self._update_wo_status_from_items(conn, items[0]["wo_id"])
             conn.commit()
-        else:
+            return {
+                "queue_job_id": queue_job_id,
+                "job_id": work_order_job_id,
+                "wo_id": items[0]["wo_id"],
+                "queue_ids": queue_ids,
+            }
+        except Exception:
             conn.rollback()
-            queue_job_id = None
+            raise
+        finally:
+            conn.close()
 
-        conn.close()
-        return queue_job_id
+    def assign_queue_items(self, queue_ids, printer_id: str,
+                           printer_name: str,
+                           gcode_file: str,
+                           operator_initials: Optional[str] = None,
+                           job_id: Optional[int] = None) -> Optional[int]:
+        """Assign one or more queue items to the same print job."""
+        try:
+            result = self.start_queue_job_execution(
+                queue_ids,
+                printer_id,
+                printer_name,
+                gcode_file,
+                operator_initials=operator_initials,
+                job_id=job_id,
+            )
+            return result["queue_job_id"]
+        except (LookupError, RuntimeError, ValueError):
+            return None
 
     def complete_queue_item(self, queue_id: int,
                             print_job_id: Optional[int] = None) -> bool:
@@ -1202,14 +1249,13 @@ class WorkOrderDB:
             conn.close()
             return False
 
-        cursor = conn.execute("""
+        conn.execute("""
             UPDATE queue_items
             SET status = 'completed',
                 completed_at = ?,
                 print_job_id = COALESCE(?, print_job_id)
             WHERE queue_job_id = ? AND status = 'printing'
         """, (now, print_job_id, queue_job_id))
-        changed = cursor.rowcount > 0
 
         conn.execute("""
             UPDATE queue_jobs
@@ -1219,23 +1265,21 @@ class WorkOrderDB:
             WHERE queue_job_id = ?
         """, (now, print_job_id, queue_job_id))
 
-        if changed:
-            if job["job_id"]:
-                conn.execute("""
-                    UPDATE jobs
-                    SET print_job_id = COALESCE(?, print_job_id)
-                    WHERE job_id = ?
-                """, (print_job_id, job["job_id"]))
-                self._sync_job_status(conn, job["job_id"])
-            self._update_wo_status_from_items(conn, job["wo_id"])
-            conn.commit()
-        else:
-            conn.rollback()
+        if job["job_id"]:
+            conn.execute("""
+                UPDATE jobs
+                SET print_job_id = COALESCE(?, print_job_id)
+                WHERE job_id = ?
+            """, (print_job_id, job["job_id"]))
+            self._sync_job_status(conn, job["job_id"])
+        self._update_wo_status_from_items(conn, job["wo_id"])
+        conn.commit()
 
         conn.close()
-        return changed
+        return True
 
-    def fail_queue_job(self, queue_job_id: int) -> bool:
+    def fail_queue_job(self, queue_job_id: int,
+                       requeue_items: bool = False) -> bool:
         """Mark all queue items in a grouped job as failed."""
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
@@ -1247,13 +1291,28 @@ class WorkOrderDB:
         if not job:
             conn.close()
             return False
-        cursor = conn.execute("""
-            UPDATE queue_items
-            SET status = 'failed',
-                completed_at = ?
-            WHERE queue_job_id = ? AND status = 'printing'
-        """, (now, queue_job_id))
-        changed = cursor.rowcount > 0
+
+        if requeue_items:
+            conn.execute("""
+                UPDATE queue_items
+                SET status = 'queued',
+                    queue_job_id = NULL,
+                    assigned_printer_id = NULL,
+                    assigned_printer_name = NULL,
+                    gcode_file = NULL,
+                    print_job_id = NULL,
+                    assigned_at = NULL,
+                    started_at = NULL,
+                    completed_at = NULL
+                WHERE queue_job_id = ? AND status IN ('printing', 'assigned')
+            """, (queue_job_id,))
+        else:
+            conn.execute("""
+                UPDATE queue_items
+                SET status = 'failed',
+                    completed_at = ?
+                WHERE queue_job_id = ? AND status IN ('printing', 'assigned')
+            """, (now, queue_job_id))
 
         conn.execute("""
             UPDATE queue_jobs
@@ -1262,15 +1321,12 @@ class WorkOrderDB:
             WHERE queue_job_id = ?
         """, (now, queue_job_id))
 
-        if changed:
-            if job["job_id"]:
-                self._sync_job_status(conn, job["job_id"])
-            self._update_wo_status_from_items(conn, job["wo_id"])
-            conn.commit()
-        else:
-            conn.rollback()
+        if job["job_id"]:
+            self._sync_job_status(conn, job["job_id"])
+        self._update_wo_status_from_items(conn, job["wo_id"])
+        conn.commit()
         conn.close()
-        return changed
+        return True
 
     def _update_wo_status_from_items(self, conn, wo_id: str):
         """Auto-update work order status based on queue items."""

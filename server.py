@@ -25,7 +25,7 @@ from database import PrintHistoryDB, FilamentInventoryDB, FilamentAssignmentDB
 from production_db import ProductionDB
 from farm_manager import PrintFarmManager
 from drone import DroneController
-from routes import register_routes
+from routes import register_routes, cleanup_old_gcode_uploads
 from production_routes import register_production_routes
 from work_orders_db import WorkOrderDB
 from work_order_routes import register_work_order_routes
@@ -109,11 +109,15 @@ def main():
                                     work_order_db=work_order_db)
     drone_controller = DroneController()
 
+    # --- GCode uploads directory ---
+    gcode_uploads_dir = os.path.join(DATA_DIR, "gcode_uploads")
+    os.makedirs(gcode_uploads_dir, exist_ok=True)
+    cleanup_old_gcode_uploads(gcode_uploads_dir)
+
     # --- Flask app ---
     app = Flask(__name__, static_folder="static", template_folder="templates")
     CORS(app)
-    max_upload_mb = int(config.get("max_upload_mb", 512))
-    app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
+    app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500MB
 
     register_routes(
         app,
@@ -127,10 +131,12 @@ def main():
                 1000, int(config.get("poll_interval_sec", 5) * 1000)
             ),
         },
+        gcode_uploads_dir=gcode_uploads_dir,
     )
     register_production_routes(app, production_db, farm_manager,
                                snapshots_dir=snapshots_dir)
-    register_work_order_routes(app, work_order_db, farm_manager)
+    register_work_order_routes(app, work_order_db, farm_manager,
+                               gcode_uploads_dir=gcode_uploads_dir)
 
     # Start background polling
     farm_manager.start_polling()

@@ -333,19 +333,17 @@ async function createWoJobFromSelected() {
 }
 
 function printWoJob(jobId) {
-    var queueIds = (_woDetailQueueItems || []).filter(function(qi) {
+    var printableItems = (_woDetailQueueItems || []).filter(function(qi) {
         return qi.job_id === jobId &&
             (qi.status === 'queued' || qi.status === 'failed');
-    }).map(function(qi) {
-        return qi.queue_id;
     });
 
-    if (!queueIds.length) {
+    if (!printableItems.length) {
         showToast('No queued parts remain in this job', 'error');
         return;
     }
 
-    showQueuePrintModal(queueIds, jobId);
+    showQueuePrintModal([], jobId);
 }
 
 // ============================================================
@@ -353,36 +351,71 @@ function printWoJob(jobId) {
 // ============================================================
 async function showQueuePrintModal(queueId, jobId) {
     var modal = document.getElementById('queuePrintModal');
-    var queueIds = Array.isArray(queueId) ? queueId.slice() : [queueId];
+    var queueIds = Array.isArray(queueId)
+        ? queueId.filter(function(value) { return value !== null && value !== undefined && value !== ''; })
+        : (queueId !== null && queueId !== undefined && queueId !== '' ? [queueId] : []);
+    var isJobExecution = !!jobId;
     modal.dataset.queueIds = queueIds.join(',');
     modal.dataset.jobId = jobId || '';
+    document.getElementById('queuePrintTitle').textContent = isJobExecution
+        ? 'Print Job #' + jobId
+        : 'Print Queue Item';
     document.getElementById('queuePrintInfo').innerHTML = '';
 
     // Load queue item info
     try {
-        var items = await (await fetch('/api/queue')).json();
-        var selected = queueIds.map(function(id) {
-            return items.find(function(item) { return item.queue_id === id; });
-        }).filter(function(item) {
-            return !!item;
-        });
+        var items = (_woDetailQueueItems && _woDetailQueueItems.length)
+            ? _woDetailQueueItems.slice()
+            : await (await fetch('/api/queue')).json();
+        var selected = [];
+
+        if (isJobExecution) {
+            selected = items.filter(function(item) {
+                return String(item.job_id || '') === String(jobId);
+            });
+        } else {
+            selected = queueIds.map(function(id) {
+                return items.find(function(item) { return item.queue_id === id; });
+            }).filter(function(item) {
+                return !!item;
+            });
+        }
 
         if (selected.length) {
             var first = selected[0];
-            var partLabels = selected.map(function(qi) {
+            var printable = isJobExecution
+                ? selected.filter(function(qi) {
+                    return qi.status === 'queued' || qi.status === 'failed';
+                })
+                : selected;
+            var partLabels = printable.map(function(qi) {
                 return qi.part_name + ' (' +
                     qi.sequence_number + '/' + qi.total_quantity + ')';
             });
             var materials = {};
-            selected.forEach(function(qi) {
+            printable.forEach(function(qi) {
                 materials[qi.material] = true;
             });
 
             var infoHtml = '<strong>' +
-                escapeHtml(selected.length + ' selected part' +
-                    (selected.length === 1 ? '' : 's')) +
-                '</strong><br>' +
-                escapeHtml(partLabels.join(', ')) + '<br>Customer: ' +
+                escapeHtml((isJobExecution
+                    ? 'Job #' + jobId + ' execution'
+                    : selected.length + ' selected part' +
+                        (selected.length === 1 ? '' : 's'))) +
+                '</strong><br>';
+
+            if (isJobExecution) {
+                infoHtml += escapeHtml(printable.length + ' printable part' +
+                    (printable.length === 1 ? '' : 's') +
+                    ' will start as one execution') + '<br>';
+                if (partLabels.length) {
+                    infoHtml += escapeHtml(partLabels.join(', ')) + '<br>';
+                }
+            } else if (partLabels.length) {
+                infoHtml += escapeHtml(partLabels.join(', ')) + '<br>';
+            }
+
+            infoHtml += 'Customer: ' +
                 escapeHtml(first.customer_name) + ' | WO: ' +
                 escapeHtml(first.wo_id);
             if (first.job_id) {
@@ -443,7 +476,7 @@ async function submitQueuePrint() {
     var operatorInput = document.getElementById('queuePrintOperatorInitials');
     var operatorInitials = operatorInput.value.trim();
 
-    if (!queueIds.length) {
+    if (!queueIds.length && !jobId) {
         showToast('Please select at least one part', 'error');
         return;
     }
@@ -583,7 +616,8 @@ function getWoStatusClass(status) {
         in_progress: 'wos-inprogress',
         completed: 'wos-completed',
         cancelled: 'wos-cancelled',
-        failed: 'wos-cancelled'
+        failed: 'wos-cancelled',
+        attention: 'wos-open'
     };
     return map[status] || '';
 }
@@ -664,10 +698,7 @@ function summarizeWoJobItems(items) {
     } else if (activeStatuses.some(function(status) {
         return status === 'failed';
     })) {
-        var hasNonFailed = activeStatuses.some(function(status) {
-            return status !== 'failed';
-        });
-        summary.status = hasNonFailed ? 'in_progress' : 'failed';
+        summary.status = 'attention';
     } else if (activeStatuses.some(function(status) {
         return status === 'completed';
     })) {

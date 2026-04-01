@@ -215,22 +215,27 @@ async function submitUpload() {
     }
 
     const btn = document.getElementById('uploadBtn');
-    btn.textContent = 'Uploading...';
+    btn.textContent = 'Uploading to server...';
     btn.disabled = true;
 
     try {
-        const url = `/api/printers/${printerId}/upload${printAfter ? '?print_after=1' : ''}`;
+        const url = '/api/printers/' + printerId + '/upload' + (printAfter ? '?print_after=1' : '');
+        btn.textContent = 'Sending to printer...';
         const resp = await fetch(url, { method: 'POST', body: formData });
         const result = await resp.json();
 
         if(result.success) {
-            showToast(`Uploaded ${file.name} successfully`);
+            showToast('Uploaded ' + file.name + ' successfully');
             hideModal('uploadModal');
         } else {
-            showToast(formatUploadError(result, resp.status), 'error');
+            var errMsg = formatUploadError(result, resp.status);
+            if(result.stored_on_server && result.filename) {
+                errMsg += ' — File saved on server, you can retry without re-uploading.';
+            }
+            showToast(errMsg, 'error');
         }
     } catch (e) {
-        showToast(`Upload error: ${e.message}`, 'error');
+        showToast('Upload error: ' + e.message, 'error');
     } finally {
         btn.textContent = 'Upload';
         btn.disabled = false;
@@ -241,13 +246,16 @@ function formatUploadError(result, statusCode) {
     if(result && result.error_type === 'upload_timeout') {
         return result.error || 'Upload timed out while sending the file to the printer';
     }
+    if(result && result.error_type === 'print_start_error') {
+        return result.error || 'File uploaded, but the printer could not start the print';
+    }
     if(statusCode === 400) {
-        return `Invalid upload: ${result.error || 'Check the selected file and try again.'}`;
+        return 'Invalid upload: ' + (result.error || 'Check the selected file and try again.');
     }
     if(result && result.error_type === 'printer_api_error') {
         return result.error || 'Printer upload failed';
     }
-    return `Upload failed: ${result && result.error ? result.error : 'Unknown error'}`;
+    return 'Upload failed: ' + (result && result.error ? result.error : 'Unknown error');
 }
 
 async function stopPrint(printerId, printerName) {

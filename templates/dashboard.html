@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Print Farm Monitor</title>
+    <title>PM Technologies Printer Monitor</title>
     <link rel="icon" type="image/png" sizes="256x256" href="{{ url_for('static', filename='img/favicon.png') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='img/favicon.png') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -768,7 +768,7 @@
 <!-- ===== PRINT FROM QUEUE MODAL ===== -->
 <div class="modal-overlay" id="queuePrintModal">
     <div class="modal" style="width: 460px;">
-        <h2>Print Queue Item</h2>
+        <h2 id="queuePrintTitle">Print Queue Item</h2>
         <div id="queuePrintInfo" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;"></div>
         <div class="form-group">
             <label class="form-label">Select Printer (idle only)</label>

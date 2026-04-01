@@ -11,6 +11,7 @@ Key endpoints:
     GET  /api/v1/job       - current job details
     GET  /api/v1/storage   - available files
     PUT  /api/v1/files/{storage}/{path} - upload gcode
+    POST /api/v1/files/{storage}/{path} - start print of uploaded file
     DELETE /api/v1/job     - stop current job
 
 Authentication:
@@ -18,9 +19,11 @@ Authentication:
     and the API key/password from the printer's settings.
 """
 
-from datetime import datetime, timezone
+import os
 import time
+from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPDigestAuth
@@ -38,9 +41,12 @@ class PrusaLinkClient:
         self.username = username
         self.password = password
         self.model = model
-        self.base_url = f"http://{self.host}"
+        self.base_url = "http://{}".format(self.host)
         self.timeout = 10
-        self.upload_timeout = (10, 300)
+        self.upload_timeout = (10, 120)
+        self.upload_retries = 3
+        self.upload_retry_delay = 5
+        self.start_print_wait_sec = 15
 
         # PrusaLink uses HTTP Digest auth, but some firmware versions
         # use Basic auth. We try Digest first, fall back to Basic.
@@ -83,9 +89,10 @@ class PrusaLinkClient:
         Make an authenticated request, handling auth method fallback.
         Tries Digest first, falls back to Basic if it gets a 401.
         """
-        url = f"{self.base_url}{endpoint}"
+        url = "{}{}".format(self.base_url, endpoint)
         req_method = getattr(requests, method.lower())
         timeout = kwargs.pop("timeout", self.timeout)
+        body = kwargs.get("data")
 
         # Try primary auth method
         resp = req_method(url, auth=self._get_auth(),
@@ -93,6 +100,11 @@ class PrusaLinkClient:
 
         # If Digest fails with 401, try Basic
         if resp.status_code == 401 and not self.use_basic:
+            if hasattr(body, "seek"):
+                try:
+                    body.seek(0)
+                except (AttributeError, OSError):
+                    pass
             self.use_basic = True
             resp = req_method(url, auth=self._get_auth(),
                               timeout=timeout, **kwargs)
@@ -100,7 +112,134 @@ class PrusaLinkClient:
         resp.raise_for_status()
         return resp
 
-    def poll(self) -> dict:
+    @staticmethod
+    def _result(success, status_code=None, **kwargs):
+        # type: (bool, Optional[int], ...) -> dict
+        result = {"success": success}
+        if status_code is not None:
+            result["status_code"] = status_code
+        result.update(kwargs)
+        return result
+
+    def _file_endpoint(self, filename):
+        # type: (str) -> str
+        """Build the PrusaLink file endpoint for local storage."""
+        quoted = quote(filename, safe="")
+        return "/api/v1/files/local/{}".format(quoted)
+
+    def upload_gcode(self, local_path, filename, print_after=False):
+        # type: (str, str, bool) -> dict
+        """
+        Upload a gcode file to the printer via PrusaLink HTTP API.
+
+        PUT /api/v1/files/local/{filename}
+        Uses HTTP Digest auth. Retries up to 3 times on failure.
+
+        Args:
+            local_path: Path to the gcode file on the Pi/server.
+            filename: The filename to use on the printer.
+            print_after: If True, include Print-After-Upload header.
+
+        Returns:
+            dict with success, status_code, error, etc.
+        """
+        file_size = os.path.getsize(local_path)
+        endpoint = self._file_endpoint(filename)
+
+        last_error = None
+        for attempt in range(1, self.upload_retries + 1):
+            start_time = time.monotonic()
+            print("[UPLOAD] Attempt {}/{} to {}: file={} size={}B "
+                  "print_after={}".format(
+                      attempt, self.upload_retries, self.printer_id,
+                      filename, file_size,
+                      "yes" if print_after else "no"))
+            try:
+                headers = {
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(file_size),
+                    "Overwrite": "?1",
+                }
+                if print_after:
+                    headers["Print-After-Upload"] = "?1"
+
+                with open(local_path, "rb") as fh:
+                    resp = self._request(
+                        endpoint,
+                        method="PUT",
+                        data=fh,
+                        headers=headers,
+                        timeout=self.upload_timeout,
+                    )
+
+                elapsed = time.monotonic() - start_time
+                print("[UPLOAD] Success on {} (attempt {}): file={} "
+                      "size={}B status={} elapsed={:.1f}s".format(
+                          self.printer_id, attempt, filename,
+                          file_size, resp.status_code, elapsed))
+                return self._result(
+                    True,
+                    status_code=200,
+                    upload_completed=True,
+                    print_started=bool(print_after),
+                    attempt=attempt,
+                )
+
+            except requests.exceptions.Timeout as exc:
+                elapsed = time.monotonic() - start_time
+                last_error = ("Upload timed out (attempt {}/{}, "
+                              "{:.0f}s)".format(attempt, self.upload_retries,
+                                                elapsed))
+                print("[UPLOAD] Timeout on {} (attempt {}): file={} "
+                      "elapsed={:.1f}s".format(
+                          self.printer_id, attempt, filename, elapsed))
+
+            except requests.exceptions.HTTPError as exc:
+                elapsed = time.monotonic() - start_time
+                sc = exc.response.status_code if exc.response else 502
+                last_error = ("Printer rejected upload with HTTP {} "
+                              "(attempt {}/{})".format(
+                                  sc, attempt, self.upload_retries))
+                print("[UPLOAD] HTTP {} on {} (attempt {}): file={} "
+                      "elapsed={:.1f}s".format(
+                          sc, self.printer_id, attempt, filename, elapsed))
+
+            except requests.exceptions.RequestException as exc:
+                elapsed = time.monotonic() - start_time
+                last_error = ("Connection error: {} (attempt {}/{})".format(
+                    exc, attempt, self.upload_retries))
+                print("[UPLOAD] Connection error on {} (attempt {}): "
+                      "file={} error={}".format(
+                          self.printer_id, attempt, filename, exc))
+
+            except Exception as exc:
+                elapsed = time.monotonic() - start_time
+                last_error = str(exc)
+                print("[UPLOAD] Unexpected error on {} (attempt {}): "
+                      "file={} error={}".format(
+                          self.printer_id, attempt, filename, exc))
+
+            # Wait before retry (except on last attempt)
+            if attempt < self.upload_retries:
+                print("[UPLOAD] Retrying in {}s...".format(
+                    self.upload_retry_delay))
+                time.sleep(self.upload_retry_delay)
+
+        # All retries exhausted
+        print("[UPLOAD] All {} attempts failed for {} on {}".format(
+            self.upload_retries, filename, self.printer_id))
+        return self._result(
+            False,
+            status_code=504,
+            error=("Upload failed after {} attempts: {}".format(
+                self.upload_retries, last_error)),
+            error_type="upload_timeout",
+            upload_completed=False,
+            print_started=False,
+        )
+
+    def poll(self):
+        # type: () -> dict
         """
         Fetch current status from the printer.
         Returns the updated state dict.
@@ -164,7 +303,7 @@ class PrusaLinkClient:
 
         except requests.exceptions.HTTPError as e:
             self.state["online"] = True
-            self.state["error"] = f"HTTP {e.response.status_code}"
+            self.state["error"] = "HTTP {}".format(e.response.status_code)
             self.state["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         except Exception as e:
@@ -174,103 +313,20 @@ class PrusaLinkClient:
 
         return self.state.copy()
 
-    def get_files(self, storage: str = None) -> dict:
+    def get_files(self, storage=None):
+        # type: (Optional[str]) -> dict
         """Get file listing from printer storage (all or one storage)."""
         try:
             endpoint = "/api/v1/storage"
             if storage:
-                endpoint = f"/api/v1/storage/{storage}"
+                endpoint = "/api/v1/storage/{}".format(storage)
             resp = self._request(endpoint)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}
 
-    def upload_gcode(self, file_data, filename: str,
-                     print_after: bool = False) -> dict:
-        """
-        Upload a gcode file to the printer.
-
-        PrusaLink PUT /api/v1/files/{storage}/{path}
-        Headers:
-            Print-After-Upload: ?1 (to start printing immediately)
-            Overwrite: ?1 (to overwrite existing files)
-            Content-Type: application/octet-stream
-        """
-        file_size = len(file_data) if file_data is not None else 0
-        start_time = time.monotonic()
-        print(f"[UPLOAD] Starting upload to {self.printer_id}: "
-              f"file={filename} size={file_size}B "
-              f"print_after={'yes' if print_after else 'no'}")
-
-        try:
-            endpoint = f"/api/v1/files/usb/{filename}"
-            headers = {
-                "Content-Type": "application/octet-stream",
-                "Overwrite": "?1",
-            }
-            if print_after:
-                headers["Print-After-Upload"] = "?1"
-
-            resp = self._request(
-                endpoint,
-                method="PUT",
-                data=file_data,
-                headers=headers,
-                timeout=self.upload_timeout,
-            )
-            elapsed = time.monotonic() - start_time
-            print(f"[UPLOAD] Upload complete on {self.printer_id}: "
-                  f"file={filename} size={file_size}B "
-                  f"status={resp.status_code} elapsed={elapsed:.1f}s")
-            return {"success": True, "status_code": resp.status_code}
-        except requests.exceptions.Timeout as e:
-            elapsed = time.monotonic() - start_time
-            print(f"[UPLOAD] Timeout on {self.printer_id}: "
-                  f"file={filename} size={file_size}B "
-                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
-            return {
-                "success": False,
-                "error": ("Upload timed out while sending the file to the "
-                          "printer"),
-                "error_type": "upload_timeout",
-            }
-        except requests.exceptions.HTTPError as e:
-            elapsed = time.monotonic() - start_time
-            status_code = e.response.status_code if e.response else None
-            print(f"[UPLOAD] Printer API failure on {self.printer_id}: "
-                  f"file={filename} size={file_size}B "
-                  f"elapsed={elapsed:.1f}s status={status_code} "
-                  f"error={type(e).__name__}: {e}")
-            error = "Printer upload failed"
-            if status_code is not None:
-                error = f"Printer upload failed with HTTP {status_code}"
-            return {
-                "success": False,
-                "error": error,
-                "error_type": "printer_api_error",
-            }
-        except requests.exceptions.RequestException as e:
-            elapsed = time.monotonic() - start_time
-            print(f"[UPLOAD] Request failure on {self.printer_id}: "
-                  f"file={filename} size={file_size}B "
-                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
-            return {
-                "success": False,
-                "error": f"Printer upload failed: {e}",
-                "error_type": "printer_api_error",
-            }
-        except Exception as e:
-            elapsed = time.monotonic() - start_time
-            print(f"[UPLOAD] Unexpected failure on {self.printer_id}: "
-                  f"file={filename} size={file_size}B "
-                  f"elapsed={elapsed:.1f}s error={type(e).__name__}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": "upload_error",
-            }
-
-    def get_job_details(self) -> dict:
+    def get_job_details(self):
+        # type: () -> dict
         """
         Fetch detailed job information from GET /api/v1/job.
         Returns metadata including filament usage estimates,
@@ -330,7 +386,8 @@ class PrusaLinkClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def get_camera_snapshot(self) -> Optional[bytes]:
+    def get_camera_snapshot(self):
+        # type: () -> Optional[bytes]
         """
         Grab a camera snapshot from the printer.
         GET /api/v1/cameras/snap returns PNG image data.
@@ -344,7 +401,8 @@ class PrusaLinkClient:
         except Exception:
             return None
 
-    def stop_job(self) -> dict:
+    def stop_job(self):
+        # type: () -> dict
         """Stop the current print job via DELETE /api/v1/job."""
         try:
             resp = self._request("/api/v1/job", method="DELETE")

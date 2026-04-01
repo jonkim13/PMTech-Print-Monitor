@@ -26,9 +26,14 @@ class FakeClient:
         self.start_calls = 0
         self.transfer_calls = 0
         self.file_checks = 0
+        self.file_check_calls = []
+        self.upload_args = []
+        self.start_args = []
+        self.exists_after = 1
 
     def upload_file(self, local_path, remote_filename, storage="usb"):
         self.upload_calls += 1
+        self.upload_args.append((local_path, remote_filename, storage))
         return {
             "ok": True,
             "success": True,
@@ -51,22 +56,30 @@ class FakeClient:
             "details": {"active": False},
         }
 
-    def file_exists(self, remote_filename, storage="usb"):
+    def file_exists(self, remote_filename, storage="usb",
+                    attempt=None, elapsed_sec=None):
         self.file_checks += 1
+        self.file_check_calls.append(
+            (remote_filename, storage, attempt, elapsed_sec)
+        )
+        exists = self.file_checks >= self.exists_after
         return {
             "ok": True,
             "success": True,
             "message": "exists",
             "http_status": 200,
             "details": {
-                "exists": True,
+                "exists": exists,
                 "remote_filename": remote_filename,
                 "storage": storage,
+                "method": "head",
+                "summary": "HEAD 200 file found" if exists else "HEAD 404 not found",
             },
         }
 
     def start_file_print(self, remote_filename, storage="usb"):
         self.start_calls += 1
+        self.start_args.append((remote_filename, storage))
         return {
             "ok": True,
             "success": True,
@@ -148,6 +161,18 @@ class UploadWorkflowTests(unittest.TestCase):
         self.assertIn("widget.gcode", session["remote_filename"])
         self.assertEqual(self.client.upload_calls, 1)
         self.assertEqual(self.client.start_calls, 0)
+        self.assertEqual(
+            self.client.upload_args[0][2],
+            session["remote_storage"],
+        )
+        self.assertEqual(
+            self.client.file_check_calls[0][0],
+            session["remote_filename"],
+        )
+        self.assertEqual(
+            self.client.file_check_calls[0][1],
+            session["remote_storage"],
+        )
 
     def test_create_and_upload_persists_parsed_filename_grams(self):
         result = self.service.create_and_upload(
@@ -193,6 +218,30 @@ class UploadWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.upload_calls, 0)
         self.assertEqual(self.client.start_calls, 1)
         self.assertEqual(len(self.farm_manager.pending_calls), 1)
+        self.assertEqual(
+            self.client.start_args[0],
+            (session["remote_filename"], session["remote_storage"]),
+        )
+
+    def test_create_and_upload_retries_visibility_until_file_appears(self):
+        self.client.exists_after = 3
+
+        result = self.service.create_and_upload(
+            printer_id="mk4-01",
+            uploaded_file=UploadedFileStub(b"G1 X1 Y1\n"),
+            original_filename="delayed.gcode",
+            start_print=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.client.file_checks, 3)
+        session = self.upload_db.get_session(result["upload_session_id"])
+        self.assertEqual(session["status"], "uploaded")
+        self.assertTrue(all(
+            call[0] == session["remote_filename"]
+            and call[1] == session["remote_storage"]
+            for call in self.client.file_check_calls
+        ))
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ class UploadWorkflowService:
         self.upload_session_db = upload_session_db
         self.farm_manager = farm_manager
         self.work_order_db = work_order_db
-        self.verify_timeout_sec = 25
+        self.verify_timeout_sec = 45
         self.verify_poll_sec = 2
         self.start_confirm_timeout_sec = 30
 
@@ -124,6 +124,26 @@ class UploadWorkflowService:
         state = state.strip().lower()
         return state in {"active", "running", "transferring", "uploading"}
 
+    @staticmethod
+    def _verification_summary(result: dict) -> str:
+        if not isinstance(result, dict):
+            return "none"
+        details = result.get("details") or {}
+        summary = details.get("summary")
+        if summary:
+            return str(summary)
+        parts = []
+        for key in ("method", "storage", "remote_filename", "http_status",
+                    "downstream_message", "reason"):
+            value = details.get(key)
+            if value not in (None, "", []):
+                parts.append("{}={}".format(key, value))
+        if result.get("error_type"):
+            parts.append("error_type={}".format(result.get("error_type")))
+        if result.get("message"):
+            parts.append("message={}".format(result.get("message")))
+        return ", ".join(parts) if parts else "none"
+
     def _sync_queue_job_status(self, queue_job_id: int, status: str,
                                upload_session_id: str = None) -> None:
         if not self.work_order_db or not queue_job_id:
@@ -145,24 +165,70 @@ class UploadWorkflowService:
 
     def _verify_remote_file(self, client, remote_filename: str,
                             storage: str) -> dict:
+        printer_id = getattr(client, "printer_id", "unknown")
+        verify_start = time.monotonic()
         deadline = time.monotonic() + self.verify_timeout_sec
         last_transfer = None
         last_exists = None
         saw_active_transfer = False
+        attempts = 0
+
+        print("[VERIFY] Starting post-upload verification: printer_id={} "
+              "storage={} remote_file={} timeout={}s poll={}s".format(
+                  printer_id, storage, remote_filename,
+                  self.verify_timeout_sec, self.verify_poll_sec
+              ))
 
         while time.monotonic() < deadline:
+            attempts += 1
+            elapsed = time.monotonic() - verify_start
             transfer = client.get_transfer_status()
             if transfer.get("ok"):
                 last_transfer = transfer
-                saw_active_transfer = (
-                    saw_active_transfer or
-                    self._transfer_active(transfer.get("details"))
-                )
+                transfer_active = self._transfer_active(transfer.get("details"))
+                saw_active_transfer = saw_active_transfer or transfer_active
+                print("[VERIFY] {} attempt={} elapsed={:.1f}s "
+                      "transfer_http_status={} active={} summary={}".format(
+                          printer_id,
+                          attempts,
+                          elapsed,
+                          transfer.get("http_status"),
+                          transfer_active,
+                          self._verification_summary(transfer),
+                      ))
+            else:
+                transfer_active = False
+                last_transfer = transfer
+                print("[VERIFY] {} attempt={} elapsed={:.1f}s "
+                      "transfer_check_failed error_type={} http_status={} "
+                      "summary={}".format(
+                          printer_id,
+                          attempts,
+                          elapsed,
+                          transfer.get("error_type"),
+                          transfer.get("http_status"),
+                          self._verification_summary(transfer),
+                      ))
 
-            exists = client.file_exists(remote_filename, storage=storage)
+            exists = client.file_exists(
+                remote_filename,
+                storage=storage,
+                attempt=attempts,
+                elapsed_sec=elapsed,
+            )
+            last_exists = exists
             if exists.get("ok"):
-                last_exists = exists
                 if exists.get("details", {}).get("exists"):
+                    total_elapsed = time.monotonic() - verify_start
+                    print("[VERIFY] Success on {}: storage={} remote_file={} "
+                          "attempts={} elapsed={:.1f}s summary={}".format(
+                              printer_id,
+                              storage,
+                              remote_filename,
+                              attempts,
+                              total_elapsed,
+                              self._verification_summary(exists),
+                          ))
                     return self._result(
                         True,
                         "Uploaded file verified on printer storage",
@@ -170,16 +236,63 @@ class UploadWorkflowService:
                         details={
                             "transfer": (last_transfer or {}).get("details"),
                             "file_check": exists.get("details"),
+                            "attempts": attempts,
+                            "elapsed_sec": round(total_elapsed, 2),
                         },
                     )
+                print("[VERIFY] {} attempt={} elapsed={:.1f}s "
+                      "file_check_found=False summary={}".format(
+                          printer_id,
+                          attempts,
+                          elapsed,
+                          self._verification_summary(exists),
+                      ))
+            else:
+                print("[VERIFY] {} attempt={} elapsed={:.1f}s "
+                      "file_check_failed error_type={} http_status={} "
+                      "summary={}".format(
+                          printer_id,
+                          attempts,
+                          elapsed,
+                          exists.get("error_type"),
+                          exists.get("http_status"),
+                          self._verification_summary(exists),
+                      ))
 
-            transfer_active = self._transfer_active(
-                (transfer or {}).get("details")
-            ) if isinstance(transfer, dict) else False
             if not transfer_active and saw_active_transfer and last_exists:
                 # Give PrusaLink a few more polls to expose the file listing.
                 pass
             time.sleep(self.verify_poll_sec)
+
+        total_elapsed = time.monotonic() - verify_start
+        last_summary = self._verification_summary(last_exists or last_transfer)
+        print("[VERIFY] Failure on {}: expected_storage={} "
+              "expected_remote_file={} attempts={} waited={:.1f}s "
+              "last_summary={}".format(
+                  printer_id,
+                  storage,
+                  remote_filename,
+                  attempts,
+                  total_elapsed,
+                  last_summary,
+              ))
+
+        if last_exists and not last_exists.get("ok"):
+            return self._result(
+                False,
+                last_exists.get("message") or "Remote file verification failed",
+                error_type=(
+                    last_exists.get("error_type") or "verification_failed"
+                ),
+                http_status=last_exists.get("http_status") or 502,
+                details={
+                    "transfer": (last_transfer or {}).get("details"),
+                    "file_check": last_exists.get("details"),
+                    "attempts": attempts,
+                    "elapsed_sec": round(total_elapsed, 2),
+                    "last_summary": last_summary,
+                },
+            )
 
         return self._result(
             False,
@@ -189,6 +302,9 @@ class UploadWorkflowService:
             details={
                 "transfer": (last_transfer or {}).get("details"),
                 "file_check": (last_exists or {}).get("details"),
+                "attempts": attempts,
+                "elapsed_sec": round(total_elapsed, 2),
+                "last_summary": last_summary,
             },
         )
 
@@ -235,6 +351,17 @@ class UploadWorkflowService:
             upload_session_id=session["upload_session_id"],
         )
 
+        print("[UPLOAD][SESSION] printer_id={} upload_session_id={} "
+              "original_filename={} staged_path={} remote_filename={} "
+              "remote_storage={}".format(
+                  session["printer_id"],
+                  session["upload_session_id"],
+                  session.get("original_filename"),
+                  staged_path,
+                  session.get("remote_filename"),
+                  session.get("remote_storage") or "usb",
+              ))
+
         upload_result = client.upload_file(
             staged_path,
             session["remote_filename"],
@@ -262,6 +389,17 @@ class UploadWorkflowService:
                 upload_session_id=session["upload_session_id"],
             )
 
+        print("[VERIFY] Upload succeeded; verifying same remote target: "
+              "printer_id={} upload_session_id={} storage={} "
+              "remote_filename={} staged_path={} original_filename={}"
+              .format(
+                  session["printer_id"],
+                  session["upload_session_id"],
+                  session.get("remote_storage") or "usb",
+                  session["remote_filename"],
+                  staged_path,
+                  session.get("original_filename"),
+              ))
         verify_result = self._verify_remote_file(
             client,
             session["remote_filename"],
@@ -391,6 +529,15 @@ class UploadWorkflowService:
             job_id=session.get("work_order_job_id"),
         )
 
+        print("[START] Using verified remote target: printer_id={} "
+              "upload_session_id={} storage={} remote_filename={} "
+              "original_filename={}".format(
+                  session["printer_id"],
+                  upload_session_id,
+                  session.get("remote_storage") or "usb",
+                  session["remote_filename"],
+                  session.get("original_filename"),
+              ))
         start_result = client.start_file_print(
             session["remote_filename"],
             storage=session.get("remote_storage") or "usb",

@@ -101,6 +101,15 @@ class UploadWorkflowService:
             "last_error": session.get("last_error"),
         }
 
+    def _resolve_remote_storage(self, printer_id: str,
+                                remote_storage: str = None) -> str:
+        if remote_storage:
+            return str(remote_storage).strip().lower()
+        client = (self.farm_manager.get_printer_client(printer_id)
+                  if self.farm_manager else None)
+        configured = getattr(client, "default_storage", None) if client else None
+        return str(configured or "usb").strip().lower() or "usb"
+
     @staticmethod
     def _transfer_active(details: dict) -> bool:
         details = details or {}
@@ -472,7 +481,7 @@ class UploadWorkflowService:
                           operator_initials: str = None,
                           queue_job_id: int = None,
                           work_order_job_id: int = None,
-                          remote_storage: str = "usb") -> dict:
+                          remote_storage: str = None) -> dict:
         upload_session_id = uuid.uuid4().hex
         try:
             staged = self._stage_file(
@@ -499,6 +508,9 @@ class UploadWorkflowService:
                 http_status=400,
             )
 
+        resolved_storage = self._resolve_remote_storage(
+            printer_id, remote_storage=remote_storage
+        )
         parsed_grams = extract_grams_from_filename(staged["original_filename"])
         session = self.upload_session_db.create_session(
             upload_session_id=upload_session_id,
@@ -510,7 +522,7 @@ class UploadWorkflowService:
             remote_filename=self._build_remote_filename(
                 printer_id, upload_session_id, staged["original_filename"]
             ),
-            remote_storage=remote_storage,
+            remote_storage=resolved_storage,
             file_size_bytes=staged["file_size_bytes"],
             status="staged",
             operator_initials=operator_initials,

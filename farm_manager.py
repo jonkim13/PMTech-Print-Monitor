@@ -70,6 +70,7 @@ class PrintFarmManager:
                 username=pcfg.get("username", "maker"),
                 password=pcfg.get("password", ""),
                 model=pcfg.get("model", "unknown"),
+                upload_storage=pcfg.get("upload_storage", "usb"),
             )
             self.printers[pid] = {
                 "client": client,

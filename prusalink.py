@@ -34,13 +34,15 @@ class PrusaLinkClient:
 
     def __init__(self, printer_id: str, name: str, host: str,
                  username: str = "maker", password: str = "",
-                 model: str = "unknown"):
+                 model: str = "unknown",
+                 upload_storage: str = "usb"):
         self.printer_id = printer_id
         self.name = name
         self.host = host.rstrip("/")
         self.username = username
         self.password = password
         self.model = model
+        self.default_storage = self._sanitize_storage_name(upload_storage)
         self.base_url = "http://{}".format(self.host)
         self.timeout = 10
         self.upload_timeout = (10, 120)
@@ -53,6 +55,10 @@ class PrusaLinkClient:
         self.auth_digest = HTTPDigestAuth(self.username, self.password)
         self.auth_basic = (self.username, self.password)
         self.use_basic = False  # will flip to True if Digest fails
+
+        print("[PRUSALINK] {} configured upload storage target: {}".format(
+            self.printer_id, self.default_storage
+        ))
 
         # Current state (updated by polling)
         self.state = {
@@ -189,16 +195,17 @@ class PrusaLinkClient:
         return result
 
     @staticmethod
-    def _normalize_storage(storage):
+    def _sanitize_storage_name(storage):
         # type: (Optional[str]) -> str
-        """
-        PrusaLink commonly exposes printer storage as `local`, even when the
-        user-facing destination is the printer's USB/local media.
-        """
-        normalized = str(storage or "usb").strip().lower()
-        if normalized in ("", "usb", "local"):
-            return "local"
-        return normalized
+        normalized = str(storage or "").strip().lower()
+        return normalized or "usb"
+
+    def _resolve_storage(self, storage=None):
+        # type: (Optional[str]) -> str
+        normalized = str(storage or "").strip().lower()
+        if normalized:
+            return self._sanitize_storage_name(normalized)
+        return self.default_storage
 
     @staticmethod
     def _classify_http_status(status_code):
@@ -327,7 +334,7 @@ class PrusaLinkClient:
         """Build the PrusaLink file endpoint for printer storage."""
         quoted = quote(filename, safe="/")
         return "/api/v1/files/{}/{}".format(
-            self._normalize_storage(storage), quoted
+            self._resolve_storage(storage), quoted
         )
 
     def upload_file(self, local_path, remote_filename, storage="usb"):
@@ -355,7 +362,7 @@ class PrusaLinkClient:
 
         endpoint = self._file_endpoint(remote_filename, storage=storage)
         upload_url = "{}{}".format(self.base_url, endpoint)
-        normalized_storage = self._normalize_storage(storage)
+        normalized_storage = self._resolve_storage(storage)
         last_result = None
 
         for attempt in range(1, self.upload_retries + 1):
@@ -490,7 +497,7 @@ class PrusaLinkClient:
     def file_exists(self, remote_filename, storage="usb"):
         # type: (str, str) -> dict
         """Check whether a file is visible on printer storage."""
-        normalized_storage = self._normalize_storage(storage)
+        normalized_storage = self._resolve_storage(storage)
         try:
             resp = self._request(
                 "/api/v1/storage/{}".format(normalized_storage)
@@ -517,7 +524,7 @@ class PrusaLinkClient:
                     "exists": exists,
                     "matches": matches[:5],
                     "remote_filename": remote_filename,
-                    "storage": storage,
+                    "storage": normalized_storage,
                 },
             )
         except Exception as exc:
@@ -526,7 +533,7 @@ class PrusaLinkClient:
                 "file existence check",
                 details={
                     "remote_filename": remote_filename,
-                    "storage": storage,
+                    "storage": normalized_storage,
                 },
             )
 
@@ -542,7 +549,7 @@ class PrusaLinkClient:
                 http_status=resp.status_code,
                 details={
                     "remote_filename": remote_filename,
-                    "storage": storage,
+                    "storage": self._resolve_storage(storage),
                 },
             )
         except Exception as exc:
@@ -551,7 +558,7 @@ class PrusaLinkClient:
                 "print start",
                 details={
                     "remote_filename": remote_filename,
-                    "storage": storage,
+                    "storage": self._resolve_storage(storage),
                 },
             )
 
@@ -676,7 +683,7 @@ class PrusaLinkClient:
             endpoint = "/api/v1/storage"
             if storage:
                 endpoint = "/api/v1/storage/{}".format(
-                    self._normalize_storage(storage)
+                    self._sanitize_storage_name(storage)
                 )
             resp = self._request(endpoint)
             return resp.json()

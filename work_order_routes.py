@@ -16,18 +16,22 @@ _wo_db = None
 _farm_manager = None
 _gcode_uploads_dir = None
 _upload_workflow = None
+_execution_service = None
 _ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 
 
 def register_work_order_routes(app, wo_db, farm_manager,
                                gcode_uploads_dir=None,
-                               upload_workflow=None):
+                               upload_workflow=None,
+                               execution_service=None):
     """Wire up the work order blueprint."""
-    global _wo_db, _farm_manager, _gcode_uploads_dir, _upload_workflow
+    global _wo_db, _farm_manager, _gcode_uploads_dir
+    global _upload_workflow, _execution_service
     _wo_db = wo_db
     _farm_manager = farm_manager
     _gcode_uploads_dir = gcode_uploads_dir
-    _upload_workflow = upload_workflow
+    _execution_service = execution_service or upload_workflow
+    _upload_workflow = _execution_service
     app.register_blueprint(work_order_api)
 
 
@@ -204,7 +208,7 @@ def _print_queue_items(queue_ids):
     client = _farm_manager.get_printer_client(printer_id)
     if not client:
         return jsonify({"error": "Unknown printer"}), 404
-    if not _upload_workflow:
+    if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
     status = _farm_manager.get_printer_status(printer_id)
@@ -250,7 +254,7 @@ def _print_queue_items(queue_ids):
     work_order_job_id = execution["job_id"]
     queue_ids = execution["queue_ids"]
 
-    result = _upload_workflow.create_and_upload(
+    result = _execution_service.create_and_upload(
         printer_id=printer_id,
         uploaded_file=uploaded,
         original_filename=filename,
@@ -513,7 +517,7 @@ def api_print_queue_items():
 @work_order_api.route("/api/queue/<int:queue_id>/retry", methods=["POST"])
 def api_retry_queue_item(queue_id):
     """Retry a failed upload/start attempt using the stored upload session."""
-    if not _upload_workflow:
+    if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
     item = _wo_db.get_queue_item(queue_id)
@@ -542,7 +546,7 @@ def api_retry_queue_item(queue_id):
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
-    result = _upload_workflow.retry_session(
+    result = _execution_service.retry_session(
         item["upload_session_id"],
         start_print=True,
         operator_initials=operator_initials,

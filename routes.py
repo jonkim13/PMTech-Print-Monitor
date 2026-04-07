@@ -21,16 +21,19 @@ _assignment_db = None
 _ui_config = {}
 _gcode_uploads_dir = None
 _upload_workflow = None
+_execution_service = None
 _ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 
 
 def register_routes(app, farm_manager, filament_db, history_db,
                     drone_controller, assignment_db=None, ui_config=None,
-                    gcode_uploads_dir=None, upload_workflow=None):
+                    gcode_uploads_dir=None, upload_workflow=None,
+                    execution_service=None):
     """Wire up the blueprint with the application's shared objects."""
     global _farm_manager, _filament_db, _history_db, _drone_controller
-    global _assignment_db, _ui_config, _gcode_uploads_dir, _upload_workflow
+    global _assignment_db, _ui_config, _gcode_uploads_dir
+    global _upload_workflow, _execution_service
     _farm_manager = farm_manager
     _filament_db = filament_db
     _history_db = history_db
@@ -38,7 +41,8 @@ def register_routes(app, farm_manager, filament_db, history_db,
     _assignment_db = assignment_db
     _ui_config = ui_config or {}
     _gcode_uploads_dir = gcode_uploads_dir
-    _upload_workflow = upload_workflow
+    _execution_service = execution_service or upload_workflow
+    _upload_workflow = _execution_service
     app.register_blueprint(api)
 
 
@@ -159,7 +163,7 @@ def api_printer_upload(printer_id):
     """
     if not _farm_manager.get_printer_client(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
-    if not _upload_workflow:
+    if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
     if "file" not in request.files:
@@ -187,7 +191,7 @@ def api_printer_upload(printer_id):
     if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
         return jsonify({"error": "Unsupported extension: {}".format(ext)}), 400
 
-    result = _upload_workflow.create_and_upload(
+    result = _execution_service.create_and_upload(
         printer_id=printer_id,
         uploaded_file=uploaded,
         original_filename=filename,
@@ -207,7 +211,7 @@ def api_printer_start_uploaded(printer_id):
     """Start a previously verified upload session without re-uploading it."""
     if not _farm_manager.get_printer_client(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
-    if not _upload_workflow:
+    if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
     data = request.get_json() or {}
@@ -215,7 +219,7 @@ def api_printer_start_uploaded(printer_id):
     if not upload_session_id:
         return jsonify({"error": "Missing upload_session_id"}), 400
 
-    session = _upload_workflow.upload_session_db.get_session(upload_session_id)
+    session = _execution_service.get_upload_session(upload_session_id)
     if not session or session.get("printer_id") != printer_id:
         return jsonify({"error": "Upload session not found"}), 404
 
@@ -226,7 +230,7 @@ def api_printer_start_uploaded(printer_id):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    result = _upload_workflow.start_existing_session(
+    result = _execution_service.start_existing_session(
         upload_session_id, operator_initials=operator_initials
     )
     result["stored_on_server"] = True
@@ -242,7 +246,7 @@ def api_printer_retry_upload(printer_id):
     """Retry an upload session by session id, with optional print start."""
     if not _farm_manager.get_printer_client(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
-    if not _upload_workflow:
+    if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
     data = request.get_json() or {}
@@ -250,7 +254,7 @@ def api_printer_retry_upload(printer_id):
     if not upload_session_id:
         return jsonify({"error": "Missing upload_session_id"}), 400
 
-    session = _upload_workflow.upload_session_db.get_session(upload_session_id)
+    session = _execution_service.get_upload_session(upload_session_id)
     if not session or session.get("printer_id") != printer_id:
         return jsonify({"error": "Upload session not found"}), 404
 
@@ -262,7 +266,7 @@ def api_printer_retry_upload(printer_id):
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
-    result = _upload_workflow.retry_session(
+    result = _execution_service.retry_session(
         upload_session_id,
         start_print=start_print,
         operator_initials=operator_initials,

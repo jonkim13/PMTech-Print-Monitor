@@ -1,5 +1,6 @@
 """Explicit application dependency construction."""
 
+import threading
 from dataclasses import dataclass
 
 from database import FilamentAssignmentDB, FilamentInventoryDB, PrintHistoryDB
@@ -10,6 +11,8 @@ from work_orders_db import WorkOrderDB
 
 from ..domains.execution import ExecutionService, UploadSessionRepository
 from ..domains.monitoring.event_service import EventService
+from ..domains.monitoring.runtime_state import MonitoringRuntimeState
+from ..domains.monitoring.transition_handler import TransitionHandler
 
 from .settings import AppSettings, load_settings
 
@@ -26,6 +29,7 @@ class AppContainer:
     work_order_db: WorkOrderDB
     upload_session_repository: UploadSessionRepository
     event_service: EventService
+    transition_handler: TransitionHandler
     farm_manager: PrintFarmManager
     drone_controller: DroneController
     execution_service: ExecutionService
@@ -55,6 +59,20 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         settings.upload_session_db_path
     )
     event_service = EventService()
+    runtime_state = MonitoringRuntimeState()
+    state_lock = threading.Lock()
+    transition_handler = TransitionHandler(
+        history_db=history_db,
+        production_db=production_db,
+        work_order_db=work_order_db,
+        filament_db=filament_db,
+        assignment_db=assignment_db,
+        upload_session_db=upload_session_repository,
+        event_service=event_service,
+        runtime_state=runtime_state,
+        snapshots_dir=settings.snapshots_dir,
+        state_lock=state_lock,
+    )
 
     farm_manager = PrintFarmManager(
         settings.config,
@@ -67,6 +85,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         work_order_db=work_order_db,
         upload_session_db=upload_session_repository,
         event_service=event_service,
+        transition_handler=transition_handler,
+        runtime_state=runtime_state,
+        state_lock=state_lock,
     )
     drone_controller = DroneController()
     execution_service = ExecutionService(
@@ -85,6 +106,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         work_order_db=work_order_db,
         upload_session_repository=upload_session_repository,
         event_service=event_service,
+        transition_handler=transition_handler,
         farm_manager=farm_manager,
         drone_controller=drone_controller,
         execution_service=execution_service,

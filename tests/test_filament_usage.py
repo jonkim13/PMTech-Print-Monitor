@@ -8,7 +8,6 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from farm_manager import PrintFarmManager
 from filament_usage import (
     FILAMENT_SOURCE_API,
     FILAMENT_SOURCE_FILENAME,
@@ -17,6 +16,9 @@ from filament_usage import (
     extract_grams_from_filename,
     resolve_total_filament_usage,
 )
+from app.domains.monitoring.filament_handler import FilamentHandler
+from app.domains.monitoring.production_handler import ProductionHandler
+from app.domains.monitoring.runtime_state import MonitoringRuntimeState
 from production_db import ProductionDB
 from upload_sessions_db import UploadSessionDB
 
@@ -63,22 +65,26 @@ class FakeClient:
         return None
 
 
-def build_manager(client, assignment_db=None, filament_db=None,
-                  production_db=None):
-    manager = PrintFarmManager.__new__(PrintFarmManager)
-    manager.printers = {"printer-1": {"client": client}}
-    manager.assignment_db = assignment_db
-    manager.filament_db = filament_db
-    manager.production_db = production_db
-    manager.work_order_db = None
-    manager.upload_session_db = None
-    manager.snapshots_dir = None
-    manager._active_job_ids = {}
-    manager._active_queue_job_ids = {}
-    manager._print_start_times = {}
-    manager._pending_print_starts = {}
-    manager.pending_events = []
-    return manager
+def build_filament_handler(assignment_db=None, filament_db=None,
+                           production_db=None):
+    runtime_state = MonitoringRuntimeState()
+    return FilamentHandler(
+        assignment_db=assignment_db,
+        filament_db=filament_db,
+        production_db=production_db,
+        runtime_state=runtime_state,
+    ), runtime_state
+
+
+def build_production_handler(assignment_db=None, filament_db=None,
+                             production_db=None):
+    runtime_state = MonitoringRuntimeState()
+    return ProductionHandler(
+        assignment_db=assignment_db,
+        filament_db=filament_db,
+        production_db=production_db,
+        runtime_state=runtime_state,
+    ), runtime_state
 
 
 class FilenameGramsParserTests(unittest.TestCase):
@@ -148,16 +154,15 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
         assignment_db = FakeAssignmentDB({
             ("printer-1", 0): {"spool_id": "SP001"},
         })
-        manager = build_manager(
-            client,
+        handler, _runtime_state = build_filament_handler(
             assignment_db=assignment_db,
             filament_db=filament_db,
         )
 
-        manager._auto_deduct_filament("printer-1", {
+        handler.auto_deduct_filament("printer-1", {
             "name": "Printer 1",
             "job": {"filename": "widget_8g_PLA.gcode"},
-        })
+        }, client)
 
         self.assertEqual(len(filament_db.deductions), 1)
         spool_id, grams_used = filament_db.deductions[0]
@@ -174,16 +179,15 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
         assignment_db = FakeAssignmentDB({
             ("printer-1", 0): {"spool_id": "SP001"},
         })
-        manager = build_manager(
-            client,
+        handler, _runtime_state = build_filament_handler(
             assignment_db=assignment_db,
             filament_db=filament_db,
         )
 
-        manager._auto_deduct_filament("printer-1", {
+        handler.auto_deduct_filament("printer-1", {
             "name": "Printer 1",
             "job": {"filename": "widget_plain.gcode"},
-        })
+        }, client)
 
         self.assertEqual(filament_db.deductions, [])
 
@@ -202,17 +206,16 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
                 "filament_used_g": 0,
                 "filament_used_mm": 10000,
             })
-            manager = build_manager(
-                client,
+            handler, runtime_state = build_production_handler(
                 assignment_db=FakeAssignmentDB({
                     ("printer-1", 0): {"spool_id": "SP001"},
                 }),
                 filament_db=FakeFilamentDB(),
                 production_db=db,
             )
-            manager._active_job_ids["printer-1"] = job_id
+            runtime_state.active_job_ids["printer-1"] = job_id
 
-            manager._production_complete(
+            handler.complete(
                 "printer-1",
                 client,
                 {

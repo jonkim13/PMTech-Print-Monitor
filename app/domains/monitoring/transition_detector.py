@@ -1,25 +1,32 @@
 """Status transition classification helpers."""
 
-PRINT_COMPLETE = "print_complete"
-PRINT_STARTED = "print_started"
-PRINTER_ERROR = "printer_error"
+from app.shared.constants import EventType, PrinterStatus
+
+
+PRINT_COMPLETE = EventType.PRINT_COMPLETE
+PRINT_STARTED = EventType.PRINT_STARTED
+PRINTER_ERROR = EventType.PRINTER_ERROR
 
 
 def is_print_complete_transition(previous_status, new_status):
     """Return whether a transition should be treated as print completion."""
-    return new_status == "finished" or (
-        previous_status == "printing" and new_status == "idle"
+    return new_status == PrinterStatus.FINISHED or (
+        previous_status == PrinterStatus.PRINTING
+        and new_status == PrinterStatus.IDLE
     )
 
 
 def is_print_started_transition(previous_status, new_status):
     """Return whether a transition should be treated as print start."""
-    return new_status == "printing" and previous_status != "printing"
+    return (
+        new_status == PrinterStatus.PRINTING
+        and previous_status != PrinterStatus.PRINTING
+    )
 
 
 def is_printer_error_transition(new_status):
     """Return whether a status should be treated as a printer error event."""
-    return new_status in ("error",)
+    return new_status in (PrinterStatus.ERROR,)
 
 
 def detect_status_transition(previous_status, new_status):

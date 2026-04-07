@@ -354,19 +354,6 @@ class PrintFarmManager:
         """Return the number of tool heads for a printer model."""
         return self._get_printer_service().get_tool_count(printer_id)
 
-    def _auto_deduct_filament(self, printer_id: str, state: dict):
-        """Compatibility wrapper for moved transition side effect."""
-        client = self.printers.get(printer_id, {}).get("client")
-        return self._get_transition_handler().auto_deduct_filament(
-            printer_id, state, client
-        )
-
-    def _production_complete(self, printer_id, client, state, duration_sec):
-        """Compatibility wrapper for moved transition side effect."""
-        return self._get_transition_handler().production_complete(
-            printer_id, client, state, duration_sec
-        )
-
     def _enrich_with_spool(self, printer_id: str, status: dict) -> dict:
         """Attach assigned spool info to a printer status dict.
 

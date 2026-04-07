@@ -25,6 +25,14 @@ from filament_usage import (
 from prusalink import PrusaLinkClient
 from database import PrintHistoryDB, FilamentInventoryDB, FilamentAssignmentDB
 
+from app.shared.constants import (
+    EventType,
+    MachineEventType,
+    PrinterStatus,
+    ProductionJobStatus,
+    QueueItemStatus,
+)
+
 
 class PrintFarmManager:
     """
@@ -81,7 +89,7 @@ class PrintFarmManager:
             )
             self.printers[pid] = {
                 "client": client,
-                "previous_status": "unknown",
+                "previous_status": PrinterStatus.UNKNOWN,
             }
 
         # Events that the drone system will care about
@@ -379,7 +387,7 @@ class PrintFarmManager:
             )
 
             if transition_type == PRINT_COMPLETE:
-                event["type"] = PRINT_COMPLETE
+                event["type"] = EventType.PRINT_COMPLETE
                 start = self._print_start_times.pop(printer_id, None)
                 if start:
                     event["duration_sec"] = int(
@@ -402,7 +410,7 @@ class PrintFarmManager:
                       f"{state['job']['filename']}")
 
             elif transition_type == PRINT_STARTED:
-                event["type"] = PRINT_STARTED
+                event["type"] = EventType.PRINT_STARTED
                 self._print_start_times[printer_id] = datetime.now(timezone.utc)
 
                 if not self._is_duplicate_history_event(event):
@@ -415,7 +423,7 @@ class PrintFarmManager:
                       f"{state['job']['filename']}")
 
             elif transition_type == PRINTER_ERROR:
-                event["type"] = PRINTER_ERROR
+                event["type"] = EventType.PRINTER_ERROR
 
                 if not self._is_duplicate_history_event(event):
                     with self._lock:
@@ -648,7 +656,7 @@ class PrintFarmManager:
             if self.upload_session_db and upload_session_id:
                 self.upload_session_db.set_status(
                     upload_session_id,
-                    "printing",
+                    QueueItemStatus.PRINTING,
                     last_error=None,
                     operator_initials=operator_initials,
                     completed=True,
@@ -665,7 +673,10 @@ class PrintFarmManager:
                         pending_queue_job_id
                     )
                     if queue_job and queue_job.get("status") not in (
-                        "uploading", "uploaded", "starting", "printing"
+                        QueueItemStatus.UPLOADING,
+                        QueueItemStatus.UPLOADED,
+                        QueueItemStatus.STARTING,
+                        QueueItemStatus.PRINTING,
                     ):
                         queue_job = None
                 if not queue_job:
@@ -705,7 +716,7 @@ class PrintFarmManager:
 
             # Machine log
             self.production_db.log_machine_event(
-                printer_id, state["name"], "print_start",
+                printer_id, state["name"], MachineEventType.PRINT_START,
                 details={"job_id": job_id,
                          "file": state["job"]["filename"]},
             )
@@ -854,7 +865,7 @@ class PrintFarmManager:
 
             # Machine log
             self.production_db.log_machine_event(
-                printer_id, state["name"], "print_complete",
+                printer_id, state["name"], MachineEventType.PRINT_COMPLETE,
                 details={"job_id": job_id, "duration_sec": duration_sec},
             )
             print(f"[PRODUCTION] Job #{job_id} completed")
@@ -877,9 +888,9 @@ class PrintFarmManager:
 
             self.production_db.fail_job(job_id, duration_sec=duration)
             self.production_db.log_machine_event(
-                printer_id, state["name"], "print_fail",
+                printer_id, state["name"], MachineEventType.PRINT_FAIL,
                 details={"job_id": job_id,
-                         "error": state.get("error", "unknown")},
+                         "error": state.get("error", PrinterStatus.UNKNOWN)},
             )
             print(f"[PRODUCTION] Job #{job_id} failed")
         except Exception as e:
@@ -902,7 +913,7 @@ class PrintFarmManager:
                     queue_job.get("gcode_file") if queue_job else ""
                 )
                 current_file = self._normalize_print_filename(filename)
-                if (queue_job and queue_job.get("status") == "printing"
+                if (queue_job and queue_job.get("status") == QueueItemStatus.PRINTING
                         and (not queued_file or not current_file
                              or queued_file == current_file)):
                     if self.work_order_db.complete_queue_job(queue_job_id):
@@ -963,7 +974,7 @@ class PrintFarmManager:
                     queue_job.get("gcode_file") if queue_job else ""
                 )
                 current_file = self._normalize_print_filename(filename)
-                if (queue_job and queue_job.get("status") == "printing"
+                if (queue_job and queue_job.get("status") == QueueItemStatus.PRINTING
                         and (not queued_file or not current_file
                              or queued_file == current_file)):
                     if self.work_order_db.fail_queue_job(queue_job_id):
@@ -1116,7 +1127,7 @@ class PrintFarmManager:
         deadline = time.monotonic() + max(1, int(timeout_sec or 0))
         while time.monotonic() < deadline:
             state = self.poll_printer(printer_id)
-            if state.get("status") == "printing":
+            if state.get("status") == PrinterStatus.PRINTING:
                 return {
                     "ok": True,
                     "success": True,

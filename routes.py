@@ -18,6 +18,7 @@ _filament_db = None
 _history_db = None
 _drone_controller = None
 _assignment_db = None
+_event_service = None
 _ui_config = {}
 _gcode_uploads_dir = None
 _upload_workflow = None
@@ -29,16 +30,17 @@ _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 def register_routes(app, farm_manager, filament_db, history_db,
                     drone_controller, assignment_db=None, ui_config=None,
                     gcode_uploads_dir=None, upload_workflow=None,
-                    execution_service=None):
+                    execution_service=None, event_service=None):
     """Wire up the blueprint with the application's shared objects."""
     global _farm_manager, _filament_db, _history_db, _drone_controller
-    global _assignment_db, _ui_config, _gcode_uploads_dir
+    global _assignment_db, _event_service, _ui_config, _gcode_uploads_dir
     global _upload_workflow, _execution_service
     _farm_manager = farm_manager
     _filament_db = filament_db
     _history_db = history_db
     _drone_controller = drone_controller
     _assignment_db = assignment_db
+    _event_service = event_service
     _ui_config = ui_config or {}
     _gcode_uploads_dir = gcode_uploads_dir
     _execution_service = execution_service or upload_workflow
@@ -325,6 +327,8 @@ def api_events():
     The drone system will poll this endpoint.
     Events are cleared after retrieval.
     """
+    if _event_service:
+        return jsonify(_event_service.consume_events())
     return jsonify(_farm_manager.get_pending_events())
 
 
@@ -334,6 +338,8 @@ def api_events_peek():
     Peek at pending events without clearing them.
     Useful for the dashboard.
     """
+    if _event_service:
+        return jsonify(_event_service.peek_events())
     return jsonify(_farm_manager.peek_pending_events())
 
 

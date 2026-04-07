@@ -9,6 +9,7 @@ from production_db import ProductionDB
 from work_orders_db import WorkOrderDB
 
 from ..domains.execution import ExecutionService, UploadSessionRepository
+from ..domains.monitoring.event_service import EventService
 
 from .settings import AppSettings, load_settings
 
@@ -24,6 +25,7 @@ class AppContainer:
     production_db: ProductionDB
     work_order_db: WorkOrderDB
     upload_session_repository: UploadSessionRepository
+    event_service: EventService
     farm_manager: PrintFarmManager
     drone_controller: DroneController
     execution_service: ExecutionService
@@ -52,6 +54,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     upload_session_repository = UploadSessionRepository(
         settings.upload_session_db_path
     )
+    event_service = EventService()
 
     farm_manager = PrintFarmManager(
         settings.config,
@@ -63,6 +66,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         data_dir=settings.data_dir,
         work_order_db=work_order_db,
         upload_session_db=upload_session_repository,
+        event_service=event_service,
     )
     drone_controller = DroneController()
     execution_service = ExecutionService(
@@ -80,6 +84,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         production_db=production_db,
         work_order_db=work_order_db,
         upload_session_repository=upload_session_repository,
+        event_service=event_service,
         farm_manager=farm_manager,
         drone_controller=drone_controller,
         execution_service=execution_service,

@@ -45,9 +45,9 @@ class PrintFarmManager:
                  assignment_db: FilamentAssignmentDB = None,
                  production_db=None, snapshots_dir=None,
                  data_dir=None, work_order_db=None,
-                 upload_session_db=None):
+                 upload_session_db=None,
+                 event_service=None):
         self.printers = {}
-        self.job_history = []       # in-memory recent events
         self.poll_interval = config.get("poll_interval_sec", 5)
         self.history_db = history_db
         self.filament_db = filament_db
@@ -55,6 +55,10 @@ class PrintFarmManager:
         self.production_db = production_db
         self.work_order_db = work_order_db
         self.upload_session_db = upload_session_db
+        if event_service is None:
+            from app.domains.monitoring.event_service import EventService
+            event_service = EventService()
+        self.event_service = event_service
         self.snapshots_dir = snapshots_dir
         self.data_dir = data_dir
         self._lock = threading.Lock()
@@ -91,9 +95,6 @@ class PrintFarmManager:
                 "client": client,
                 "previous_status": PrinterStatus.UNKNOWN,
             }
-
-        # Events that the drone system will care about
-        self.pending_events = []
 
         # Restore previous state so first poll doesn't create false events
         self._restore_previous_state()
@@ -336,20 +337,7 @@ class PrintFarmManager:
 
     def _is_duplicate_pending_event(self, event):
         """Check if a similar event already exists in pending_events."""
-        for existing in self.pending_events:
-            if (existing.get("printer_id") == event.get("printer_id")
-                    and existing.get("type") == event.get("type")):
-                try:
-                    existing_time = datetime.fromisoformat(
-                        existing["timestamp"])
-                    event_time = datetime.fromisoformat(
-                        event["timestamp"])
-                    if abs((event_time - existing_time
-                            ).total_seconds()) < 60:
-                        return True
-                except (ValueError, KeyError):
-                    pass
-        return False
+        return self.event_service.is_duplicate_pending_event(event)
 
     # ------------------------------------------------------------------
     # Polling
@@ -396,9 +384,9 @@ class PrintFarmManager:
 
                 if not self._is_duplicate_history_event(event):
                     with self._lock:
-                        if not self._is_duplicate_pending_event(event):
-                            self.pending_events.append(event)
-                        self.job_history.append(event)
+                        if not self.event_service.is_duplicate_pending_event(event):
+                            self.event_service.add_event(event)
+                        self.event_service.add_job_history(event)
                     self.history_db.log_event(event)
 
                 self._auto_deduct_filament(printer_id, state)
@@ -415,7 +403,7 @@ class PrintFarmManager:
 
                 if not self._is_duplicate_history_event(event):
                     with self._lock:
-                        self.job_history.append(event)
+                        self.event_service.add_job_history(event)
                     self.history_db.log_event(event)
 
                 self._production_start(printer_id, client, state)
@@ -427,9 +415,9 @@ class PrintFarmManager:
 
                 if not self._is_duplicate_history_event(event):
                     with self._lock:
-                        if not self._is_duplicate_pending_event(event):
-                            self.pending_events.append(event)
-                        self.job_history.append(event)
+                        if not self.event_service.is_duplicate_pending_event(event):
+                            self.event_service.add_event(event)
+                        self.event_service.add_job_history(event)
                     self.history_db.log_event(event)
 
                 self._production_fail(printer_id, state)
@@ -1152,24 +1140,16 @@ class PrintFarmManager:
         }
 
     def get_pending_events(self) -> list:
-        """
-        Get and clear pending events.
-        The drone system will call this to know what needs attention.
-        """
-        with self._lock:
-            events = self.pending_events.copy()
-            self.pending_events.clear()
-        return events
+        """Get and clear pending events."""
+        return self.event_service.consume_events()
 
     def peek_pending_events(self) -> list:
         """Get pending events without clearing them."""
-        with self._lock:
-            return self.pending_events.copy()
+        return self.event_service.peek_events()
 
     def get_job_history(self) -> list:
         """Return recent in-memory events."""
-        with self._lock:
-            return self.job_history.copy()
+        return self.event_service.get_job_history()
 
     def start_polling(self):
         """Start the background polling thread."""

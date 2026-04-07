@@ -10,8 +10,7 @@ import os
 import json
 import time
 import threading
-import copy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from filament_usage import (
     FILAMENT_SOURCE_API,
@@ -52,14 +51,22 @@ class PrintFarmManager:
         self.data_dir = data_dir
         self._lock = threading.Lock()
 
-        # Track elapsed time per printer for duration logging
-        self._print_start_times = {}
-        # Track active production job IDs per printer
-        self._active_job_ids = {}
-        # Track active work-order queue job sessions per printer
-        self._active_queue_job_ids = {}
-        # Pending operator initials for UI-initiated print starts
-        self._pending_print_starts = {}
+        from app.domains.monitoring.runtime_state import (
+            MonitoringRuntimeState,
+        )
+        from app.domains.printers.service import PrinterStatusService
+
+        self.runtime_state = MonitoringRuntimeState()
+        # Backward-compatible aliases used by the current orchestration code.
+        self._print_start_times = self.runtime_state.print_start_times
+        self._active_job_ids = self.runtime_state.active_job_ids
+        self._active_queue_job_ids = (
+            self.runtime_state.active_queue_job_ids
+        )
+        self._pending_print_starts = (
+            self.runtime_state.pending_print_starts
+        )
+        self.printer_service = PrinterStatusService(self.printers, self._lock)
 
         # Initialize printer clients
         for pid, pcfg in config.get("printers", {}).items():
@@ -83,6 +90,44 @@ class PrintFarmManager:
         # Restore previous state so first poll doesn't create false events
         self._restore_previous_state()
 
+    def _get_runtime_state(self):
+        """Return the monitoring runtime state container."""
+        runtime_state = getattr(self, "runtime_state", None)
+        if runtime_state is None:
+            from app.domains.monitoring.runtime_state import (
+                MonitoringRuntimeState,
+            )
+
+            runtime_state = MonitoringRuntimeState(
+                print_start_times=getattr(self, "_print_start_times", {}),
+                active_job_ids=getattr(self, "_active_job_ids", {}),
+                active_queue_job_ids=getattr(
+                    self, "_active_queue_job_ids", {}
+                ),
+                pending_print_starts=getattr(
+                    self, "_pending_print_starts", {}
+                ),
+            )
+            self.runtime_state = runtime_state
+        self._print_start_times = runtime_state.print_start_times
+        self._active_job_ids = runtime_state.active_job_ids
+        self._active_queue_job_ids = runtime_state.active_queue_job_ids
+        self._pending_print_starts = runtime_state.pending_print_starts
+        return runtime_state
+
+    def _get_printer_service(self):
+        """Return the printer status service facade."""
+        service = getattr(self, "printer_service", None)
+        if service is None or service.printers is not self.printers:
+            from app.domains.printers.service import PrinterStatusService
+
+            service = PrinterStatusService(
+                self.printers,
+                getattr(self, "_lock", None),
+            )
+            self.printer_service = service
+        return service
+
     # ------------------------------------------------------------------
     # State Persistence & Restoration
     # ------------------------------------------------------------------
@@ -100,6 +145,7 @@ class PrintFarmManager:
         Tries JSON state file first, falls back to database query.
         """
         restored = {}
+        runtime_state = self._get_runtime_state()
 
         # Step 1: Try loading from state file
         state_path = self._state_file_path()
@@ -129,12 +175,12 @@ class PrintFarmManager:
             for pid in self.printers:
                 active_job = self.production_db.get_active_job(pid)
                 if active_job:
-                    self._active_job_ids[pid] = active_job["job_id"]
+                    runtime_state.active_job_ids[pid] = active_job["job_id"]
                     # Also restore the start time for duration tracking
                     try:
                         started = datetime.fromisoformat(
                             active_job["started_at"])
-                        self._print_start_times[pid] = started
+                        runtime_state.print_start_times[pid] = started
                     except (ValueError, KeyError):
                         pass
 
@@ -147,7 +193,9 @@ class PrintFarmManager:
                 except Exception:
                     queue_job = None
                 if queue_job:
-                    self._active_queue_job_ids[pid] = queue_job["queue_job_id"]
+                    runtime_state.active_queue_job_ids[pid] = (
+                        queue_job["queue_job_id"]
+                    )
 
         if restored:
             print(f"[STARTUP] Restored states: {restored}")
@@ -183,20 +231,20 @@ class PrintFarmManager:
     @staticmethod
     def _normalize_print_filename(file_name):
         """Normalize filenames for pending print-start matching."""
-        return os.path.basename(str(file_name or "")).strip().lower()
+        from app.domains.monitoring.runtime_state import (
+            normalize_print_filename,
+        )
+
+        return normalize_print_filename(file_name)
 
     @staticmethod
     def _build_filename_candidates(*names):
         """Return de-duplicated non-empty filename candidates."""
-        candidates = []
-        seen = set()
-        for name in names:
-            text = str(name or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            candidates.append(text)
-        return candidates
+        from app.domains.monitoring.runtime_state import (
+            build_filename_candidates,
+        )
+
+        return build_filename_candidates(*names)
 
     @staticmethod
     def _sum_positive_values(values):
@@ -239,53 +287,17 @@ class PrintFarmManager:
 
     def _prune_pending_print_starts_locked(self):
         """Drop stale pending print-start metadata."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
-        empty_printers = []
-        for printer_id, entries in self._pending_print_starts.items():
-            fresh_entries = []
-            for entry in entries:
-                created_at = entry.get("created_at")
-                try:
-                    created = datetime.fromisoformat(created_at)
-                except (TypeError, ValueError):
-                    continue
-                if created >= cutoff:
-                    fresh_entries.append(entry)
-            if fresh_entries:
-                self._pending_print_starts[printer_id] = fresh_entries
-            else:
-                empty_printers.append(printer_id)
-        for printer_id in empty_printers:
-            self._pending_print_starts.pop(printer_id, None)
+        self._get_runtime_state().prune_pending_print_starts()
 
     def _match_pending_print_start_locked(self, printer_id: str,
                                           file_name: str = None,
                                           upload_session_id: str = None):
         """Resolve the best pending start match for a printer."""
-        entries = self._pending_print_starts.get(printer_id, [])
-        if not entries:
-            return None
-
-        if upload_session_id:
-            for entry in reversed(entries):
-                if entry.get("upload_session_id") == upload_session_id:
-                    return dict(entry)
-
-        normalized = self._normalize_print_filename(file_name)
-        if normalized:
-            for entry in reversed(entries):
-                remote_name = self._normalize_print_filename(
-                    entry.get("remote_filename")
-                )
-                original_name = self._normalize_print_filename(
-                    entry.get("original_filename")
-                )
-                if normalized in (remote_name, original_name):
-                    return dict(entry)
-
-        if len(entries) == 1:
-            return dict(entries[-1])
-        return None
+        return self._get_runtime_state().match_pending_print_start(
+            printer_id,
+            file_name=file_name,
+            upload_session_id=upload_session_id,
+        )
 
     # ------------------------------------------------------------------
     # Deduplication Helpers
@@ -337,6 +349,14 @@ class PrintFarmManager:
 
     def poll_printer(self, printer_id: str) -> dict:
         """Poll one printer, update transition state, and return the state."""
+        from app.domains.monitoring.transition_detector import (
+            PRINT_COMPLETE,
+            PRINT_STARTED,
+            PRINTER_ERROR,
+            build_transition_event,
+            detect_status_transition,
+        )
+
         printer_data = self.printers.get(printer_id)
         if not printer_data:
             return {"error": "Unknown printer"}
@@ -347,20 +367,19 @@ class PrintFarmManager:
         new_status = state["status"]
 
         if prev_status != new_status:
-            event = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "printer_id": printer_id,
-                "printer_name": state["name"],
-                "from_status": prev_status,
-                "to_status": new_status,
-                "filename": state["job"]["filename"],
-                "duration_sec": 0,
-            }
+            transition_type = detect_status_transition(
+                prev_status,
+                new_status,
+            )
+            event = build_transition_event(
+                printer_id,
+                prev_status,
+                state,
+                datetime.now(timezone.utc).isoformat(),
+            )
 
-            if new_status == "finished" or (
-                prev_status == "printing" and new_status == "idle"
-            ):
-                event["type"] = "print_complete"
+            if transition_type == PRINT_COMPLETE:
+                event["type"] = PRINT_COMPLETE
                 start = self._print_start_times.pop(printer_id, None)
                 if start:
                     event["duration_sec"] = int(
@@ -382,8 +401,8 @@ class PrintFarmManager:
                 print(f"[EVENT] Print complete on {state['name']}: "
                       f"{state['job']['filename']}")
 
-            elif new_status == "printing" and prev_status != "printing":
-                event["type"] = "print_started"
+            elif transition_type == PRINT_STARTED:
+                event["type"] = PRINT_STARTED
                 self._print_start_times[printer_id] = datetime.now(timezone.utc)
 
                 if not self._is_duplicate_history_event(event):
@@ -395,8 +414,8 @@ class PrintFarmManager:
                 print(f"[EVENT] Print started on {state['name']}: "
                       f"{state['job']['filename']}")
 
-            elif new_status in ("error",):
-                event["type"] = "printer_error"
+            elif transition_type == PRINTER_ERROR:
+                event["type"] = PRINTER_ERROR
 
                 if not self._is_duplicate_history_event(event):
                     with self._lock:
@@ -423,17 +442,11 @@ class PrintFarmManager:
 
     def _get_printer_model(self, printer_id: str) -> str:
         """Get the model of a printer from its client state."""
-        printer_data = self.printers.get(printer_id)
-        if printer_data:
-            return printer_data["client"].model
-        return "unknown"
+        return self._get_printer_service().get_model(printer_id)
 
     def _get_tool_count(self, printer_id: str) -> int:
         """Return the number of tool heads for a printer model."""
-        model = self._get_printer_model(printer_id)
-        if model == "xl":
-            return 5
-        return 1
+        return self._get_printer_service().get_tool_count(printer_id)
 
     def _auto_deduct_filament(self, printer_id: str, state: dict):
         """Deduct estimated filament usage from assigned spools.
@@ -1026,29 +1039,20 @@ class PrintFarmManager:
 
     def get_all_status(self) -> list:
         """Return current status of all printers."""
-        with self._lock:
-            result = []
-            for pid, p in self.printers.items():
-                s = copy.deepcopy(p["client"].state)
-                self._enrich_with_spool(pid, s)
-                result.append(s)
-            return result
+        return self._get_printer_service().get_all_status(
+            enrich_status=self._enrich_with_spool
+        )
 
     def get_printer_status(self, printer_id: str) -> dict:
         """Return status of a specific printer."""
-        printer_data = self.printers.get(printer_id)
-        if printer_data:
-            with self._lock:
-                s = copy.deepcopy(printer_data["client"].state)
-                return self._enrich_with_spool(printer_id, s)
-        return {"error": f"Unknown printer: {printer_id}"}
+        return self._get_printer_service().get_status(
+            printer_id,
+            enrich_status=self._enrich_with_spool,
+        )
 
     def get_printer_client(self, printer_id: str):
         """Return the PrusaLinkClient for a specific printer."""
-        printer_data = self.printers.get(printer_id)
-        if printer_data:
-            return printer_data["client"]
-        return None
+        return self._get_printer_service().get_client(printer_id)
 
     def record_pending_print_start(self, printer_id: str,
                                    upload_session_id: str,
@@ -1058,61 +1062,27 @@ class PrintFarmManager:
                                    queue_job_id: int = None,
                                    job_id: int = None):
         """Store structured start metadata until polling confirms printing."""
-        normalized_remote = self._normalize_print_filename(remote_filename)
-        normalized_original = self._normalize_print_filename(original_filename)
-        initials = str(operator_initials or "").strip()
-        if not printer_id or not upload_session_id or not initials:
-            return
-        now = datetime.now(timezone.utc).isoformat()
         with self._lock:
-            self._prune_pending_print_starts_locked()
-            entries = self._pending_print_starts.setdefault(printer_id, [])
-            for entry in reversed(entries):
-                if entry.get("upload_session_id") != upload_session_id:
-                    continue
-                entry["created_at"] = now
-                entry["remote_filename"] = normalized_remote
-                entry["original_filename"] = normalized_original
-                entry["operator_initials"] = initials
-                if queue_job_id is not None:
-                    entry["queue_job_id"] = queue_job_id
-                if job_id is not None:
-                    entry["job_id"] = job_id
-                return
-            entries.append({
-                "upload_session_id": upload_session_id,
-                "remote_filename": normalized_remote,
-                "original_filename": normalized_original,
-                "operator_initials": initials,
-                "queue_job_id": queue_job_id,
-                "job_id": job_id,
-                "created_at": now,
-            })
+            self._get_runtime_state().record_pending_print_start(
+                printer_id,
+                upload_session_id,
+                remote_filename,
+                original_filename,
+                operator_initials,
+                queue_job_id=queue_job_id,
+                job_id=job_id,
+            )
 
     def clear_pending_print_start(self, printer_id: str,
                                   upload_session_id: str = None,
                                   remote_filename: str = None):
         """Remove pending print-start metadata when a start fails."""
-        normalized_remote = self._normalize_print_filename(remote_filename)
-        if not printer_id:
-            return
         with self._lock:
-            self._prune_pending_print_starts_locked()
-            entries = self._pending_print_starts.get(printer_id, [])
-            for index in range(len(entries) - 1, -1, -1):
-                entry = entries[index]
-                if upload_session_id and (
-                    entry.get("upload_session_id") != upload_session_id
-                ):
-                    continue
-                if normalized_remote and (
-                    entry.get("remote_filename") != normalized_remote
-                ):
-                    continue
-                entries.pop(index)
-                break
-            if not entries:
-                self._pending_print_starts.pop(printer_id, None)
+            self._get_runtime_state().clear_pending_print_start(
+                printer_id,
+                upload_session_id=upload_session_id,
+                remote_filename=remote_filename,
+            )
 
     def get_pending_print_start(self, printer_id: str, file_name: str = None,
                                 upload_session_id: str = None):

@@ -21,7 +21,6 @@ Authentication:
 
 import os
 import time
-from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
@@ -61,27 +60,9 @@ class PrusaLinkClient:
         ))
 
         # Current state (updated by polling)
-        self.state = {
-            "printer_id": printer_id,
-            "name": name,
-            "model": model,
-            "online": False,
-            "status": "unknown",      # idle, printing, paused, error, finished
-            "temperatures": {
-                "nozzle_current": 0.0,
-                "nozzle_target": 0.0,
-                "bed_current": 0.0,
-                "bed_target": 0.0,
-            },
-            "job": {
-                "filename": "",
-                "progress": 0.0,
-                "time_elapsed_sec": 0,
-                "time_remaining_sec": 0,
-            },
-            "last_updated": None,
-            "error": None,
-        }
+        from app.domains.printers.status_mapper import build_printer_state
+
+        self.state = build_printer_state(printer_id, name, model)
 
     def _get_auth(self):
         """Return the appropriate auth object."""
@@ -792,72 +773,27 @@ class PrusaLinkClient:
         Fetch current status from the printer.
         Returns the updated state dict.
         """
+        from app.domains.printers.status_mapper import (
+            apply_status_payload,
+            mark_connection_failed,
+            mark_http_error,
+            mark_poll_error,
+        )
+
         try:
             # --- GET /api/v1/status ---
             status_resp = self._request("/api/v1/status")
             status_data = status_resp.json()
-
-            self.state["online"] = True
-            self.state["error"] = None
-            self.state["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-            # Parse printer state
-            printer_info = status_data.get("printer", {})
-            self.state["status"] = printer_info.get("state", "unknown").lower()
-
-            # Temperatures
-            self.state["temperatures"]["nozzle_current"] = (
-                printer_info.get("temp_nozzle", 0.0)
-            )
-            self.state["temperatures"]["nozzle_target"] = (
-                printer_info.get("target_nozzle", 0.0)
-            )
-            self.state["temperatures"]["bed_current"] = (
-                printer_info.get("temp_bed", 0.0)
-            )
-            self.state["temperatures"]["bed_target"] = (
-                printer_info.get("target_bed", 0.0)
-            )
-
-            # Job info
-            job_info = status_data.get("job", {})
-            if job_info:
-                self.state["job"]["filename"] = job_info.get(
-                    "file", {}).get("display_name",
-                    job_info.get("file", {}).get("name", "")
-                )
-                self.state["job"]["progress"] = job_info.get(
-                    "progress", 0.0
-                )
-                self.state["job"]["time_elapsed_sec"] = job_info.get(
-                    "time_printing", 0
-                )
-                self.state["job"]["time_remaining_sec"] = job_info.get(
-                    "time_remaining", 0
-                )
-            else:
-                self.state["job"] = {
-                    "filename": "",
-                    "progress": 0.0,
-                    "time_elapsed_sec": 0,
-                    "time_remaining_sec": 0,
-                }
+            apply_status_payload(self.state, status_data)
 
         except requests.exceptions.ConnectionError:
-            self.state["online"] = False
-            self.state["status"] = "offline"
-            self.state["error"] = "Connection failed"
-            self.state["last_updated"] = datetime.now(timezone.utc).isoformat()
+            mark_connection_failed(self.state)
 
         except requests.exceptions.HTTPError as e:
-            self.state["online"] = True
-            self.state["error"] = "HTTP {}".format(e.response.status_code)
-            self.state["last_updated"] = datetime.now(timezone.utc).isoformat()
+            mark_http_error(self.state, e.response.status_code)
 
         except Exception as e:
-            self.state["online"] = False
-            self.state["error"] = str(e)
-            self.state["last_updated"] = datetime.now(timezone.utc).isoformat()
+            mark_poll_error(self.state, e)
 
         return self.state.copy()
 

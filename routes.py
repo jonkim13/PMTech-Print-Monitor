@@ -314,6 +314,8 @@ def api_printer_stop(printer_id):
     if not client:
         return jsonify({"error": "Unknown printer"}), 404
     result = client.stop_job()
+    if result.get("success"):
+        _farm_manager.record_stopped_printer(printer_id)
     status_code = 200 if result.get("success") else 500
     return jsonify(result), status_code
 

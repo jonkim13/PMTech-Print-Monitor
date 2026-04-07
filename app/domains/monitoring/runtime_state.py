@@ -153,6 +153,7 @@ class MonitoringRuntimeState:
     active_job_ids: dict = field(default_factory=dict)
     active_queue_job_ids: dict = field(default_factory=dict)
     pending_print_starts: dict = field(default_factory=dict)
+    stopped_printers: set = field(default_factory=set)
 
     def prune_pending_print_starts(self):
         prune_pending_print_starts(self.pending_print_starts)
@@ -189,3 +190,15 @@ class MonitoringRuntimeState:
             upload_session_id=upload_session_id,
             remote_filename=remote_filename,
         )
+
+    def record_stopped_printer(self, printer_id):
+        """Remember that an operator requested a stop for this printer."""
+        if printer_id:
+            self.stopped_printers.add(printer_id)
+
+    def consume_stopped_printer(self, printer_id):
+        """Return whether this completion-class transition was a stop."""
+        if printer_id in self.stopped_printers:
+            self.stopped_printers.discard(printer_id)
+            return True
+        return False

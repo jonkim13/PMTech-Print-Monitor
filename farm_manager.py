@@ -63,6 +63,7 @@ class PrintFarmManager:
         self._pending_print_starts = (
             self.runtime_state.pending_print_starts
         )
+        self._stopped_printers = self.runtime_state.stopped_printers
         self.printer_service = PrinterStatusService(self.printers, self._lock)
         self.transition_handler = (
             transition_handler or self._build_transition_handler()
@@ -104,12 +105,14 @@ class PrintFarmManager:
                 pending_print_starts=getattr(
                     self, "_pending_print_starts", {}
                 ),
+                stopped_printers=getattr(self, "_stopped_printers", set()),
             )
             self.runtime_state = runtime_state
         self._print_start_times = runtime_state.print_start_times
         self._active_job_ids = runtime_state.active_job_ids
         self._active_queue_job_ids = runtime_state.active_queue_job_ids
         self._pending_print_starts = runtime_state.pending_print_starts
+        self._stopped_printers = runtime_state.stopped_printers
         return runtime_state
 
     def _get_printer_service(self):
@@ -264,6 +267,18 @@ class PrintFarmManager:
             upload_session_id=upload_session_id,
         )
 
+    def record_stopped_printer(self, printer_id: str):
+        """Record that an operator requested a stop for a printer."""
+        with self._lock:
+            self._get_runtime_state().record_stopped_printer(printer_id)
+
+    def _consume_stopped_printer(self, printer_id: str):
+        """Return whether this printer's completion transition was a stop."""
+        with self._lock:
+            return self._get_runtime_state().consume_stopped_printer(
+                printer_id
+            )
+
     # ------------------------------------------------------------------
     # Polling
     # ------------------------------------------------------------------
@@ -300,9 +315,14 @@ class PrintFarmManager:
             )
 
             if transition_type == PRINT_COMPLETE:
-                self._get_transition_handler().handle_print_completed(
-                    printer_id, state["name"], state, client, event
-                )
+                if self._consume_stopped_printer(printer_id):
+                    self._get_transition_handler().handle_print_stopped(
+                        printer_id, state["name"], state, client, event
+                    )
+                else:
+                    self._get_transition_handler().handle_print_completed(
+                        printer_id, state["name"], state, client, event
+                    )
 
             elif transition_type == PRINT_STARTED:
                 self._get_transition_handler().handle_print_started(

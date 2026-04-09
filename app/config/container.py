@@ -3,13 +3,17 @@
 import threading
 from dataclasses import dataclass
 
-from database import FilamentAssignmentDB, FilamentInventoryDB, PrintHistoryDB
+from database import PrintHistoryDB
+from app.domains.assignments.repository import FilamentAssignmentDB
+from app.domains.inventory.repository import FilamentInventoryDB
 from drone import DroneController
 from farm_manager import PrintFarmManager
 from production_db import ProductionDB
 from work_orders_db import WorkOrderDB
 
+from ..domains.assignments.service import AssignmentService
 from ..domains.execution import ExecutionService, UploadSessionRepository
+from ..domains.inventory.service import InventoryService
 from ..domains.monitoring.event_service import EventService
 from ..domains.monitoring.runtime_state import MonitoringRuntimeState
 from ..domains.monitoring.transition_handler import TransitionHandler
@@ -33,6 +37,8 @@ class AppContainer:
     farm_manager: PrintFarmManager
     drone_controller: DroneController
     execution_service: ExecutionService
+    inventory_service: InventoryService
+    assignment_service: AssignmentService
 
     @property
     def upload_session_db(self) -> UploadSessionRepository:
@@ -89,6 +95,20 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         runtime_state=runtime_state,
         state_lock=state_lock,
     )
+    inventory_service = InventoryService(filament_db)
+
+    def _resolve_printer_name(printer_id):
+        printer_data = (farm_manager.printers or {}).get(printer_id, {})
+        client = printer_data.get("client")
+        name = getattr(client, "name", "") if client else ""
+        if name and name != printer_id:
+            return f"{name} ({printer_id})"
+        return name if name else printer_id
+
+    assignment_service = AssignmentService(
+        assignment_db, filament_db,
+        printer_name_resolver=_resolve_printer_name,
+    )
     drone_controller = DroneController()
     execution_service = ExecutionService(
         settings.gcode_uploads_dir,
@@ -110,4 +130,6 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         farm_manager=farm_manager,
         drone_controller=drone_controller,
         execution_service=execution_service,
+        inventory_service=inventory_service,
+        assignment_service=assignment_service,
     )

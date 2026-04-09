@@ -13,7 +13,9 @@ import threading
 from datetime import datetime, timezone
 
 from prusalink import PrusaLinkClient
-from database import PrintHistoryDB, FilamentInventoryDB, FilamentAssignmentDB
+from database import PrintHistoryDB
+from app.domains.assignments.repository import FilamentAssignmentDB
+from app.domains.inventory.repository import FilamentInventoryDB
 
 from app.shared.constants import PrinterStatus
 

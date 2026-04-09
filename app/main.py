@@ -55,6 +55,8 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         gcode_uploads_dir=container.settings.gcode_uploads_dir,
         execution_service=container.execution_service,
         event_service=container.event_service,
+        inventory_service=container.inventory_service,
+        assignment_service=container.assignment_service,
     )
     register_production_routes(
         app,

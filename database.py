@@ -127,10 +127,13 @@ class FilamentInventoryDB:
 
     MATERIALS = {
         "PLA": "PLA", "ABS": "ABS", "ASA": "ASA", "PETG": "PEG",
-        "Nylon": "NYL", "Nylon CF": "NYC", "PEEK": "PEK", "PEKK": "PKK",
+        "Nylon": "NYL", "Nylon6 + CF": "N6C", "Nylon6 + GF30": "N6G",
+        "Nylon12 + CF": "N2C", "Nylon12 + GF30": "N2G",
+        "PEEK": "PEK", "PEEK + CF10": "PKC", "PEKK-A": "PKK",
+        "PPSU": "PSU", "FR PC-ABS": "FPA",
         "ULTEM 1010": "U10", "ULTEM 9085": "U85", "TPU": "TPU", "SEBS": "SEB",
     }
-    DEPRECATED_CREATION_MATERIALS = frozenset({"NylonCF", "PEKK"})
+    DEPRECATED_CREATION_MATERIALS = frozenset()
     ALLOWED_SUPPLIERS = (
         "Prusa Research",
         "3DXTech",

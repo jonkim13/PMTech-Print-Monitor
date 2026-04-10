@@ -16,11 +16,14 @@ from app.shared.constants import (
 class ProductionHandler:
     """Apply production DB lifecycle side effects."""
 
-    def __init__(self, production_db=None, filament_db=None,
+    def __init__(self, job_repository=None, machine_repository=None,
+                 material_repository=None, filament_db=None,
                  assignment_db=None, upload_session_db=None,
                  runtime_state=None, snapshots_dir=None,
                  state_lock=None, queue_handler=None):
-        self.production_db = production_db
+        self.job_repository = job_repository
+        self.machine_repository = machine_repository
+        self.material_repository = material_repository
         self.filament_db = filament_db
         self.assignment_db = assignment_db
         self.upload_session_db = upload_session_db
@@ -29,7 +32,7 @@ class ProductionHandler:
         self.state_lock = state_lock
         self.queue_handler = queue_handler
         self.materials = ProductionMaterialUsage(
-            production_db=production_db,
+            material_repository=self.material_repository,
             assignment_db=assignment_db,
         )
 
@@ -44,7 +47,7 @@ class ProductionHandler:
 
     def start(self, printer_id, client, state):
         """Log a print start to the production database."""
-        if not self.production_db:
+        if not self.job_repository:
             return
         try:
             details = self._job_details(client)
@@ -60,7 +63,7 @@ class ProductionHandler:
             spool_id, spool_material, spool_brand = self._primary_spool(
                 printer_id
             )
-            job_id = self.production_db.create_job(
+            job_id = self.job_repository.create_job(
                 printer_id=printer_id, printer_name=state["name"],
                 file_name=file_name, file_display_name=display_name,
                 filament_type=details.get("filament_type"),
@@ -92,7 +95,7 @@ class ProductionHandler:
                 self._clear_pending_print_start(
                     printer_id, upload_session_id, remote_filename
                 )
-            self.production_db.log_machine_event(
+            self.machine_repository.log_machine_event(
                 printer_id, state["name"], MachineEventType.PRINT_START,
                 details={"job_id": job_id, "file": state["job"]["filename"]},
             )
@@ -102,27 +105,27 @@ class ProductionHandler:
 
     def complete(self, printer_id, client, state, duration_sec):
         """Log a print completion to the production database."""
-        if not self.production_db:
+        if not self.job_repository:
             return
         job_id = self._active_jobs().pop(printer_id, None)
         if not job_id:
             return
         try:
             details = self._job_details(client)
-            job = self.production_db.get_job(job_id)
+            job = self.job_repository.get_job(job_id)
             filament_g, filament_mm, filament_source, material_rows = (
                 self.materials.resolve_completion_usage(
                     printer_id, client, state, details, job
                 )
             )
-            self.production_db.complete_job(
+            self.job_repository.complete_job(
                 job_id, duration_sec=duration_sec,
                 filament_used_g=filament_g, filament_used_mm=filament_mm,
                 filament_used_source=filament_source,
                 snapshot_path=self._save_completion_snapshot(printer_id, client),
             )
             self.materials.log_rows(job_id, printer_id, material_rows)
-            self.production_db.log_machine_event(
+            self.machine_repository.log_machine_event(
                 printer_id, state["name"], MachineEventType.PRINT_COMPLETE,
                 details={"job_id": job_id, "duration_sec": duration_sec},
             )
@@ -132,10 +135,10 @@ class ProductionHandler:
 
     def fail(self, printer_id, state):
         """Log a print failure to the production database."""
-        if not self.production_db:
+        if not self.job_repository:
             return
         self._close_in_production(
-            printer_id, state, self.production_db.fail_job,
+            printer_id, state, self.job_repository.fail_job,
             MachineEventType.PRINT_FAIL, ProductionJobStatus.FAILED,
             {"error": state.get("error", PrinterStatus.UNKNOWN)},
             error_label="failure",
@@ -143,10 +146,10 @@ class ProductionHandler:
 
     def stop(self, printer_id, state, duration_sec=0):
         """Log an operator stop to the production database."""
-        if not self.production_db:
+        if not self.job_repository:
             return
         self._close_in_production(
-            printer_id, state, self.production_db.stop_job,
+            printer_id, state, self.job_repository.stop_job,
             MachineEventType.PRINT_STOP, ProductionJobStatus.STOPPED,
             {"file": state.get("job", {}).get("filename")},
             duration_sec=duration_sec, error_label="stop",
@@ -155,7 +158,7 @@ class ProductionHandler:
     def _close_in_production(self, printer_id, state, close_job, event_type,
                              label, details, duration_sec=0,
                              error_label=None):
-        if not self.production_db:
+        if not self.job_repository:
             return
         job_id = self._active_jobs().pop(printer_id, None)
         if not job_id:
@@ -165,7 +168,7 @@ class ProductionHandler:
             close_job(job_id, duration_sec=duration)
             event_details = {"job_id": job_id}
             event_details.update(details)
-            self.production_db.log_machine_event(
+            self.machine_repository.log_machine_event(
                 printer_id, state["name"], event_type, details=event_details,
             )
             print(f"[PRODUCTION] Job #{job_id} {label}")

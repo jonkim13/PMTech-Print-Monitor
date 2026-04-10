@@ -60,9 +60,9 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
     )
     register_production_routes(
         app,
-        container.production_db,
+        container.production_service,
+        container.export_service,
         container.farm_manager,
-        snapshots_dir=container.settings.snapshots_dir,
     )
     register_work_order_routes(
         app,

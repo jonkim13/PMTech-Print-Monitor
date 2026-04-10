@@ -8,7 +8,6 @@ from app.domains.assignments.repository import FilamentAssignmentDB
 from app.domains.inventory.repository import FilamentInventoryDB
 from drone import DroneController
 from farm_manager import PrintFarmManager
-from production_db import ProductionDB
 from work_orders_db import WorkOrderDB
 
 from ..domains.assignments.service import AssignmentService
@@ -17,6 +16,11 @@ from ..domains.inventory.service import InventoryService
 from ..domains.monitoring.event_service import EventService
 from ..domains.monitoring.runtime_state import MonitoringRuntimeState
 from ..domains.monitoring.transition_handler import TransitionHandler
+from ..domains.production.export_service import ExportService
+from ..domains.production.job_repository import PrintJobRepository
+from ..domains.production.machine_repository import MachineLogRepository
+from ..domains.production.material_repository import MaterialUsageRepository
+from ..domains.production.service import ProductionService
 
 from .settings import AppSettings, load_settings
 
@@ -29,7 +33,11 @@ class AppContainer:
     filament_db: FilamentInventoryDB
     history_db: PrintHistoryDB
     assignment_db: FilamentAssignmentDB
-    production_db: ProductionDB
+    job_repository: PrintJobRepository
+    machine_repository: MachineLogRepository
+    material_repository: MaterialUsageRepository
+    production_service: ProductionService
+    export_service: ExportService
     work_order_db: WorkOrderDB
     upload_session_repository: UploadSessionRepository
     event_service: EventService
@@ -56,9 +64,20 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     filament_db = FilamentInventoryDB(settings.inventory_db_path)
     history_db = PrintHistoryDB(settings.history_db_path)
     assignment_db = FilamentAssignmentDB(settings.assignment_db_path)
-    production_db = ProductionDB(
-        settings.production_db_path,
-        snapshots_dir=settings.snapshots_dir,
+    job_repository = PrintJobRepository(settings.production_db_path)
+    machine_repository = MachineLogRepository(settings.production_db_path)
+    material_repository = MaterialUsageRepository(
+        settings.production_db_path
+    )
+    production_service = ProductionService(
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
+    )
+    export_service = ExportService(
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
     )
     work_order_db = WorkOrderDB(settings.work_order_db_path)
     upload_session_repository = UploadSessionRepository(
@@ -69,7 +88,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     state_lock = threading.Lock()
     transition_handler = TransitionHandler(
         history_db=history_db,
-        production_db=production_db,
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
         work_order_db=work_order_db,
         filament_db=filament_db,
         assignment_db=assignment_db,
@@ -85,7 +106,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         history_db,
         filament_db=filament_db,
         assignment_db=assignment_db,
-        production_db=production_db,
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
         snapshots_dir=settings.snapshots_dir,
         data_dir=settings.data_dir,
         work_order_db=work_order_db,
@@ -122,7 +145,11 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         filament_db=filament_db,
         history_db=history_db,
         assignment_db=assignment_db,
-        production_db=production_db,
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
+        production_service=production_service,
+        export_service=export_service,
         work_order_db=work_order_db,
         upload_session_repository=upload_session_repository,
         event_service=event_service,

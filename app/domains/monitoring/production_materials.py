@@ -17,8 +17,8 @@ from app.domains.monitoring.runtime_state import build_filename_candidates
 class ProductionMaterialUsage:
     """Resolve and persist production material usage rows."""
 
-    def __init__(self, production_db=None, assignment_db=None):
-        self.production_db = production_db
+    def __init__(self, material_repository=None, assignment_db=None):
+        self.material_repository = material_repository
         self.assignment_db = assignment_db
 
     def resolve_completion_usage(self, printer_id, client, state, details, job):
@@ -40,7 +40,7 @@ class ProductionMaterialUsage:
 
     def log_rows(self, job_id, printer_id, rows):
         for row in rows:
-            self.production_db.log_material_usage(
+            self.material_repository.log_material_usage(
                 spool_id=row["spool_id"], job_id=job_id,
                 printer_id=printer_id, grams_used=row["grams_used"],
                 mm_used=row["mm_used"], tool_index=row["tool_index"],

@@ -16,10 +16,10 @@ class FilamentHandler:
     """Deduct consumed filament from assigned spools."""
 
     def __init__(self, filament_db=None, assignment_db=None,
-                 production_db=None, runtime_state=None):
+                 job_repository=None, runtime_state=None):
         self.filament_db = filament_db
         self.assignment_db = assignment_db
-        self.production_db = production_db
+        self.job_repository = job_repository
         self.runtime_state = runtime_state
 
     def auto_deduct_filament(self, printer_id: str, state: dict, client=None):
@@ -109,12 +109,12 @@ class FilamentHandler:
         return deducted_any
 
     def _get_active_production_job_record(self, printer_id: str):
-        if not self.production_db or not self.runtime_state:
+        if not self.job_repository or not self.runtime_state:
             return None
         job_id = self.runtime_state.active_job_ids.get(printer_id)
         if job_id:
-            return self.production_db.get_job(job_id)
-        return self.production_db.get_active_job(printer_id)
+            return self.job_repository.get_job(job_id)
+        return self.job_repository.get_active_job(printer_id)
 
     @staticmethod
     def _resolve_total_job_filament_usage(state_job: dict,

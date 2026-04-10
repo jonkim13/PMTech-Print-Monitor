@@ -19,7 +19,9 @@ from filament_usage import (
 from app.domains.monitoring.filament_handler import FilamentHandler
 from app.domains.monitoring.production_handler import ProductionHandler
 from app.domains.monitoring.runtime_state import MonitoringRuntimeState
-from production_db import ProductionDB
+from app.domains.production.job_repository import PrintJobRepository
+from app.domains.production.machine_repository import MachineLogRepository
+from app.domains.production.material_repository import MaterialUsageRepository
 from upload_sessions_db import UploadSessionDB
 
 
@@ -66,23 +68,27 @@ class FakeClient:
 
 
 def build_filament_handler(assignment_db=None, filament_db=None,
-                           production_db=None):
+                           job_repository=None):
     runtime_state = MonitoringRuntimeState()
     return FilamentHandler(
         assignment_db=assignment_db,
         filament_db=filament_db,
-        production_db=production_db,
+        job_repository=job_repository,
         runtime_state=runtime_state,
     ), runtime_state
 
 
 def build_production_handler(assignment_db=None, filament_db=None,
-                             production_db=None):
+                             job_repository=None,
+                             machine_repository=None,
+                             material_repository=None):
     runtime_state = MonitoringRuntimeState()
     return ProductionHandler(
         assignment_db=assignment_db,
         filament_db=filament_db,
-        production_db=production_db,
+        job_repository=job_repository,
+        machine_repository=machine_repository,
+        material_repository=material_repository,
         runtime_state=runtime_state,
     ), runtime_state
 
@@ -193,8 +199,11 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
 
     def test_production_complete_persists_filename_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = ProductionDB(os.path.join(tmpdir, "production.db"))
-            job_id = db.create_job(
+            db_path = os.path.join(tmpdir, "production.db")
+            job_repository = PrintJobRepository(db_path)
+            machine_repository = MachineLogRepository(db_path)
+            material_repository = MaterialUsageRepository(db_path)
+            job_id = job_repository.create_job(
                 printer_id="printer-1",
                 printer_name="Printer 1",
                 file_name="printer-1__token__widget_8g_PLA.gcode",
@@ -211,7 +220,9 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
                     ("printer-1", 0): {"spool_id": "SP001"},
                 }),
                 filament_db=FakeFilamentDB(),
-                production_db=db,
+                job_repository=job_repository,
+                machine_repository=machine_repository,
+                material_repository=material_repository,
             )
             runtime_state.active_job_ids["printer-1"] = job_id
 
@@ -227,8 +238,8 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
                 duration_sec=321,
             )
 
-            job = db.get_job(job_id)
-            usage = db.get_spool_usage("SP001")
+            job = job_repository.get_job(job_id)
+            usage = material_repository.get_spool_usage("SP001")
 
         self.assertAlmostEqual(job["filament_used_g"], 8.0)
         self.assertEqual(job["filament_used_source"], FILAMENT_SOURCE_FILENAME)
@@ -238,7 +249,7 @@ class FilamentFallbackIntegrationTests(unittest.TestCase):
 
 
 class MigrationSafetyTests(unittest.TestCase):
-    def test_production_db_adds_source_columns_to_legacy_schema(self):
+    def test_production_repositories_add_source_columns_to_legacy_schema(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "production_legacy.db")
             conn = sqlite3.connect(db_path)
@@ -293,8 +304,10 @@ class MigrationSafetyTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            ProductionDB(db_path)
-            ProductionDB(db_path)
+            PrintJobRepository(db_path)
+            MaterialUsageRepository(db_path)
+            PrintJobRepository(db_path)
+            MaterialUsageRepository(db_path)
 
             conn = sqlite3.connect(db_path)
             job_cols = [row[1] for row in conn.execute(

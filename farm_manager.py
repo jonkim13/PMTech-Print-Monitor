@@ -29,7 +29,8 @@ class PrintFarmManager:
     def __init__(self, config: dict, history_db: PrintHistoryDB,
                  filament_db: FilamentInventoryDB = None,
                  assignment_db: FilamentAssignmentDB = None,
-                 production_db=None, snapshots_dir=None,
+                 job_repository=None, machine_repository=None,
+                 material_repository=None, snapshots_dir=None,
                  data_dir=None, work_order_db=None,
                  upload_session_db=None,
                  event_service=None, transition_handler=None,
@@ -39,7 +40,9 @@ class PrintFarmManager:
         self.history_db = history_db
         self.filament_db = filament_db
         self.assignment_db = assignment_db
-        self.production_db = production_db
+        self.job_repository = job_repository
+        self.machine_repository = machine_repository
+        self.material_repository = material_repository
         self.work_order_db = work_order_db
         self.upload_session_db = upload_session_db
         if event_service is None:
@@ -136,7 +139,9 @@ class PrintFarmManager:
 
         return TransitionHandler(
             history_db=getattr(self, "history_db", None),
-            production_db=getattr(self, "production_db", None),
+            job_repository=getattr(self, "job_repository", None),
+            machine_repository=getattr(self, "machine_repository", None),
+            material_repository=getattr(self, "material_repository", None),
             work_order_db=getattr(self, "work_order_db", None),
             filament_db=getattr(self, "filament_db", None),
             assignment_db=getattr(self, "assignment_db", None),
@@ -198,9 +203,9 @@ class PrintFarmManager:
                 restored[pid] = status
 
         # Step 3: Restore active job IDs from production DB
-        if self.production_db:
+        if self.job_repository:
             for pid in self.printers:
-                active_job = self.production_db.get_active_job(pid)
+                active_job = self.job_repository.get_active_job(pid)
                 if active_job:
                     runtime_state.active_job_ids[pid] = active_job["job_id"]
                     # Also restore the start time for duration tracking

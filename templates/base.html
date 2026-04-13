@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PM Technologies Printer Monitor</title>
+    <link rel="icon" type="image/png" sizes="256x256" href="{{ url_for('static', filename='img/favicon.png') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='img/favicon.png') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+
+{% block content %}{% endblock %}
+
+<!-- ===== TOAST CONTAINER ===== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+window.APP_CONFIG = {
+    pollIntervalMs: {{ poll_interval_ms | tojson }}
+};
+</script>
+
+<!-- ===== SCRIPTS (order matters: utils first, then features) ===== -->
+<script src="/static/js/core/state.js"></script>
+<script src="/static/js/core/dom.js"></script>
+<script src="/static/js/core/nav.js"></script>
+<script src="/static/js/pages/dashboard/index.js"></script>
+<script src="/static/js/pages/dashboard/upload.js"></script>
+<script src="/static/js/pages/dashboard/files.js"></script>
+<script src="/static/js/pages/dashboard/assignment.js"></script>
+<script src="/static/js/pages/dashboard/actions.js"></script>
+<script src="/static/js/pages/drone.js"></script>
+<script src="/static/js/pages/inventory.js"></script>
+<script src="/static/js/pages/production/index.js"></script>
+<script src="/static/js/pages/production/jobs.js"></script>
+<script src="/static/js/pages/production/machines.js"></script>
+<script src="/static/js/pages/production/maintenance.js"></script>
+<script src="/static/js/pages/production/materials.js"></script>
+<script src="/static/js/pages/workorders/index.js"></script>
+<script src="/static/js/pages/workorders/queue.js"></script>
+<script src="/static/js/pages/workorders/detail.js"></script>
+<script src="/static/js/pages/workorders/create.js"></script>
+<script src="/static/js/pages/workorders/print-modal.js"></script>
+<script src="/static/js/pages/history.js"></script>
+
+</body>
+</html>

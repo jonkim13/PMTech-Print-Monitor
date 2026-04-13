@@ -1,0 +1,127 @@
+/* ==========================================================================
+   Production — job detail, machine view, QC modal, maintenance modal
+   ========================================================================== */
+
+/* ========== JOB DETAIL MODAL ========== */
+.job-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.job-detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.jd-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.5px;
+}
+
+.jd-value {
+    font-size: 13px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* ========== MACHINE SUMMARY CARDS ========== */
+.prod-machine-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.machine-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.machine-header {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.machine-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.machine-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ms-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.ms-value {
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+}
+
+.ms-value.green { color: var(--accent-green); }
+.ms-value.red { color: var(--accent-red); }
+.ms-value.blue { color: var(--accent-blue); }
+.ms-value.orange { color: var(--accent-orange); }
+
+.machine-maint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
+/* ========== MATERIAL SUMMARY BAR ========== */
+.material-summary-bar {
+    display: flex;
+    gap: 24px;
+    padding: 12px 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.mat-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+    .prod-machine-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .job-detail-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .machine-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

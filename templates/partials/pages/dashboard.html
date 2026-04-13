@@ -1,0 +1,41 @@
+        <!-- ==================== DASHBOARD PAGE ==================== -->
+        <div class="section-page active" id="page-dashboard">
+
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Total Printers</span>
+                    <span class="stat-value" id="statTotal">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Printing</span>
+                    <span class="stat-value blue" id="statPrinting">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Idle</span>
+                    <span class="stat-value green" id="statIdle">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Finished</span>
+                    <span class="stat-value orange" id="statFinished">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Errors</span>
+                    <span class="stat-value red" id="statErrors">0</span>
+                </div>
+            </div>
+
+            <!-- Printer Cards -->
+            <div class="grid" id="printerGrid"></div>
+
+            <!-- Event Log -->
+            <div>
+                <div class="section-header">
+                    Recent Events
+                    <span class="count-badge" id="eventCount">0</span>
+                </div>
+                <div class="events-list" id="eventsList">
+                    <div class="events-empty">No events yet</div>
+                </div>
+            </div>
+        </div>

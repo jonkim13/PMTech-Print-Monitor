@@ -1,0 +1,27 @@
+<!-- ===== UPLOAD GCODE MODAL ===== -->
+<div class="modal-overlay" id="uploadModal">
+    <div class="modal" style="width: 420px;">
+        <h2>Send GCode</h2>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;">
+            Printer: <strong id="uploadPrinterName"></strong>
+        </p>
+        <div class="form-group">
+            <label class="form-label">GCode File</label>
+            <input type="file" class="form-input" id="gcodeFile" accept=".gcode,.gco,.g,.bgcode" style="padding: 6px;">
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="printAfterUpload" onchange="toggleUploadOperatorInitials()" style="accent-color: var(--accent-blue);">
+            <label for="printAfterUpload" style="font-size: 12px; color: var(--text-secondary);">
+                Start printing after upload
+            </label>
+        </div>
+        <div class="form-group" id="uploadOperatorGroup" style="display: none;">
+            <label class="form-label" for="uploadOperatorInitials">Operator Initials</label>
+            <input type="text" class="form-input" id="uploadOperatorInitials" maxlength="12" placeholder="Required to start print">
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('uploadModal')">Cancel</button>
+            <button type="button" class="btn btn-primary" id="uploadBtn" onclick="submitUpload()">Upload</button>
+        </div>
+    </div>
+</div>

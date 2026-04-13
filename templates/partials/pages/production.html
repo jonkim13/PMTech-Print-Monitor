@@ -1,0 +1,121 @@
+        <!-- ==================== PRODUCTION LOG PAGE ==================== -->
+        <div class="section-page" id="page-production">
+
+            <!-- Sub-tab navigation -->
+            <div class="prod-tabs">
+                <button class="prod-tab active" data-prodtab="jobs" onclick="switchProdTab('jobs')">Production Log</button>
+                <button class="prod-tab" data-prodtab="machines" onclick="switchProdTab('machines')">Machine Summary</button>
+                <button class="prod-tab" data-prodtab="materials" onclick="switchProdTab('materials')">Material Traceability</button>
+            </div>
+
+            <!-- ---- Jobs Sub-Tab ---- -->
+            <div class="prod-panel active" id="prodPanel-jobs">
+                <div class="prod-toolbar">
+                    <select class="input-field" id="prodFilterPrinter">
+                        <option value="">All Printers</option>
+                    </select>
+                    <select class="input-field" id="prodFilterStatus">
+                        <option value="">All Statuses</option>
+                        <option value="started">Started</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="stopped">Stopped</option>
+                    </select>
+                    <select class="input-field" id="prodFilterOutcome">
+                        <option value="">All Outcomes</option>
+                        <option value="pass">Pass</option>
+                        <option value="fail">Fail</option>
+                        <option value="unknown">Unknown</option>
+                    </select>
+                    <input type="date" class="input-field" id="prodDateFrom" title="From date">
+                    <input type="date" class="input-field" id="prodDateTo" title="To date">
+                    <button class="btn btn-primary" onclick="loadProductionJobs()">Filter</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="exportProductionCSV('jobs')">Export CSV</button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Date</th>
+                                <th>Printer</th>
+                                <th>File</th>
+                                <th>Material</th>
+                                <th>Spool</th>
+                                <th>Duration</th>
+                                <th>Used (g)</th>
+                                <th>Status</th>
+                                <th>Outcome</th>
+                                <th>Operator</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="prodJobsBody">
+                            <tr><td colspan="12" class="table-empty">Loading production log...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Machines Sub-Tab ---- -->
+            <div class="prod-panel" id="prodPanel-machines">
+                <div class="prod-machine-cards" id="prodMachineCards">
+                    <div class="events-empty">Loading machine summaries...</div>
+                </div>
+
+                <div class="prod-toolbar" style="margin-top: 24px;">
+                    <select class="input-field" id="machineLogPrinter">
+                        <option value="">Select Printer</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadMachineLog()">View Log</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn btn-green" onclick="showMaintenanceModal()">Log Maintenance</button>
+                    <button class="btn" onclick="exportProductionCSV('machines')">Export CSV</button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Printer</th>
+                                <th>Event</th>
+                                <th>Details</th>
+                                <th>Print Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody id="machineLogBody">
+                            <tr><td colspan="5" class="table-empty">Select a printer to view log</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Materials Sub-Tab ---- -->
+            <div class="prod-panel" id="prodPanel-materials">
+                <div class="prod-toolbar">
+                    <input type="text" class="input-field" id="materialSpoolSearch" placeholder="Enter Spool ID..." style="width: 180px;">
+                    <button class="btn btn-primary" onclick="loadSpoolUsage()">Search</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="exportProductionCSV('materials')">Export CSV</button>
+                </div>
+                <div id="materialSummary" style="margin-bottom: 16px;"></div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Job ID</th>
+                                <th>Printer</th>
+                                <th>File</th>
+                                <th>Grams Used</th>
+                                <th>mm Used</th>
+                            </tr>
+                        </thead>
+                        <tbody id="materialUsageBody">
+                            <tr><td colspan="6" class="table-empty">Enter a spool ID to view usage history</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>

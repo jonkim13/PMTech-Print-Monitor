@@ -1,0 +1,11 @@
+/* ==========================================================================
+   Inventory — inventory table, filters, spool forms
+   ========================================================================== */
+
+.inventory-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+}

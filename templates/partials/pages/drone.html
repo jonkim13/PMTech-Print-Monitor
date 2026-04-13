@@ -1,0 +1,62 @@
+        <!-- ==================== DRONE PAGE ==================== -->
+        <div class="section-page" id="page-drone">
+
+            <div class="drone-grid">
+                <!-- Status Panel -->
+                <div class="drone-panel">
+                    <h3>Drone Status</h3>
+                    <div class="drone-stat-grid">
+                        <div class="drone-stat">
+                            <span class="drone-stat-label">Connection</span>
+                            <span class="drone-stat-value" id="droneConnected" style="color:var(--accent-red)">OFFLINE</span>
+                        </div>
+                        <div class="drone-stat">
+                            <span class="drone-stat-label">Battery</span>
+                            <span class="drone-stat-value" id="droneBattery">0%</span>
+                        </div>
+                        <div class="drone-stat">
+                            <span class="drone-stat-label">State</span>
+                            <span class="drone-stat-value" id="droneState">DOCKED</span>
+                        </div>
+                        <div class="drone-stat">
+                            <span class="drone-stat-label">Position</span>
+                            <span class="drone-stat-value" id="dronePosition">0, 0, 0</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 16px;">
+                        <span class="drone-stat-label">Current Mission</span>
+                        <div class="drone-stat-value" id="droneMission" style="margin-top: 4px; font-size: 13px;">None</div>
+                    </div>
+                </div>
+
+                <!-- Mission Controls -->
+                <div class="drone-panel">
+                    <h3>Mission Controls</h3>
+                    <div class="drone-actions">
+                        <button class="drone-btn" onclick="sendDroneMission('patrol_all')">
+                            Patrol All Printers
+                        </button>
+                        <button class="drone-btn" onclick="showInspectPicker()">
+                            Inspect Specific Printer
+                        </button>
+                        <button class="drone-btn" onclick="sendDroneMission('return_to_dock')">
+                            Return to Dock
+                        </button>
+                    </div>
+                    <div id="inspectPicker" style="display:none; margin-top: 12px;">
+                        <select class="input-field" id="inspectTarget" style="width: 100%; margin-bottom: 8px;">
+                        </select>
+                        <button class="btn btn-primary" onclick="sendInspectMission()">Send Inspect Mission</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mission Log -->
+            <div class="section-header">
+                Mission Log
+                <span class="count-badge" id="missionCount">0</span>
+            </div>
+            <div class="mission-log" id="missionLog">
+                <div class="events-empty">No missions yet</div>
+            </div>
+        </div>

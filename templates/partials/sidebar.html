@@ -1,0 +1,42 @@
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <img
+                class="sidebar-brand-logo"
+                src="{{ url_for('static', filename='img/pm-technologies-logo-horizontal.png') }}"
+                alt="PM Technologies"
+            >
+        </div>
+        <nav class="sidebar-nav">
+            <button class="nav-item active" data-page="dashboard" onclick="switchPage('dashboard')">
+                <span class="nav-icon">&#9635;</span>
+                Dashboard
+            </button>
+            <button class="nav-item" data-page="drone" onclick="switchPage('drone')">
+                <span class="nav-icon">&#9992;</span>
+                Drone
+            </button>
+            <button class="nav-item" data-page="inventory" onclick="switchPage('inventory')">
+                <span class="nav-icon">&#9881;</span>
+                Inventory
+            </button>
+            <button class="nav-item" data-page="production" onclick="switchPage('production')">
+                <span class="nav-icon">&#9878;</span>
+                Production Log
+            </button>
+            <button class="nav-item" data-page="workorders" onclick="switchPage('workorders')">
+                <span class="nav-icon">&#9998;</span>
+                Work Orders
+            </button>
+            <button class="nav-item" data-page="history" onclick="switchPage('history')">
+                <span class="nav-icon">&#9776;</span>
+                History
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="server-status">
+                <div class="status-dot" id="sidebarDot"></div>
+                <span id="sidebarStatus">CONNECTED</span>
+            </div>
+        </div>
+    </aside>

@@ -1,0 +1,19 @@
+<div class="modal-overlay" id="newSpoolIdModal">
+    <div class="modal" style="width: 420px;">
+        <h2>Spool Created</h2>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;">
+            Write this ID on the spool before closing.
+        </p>
+        <div style="margin-bottom: 20px; padding: 18px; border-radius: 10px; border: 1px solid rgba(34, 197, 94, 0.28); background: rgba(34, 197, 94, 0.08); text-align: center;">
+            <div style="margin-bottom: 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-secondary);">
+                New Spool Id
+            </div>
+            <div id="newSpoolIdValue" style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; letter-spacing: 1px; color: var(--accent-green);">
+                --
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-green" onclick="hideModal('newSpoolIdModal')">Close</button>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,125 @@
+/* ==========================================================================
+   Drone — drone status, mission controls, mission log
+   ========================================================================== */
+
+.drone-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.drone-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.drone-panel h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.drone-stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.drone-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.drone-stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.drone-stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.drone-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.drone-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+}
+
+.drone-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--text-dim);
+    color: var(--text-primary);
+}
+
+.mission-log {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.mission-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+
+.mission-item:last-child { border-bottom: none; }
+
+.mission-type {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+}
+
+.mission-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--accent-orange);
+}
+
+.mission-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+    .drone-grid {
+        grid-template-columns: 1fr;
+    }
+}

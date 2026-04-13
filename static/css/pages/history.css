@@ -1,0 +1,32 @@
+/* ==========================================================================
+   History — history table, stats cards
+   ========================================================================== */
+
+.history-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.history-stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+}
+
+.history-stat-card .stat-label {
+    margin-bottom: 6px;
+}
+
+.history-stat-card .stat-value {
+    font-size: 24px;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+    .history-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

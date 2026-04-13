@@ -1,0 +1,29 @@
+<!-- ===== JOB DETAIL MODAL ===== -->
+<div class="modal-overlay" id="jobDetailModal">
+    <div class="modal" style="width: 600px; max-height: 80vh; overflow-y: auto;">
+        <h2>Job Detail <span id="jobDetailId" style="color: var(--text-secondary); font-size: 14px;"></span></h2>
+        <div id="jobDetailContent"></div>
+        <div class="form-row" style="margin-top: 16px;">
+            <div class="form-group">
+                <label class="form-label">Outcome</label>
+                <select class="form-input" id="jobOutcomeSelect">
+                    <option value="unknown">Unknown</option>
+                    <option value="pass">Pass</option>
+                    <option value="fail">Fail</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Operator</label>
+                <input type="text" class="form-input" id="jobOperatorInput" placeholder="Operator name">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea class="form-input" id="jobNotesInput" rows="3" placeholder="QC notes, observations..."></textarea>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('jobDetailModal')">Close</button>
+            <button type="button" class="btn btn-primary" onclick="saveJobQC()">Save QC</button>
+        </div>
+    </div>
+</div>

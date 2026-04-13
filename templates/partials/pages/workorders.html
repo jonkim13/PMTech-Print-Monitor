@@ -1,0 +1,146 @@
+        <!-- ==================== WORK ORDERS PAGE ==================== -->
+        <div class="section-page" id="page-workorders">
+
+            <!-- Sub-tab navigation -->
+            <div class="prod-tabs">
+                <button class="wo-tab active" data-wotab="queue" onclick="switchWoTab('queue')">Production Queue</button>
+                <button class="wo-tab" data-wotab="orders" onclick="switchWoTab('orders')">All Orders</button>
+                <button class="wo-tab" data-wotab="create" onclick="switchWoTab('create')">Create New</button>
+            </div>
+
+            <!-- ---- Queue Sub-Tab ---- -->
+            <div class="wo-panel active" id="woPanel-queue">
+                <!-- Queue Stats -->
+                <div class="stats-bar" style="margin-bottom: 16px;">
+                    <div class="stat-item">
+                        <span class="stat-label">Queued</span>
+                        <span class="stat-value orange" id="queueStatQueued">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Active</span>
+                        <span class="stat-value blue" id="queueStatPrinting">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Completed</span>
+                        <span class="stat-value green" id="queueStatCompleted">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Failed</span>
+                        <span class="stat-value red" id="queueStatFailed">0</span>
+                    </div>
+                </div>
+
+                <div class="prod-toolbar">
+                    <select class="input-field" id="queueFilterStatus">
+                        <option value="">All Active</option>
+                        <option value="queued">Queued</option>
+                        <option value="uploading">Uploading to printer</option>
+                        <option value="uploaded">Uploaded to printer</option>
+                        <option value="starting">Starting print</option>
+                        <option value="printing">Printing</option>
+                        <option value="upload_failed">Upload failed</option>
+                        <option value="start_failed">Start failed</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadQueue()">Filter</button>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>WO#</th>
+                                <th>Customer</th>
+                                <th>Part</th>
+                                <th>Material</th>
+                                <th>Seq</th>
+                                <th>Status</th>
+                                <th>Printer</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueBody">
+                            <tr><td colspan="9" class="table-empty">Loading queue...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Orders Sub-Tab ---- -->
+            <div class="wo-panel" id="woPanel-orders">
+                <div class="prod-toolbar">
+                    <select class="input-field" id="woFilterStatus">
+                        <option value="">All Statuses</option>
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadWorkOrders()">Filter</button>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>WO#</th>
+                                <th>Customer</th>
+                                <th>Date</th>
+                                <th>Parts</th>
+                                <th>Progress</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workOrdersBody">
+                            <tr><td colspan="7" class="table-empty">Loading work orders...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Create Sub-Tab ---- -->
+            <div class="wo-panel" id="woPanel-create">
+                <div class="wo-create-form">
+                    <h3>New Work Order</h3>
+                    <div class="form-group">
+                        <label class="form-label">Customer Name</label>
+                        <input type="text" class="form-input" id="woCustomerName" required placeholder="e.g. Acme Corp" style="max-width: 400px;">
+                    </div>
+
+                    <div class="section-header" style="margin-top: 20px;">
+                        Line Items
+                        <button class="btn btn-primary" onclick="addWoLineItem()" style="margin-left: 12px; font-size: 11px; padding: 4px 10px;">+ Add Item</button>
+                    </div>
+
+                    <div id="woLineItems">
+                        <!-- Dynamic line items go here -->
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <button class="btn btn-green" onclick="submitCreateWorkOrder()">Create Work Order</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ---- Work Order Detail (inline) ---- -->
+            <div class="wo-panel" id="woPanel-detail" style="display: none;">
+                <div style="margin-bottom: 12px;">
+                    <button class="btn" onclick="switchWoTab('orders')" style="font-size: 11px;">&larr; Back to Orders</button>
+                </div>
+                <div id="woDetailHeader"></div>
+                <div class="prod-toolbar" id="woDetailSelectionBar" style="margin-top: 16px; display: none;">
+                    <label style="display:flex; align-items:center; gap:8px; color: var(--text-secondary); font-size: 12px;">
+                        <input type="checkbox" id="woSelectAllParts" onclick="toggleAllWoQueueSelections(this.checked)" disabled>
+                        Select all printable
+                    </label>
+                    <span id="woDetailSelectionText" style="color: var(--text-secondary); font-size: 12px;">0 selected</span>
+                    <button class="btn btn-primary" id="woCreateJobBtn" onclick="createWoJobFromSelected()" disabled>Create Job From Selected</button>
+                    <button class="btn btn-green" id="woPrintSelectedBtn" onclick="printSelectedWoParts()" disabled>Print Selected</button>
+                    <button class="btn" id="woClearSelectedBtn" onclick="clearWoSelection()" disabled>Clear</button>
+                </div>
+                <div id="woJobsContainer" style="margin-top: 16px;"></div>
+            </div>
+        </div>

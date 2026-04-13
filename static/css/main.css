@@ -1,0 +1,13 @@
+/* ==========================================================================
+   Main CSS — imports all split stylesheets in order
+   ========================================================================== */
+
+@import "base.css";
+@import "layout.css";
+@import "components.css";
+@import "pages/dashboard.css";
+@import "pages/inventory.css";
+@import "pages/production.css";
+@import "pages/workorders.css";
+@import "pages/history.css";
+@import "pages/drone.css";

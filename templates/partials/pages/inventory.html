@@ -1,0 +1,44 @@
+        <!-- ==================== INVENTORY PAGE ==================== -->
+        <div class="section-page" id="page-inventory">
+
+            <!-- Toolbar -->
+            <div class="inventory-toolbar">
+                <input type="text" class="input-field" id="invSearchColor" placeholder="Search color..." style="width: 140px;">
+                <select class="input-field" id="invFilterMaterial">
+                    <option value="">All Materials</option>
+                </select>
+                <select class="input-field" id="invFilterBrand">
+                    <option value="">All Brands</option>
+                </select>
+                <select class="input-field" id="invFilterSupplier">
+                    <option value="">All Suppliers</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadInventory()">Filter</button>
+                <div style="flex:1;"></div>
+                <button class="btn btn-green" onclick="showAddFilamentModal()">+ Add Spool</button>
+            </div>
+
+            <!-- Inventory Table -->
+            <div class="table-container">
+                <table class="data-table" id="inventoryTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Material</th>
+                            <th>Brand</th>
+                            <th>Color</th>
+                            <th>Supplier</th>
+                            <th>Weight</th>
+                            <th>Diameter</th>
+                            <th>Operator</th>
+                            <th>Date</th>
+                            <th>Last Dried</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventoryBody">
+                        <tr><td colspan="11" class="table-empty">Loading inventory...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>

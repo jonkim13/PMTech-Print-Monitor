@@ -1,0 +1,17 @@
+<!-- ===== UPDATE WEIGHT MODAL ===== -->
+<div class="modal-overlay" id="updateWeightModal">
+    <div class="modal" style="width: 360px;">
+        <h2>Update Weight</h2>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;">
+            Spool: <strong id="weightSpoolId"></strong>
+        </p>
+        <div class="form-group">
+            <label class="form-label">New Weight (grams)</label>
+            <input type="number" class="form-input" id="weightInput" required min="0">
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('updateWeightModal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="submitUpdateWeight()">Update</button>
+        </div>
+    </div>
+</div>

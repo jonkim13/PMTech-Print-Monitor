@@ -1,0 +1,49 @@
+        <!-- ==================== HISTORY PAGE ==================== -->
+        <div class="section-page" id="page-history">
+
+            <!-- Stats Cards -->
+            <div class="history-stats">
+                <div class="history-stat-card">
+                    <span class="stat-label">Total Events</span>
+                    <span class="stat-value" id="histTotal">0</span>
+                </div>
+                <div class="history-stat-card">
+                    <span class="stat-label">Completed</span>
+                    <span class="stat-value green" id="histCompleted">0</span>
+                </div>
+                <div class="history-stat-card">
+                    <span class="stat-label">Success Rate</span>
+                    <span class="stat-value blue" id="histRate">0%</span>
+                </div>
+                <div class="history-stat-card">
+                    <span class="stat-label">Avg Duration</span>
+                    <span class="stat-value orange" id="histAvgDur">--</span>
+                </div>
+            </div>
+
+            <!-- Per-printer stats -->
+            <div class="section-header" style="margin-bottom: 12px;">Completed Prints per Printer</div>
+            <div id="perPrinterStats" style="display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;"></div>
+
+            <!-- History Table -->
+            <div class="section-header">
+                Print History
+                <span class="count-badge" id="histCount">0</span>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Printer</th>
+                            <th>Event</th>
+                            <th>File</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        <tr><td colspan="5" class="table-empty">Loading history...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>

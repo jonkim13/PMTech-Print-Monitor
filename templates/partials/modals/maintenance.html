@@ -1,0 +1,25 @@
+<!-- ===== MAINTENANCE MODAL ===== -->
+<div class="modal-overlay" id="maintenanceModal">
+    <div class="modal" style="width: 420px;">
+        <h2>Log Maintenance Event</h2>
+        <div class="form-group">
+            <label class="form-label">Printer</label>
+            <select class="form-input" id="maintPrinterSelect"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Event Type</label>
+            <select class="form-input" id="maintEventType">
+                <option value="maintenance">Maintenance</option>
+                <option value="calibration">Calibration</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea class="form-input" id="maintNotes" rows="3" placeholder="What was done..."></textarea>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('maintenanceModal')">Cancel</button>
+            <button type="button" class="btn btn-green" onclick="submitMaintenance()">Log Event</button>
+        </div>
+    </div>
+</div>

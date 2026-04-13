@@ -8,9 +8,14 @@ from app.domains.assignments.repository import FilamentAssignmentDB
 from app.domains.inventory.repository import FilamentInventoryDB
 from drone import DroneController
 from farm_manager import PrintFarmManager
-from work_orders_db import WorkOrderDB
 
 from ..domains.assignments.service import AssignmentService
+from ..domains.queue.execution_repository import QueueExecutionRepository
+from ..domains.queue.repository import QueueRepository
+from ..domains.queue.service import QueueService
+from ..domains.work_orders.job_repository import JobRepository
+from ..domains.work_orders.repository import WorkOrderRepository
+from ..domains.work_orders.service import WorkOrderService
 from ..domains.execution import ExecutionService, UploadSessionRepository
 from ..domains.inventory.service import InventoryService
 from ..domains.monitoring.event_service import EventService
@@ -38,7 +43,12 @@ class AppContainer:
     material_repository: MaterialUsageRepository
     production_service: ProductionService
     export_service: ExportService
-    work_order_db: WorkOrderDB
+    work_order_repository: WorkOrderRepository
+    wo_job_repository: JobRepository
+    queue_repository: QueueRepository
+    queue_execution_repository: QueueExecutionRepository
+    work_order_service: WorkOrderService
+    queue_service: QueueService
     upload_session_repository: UploadSessionRepository
     event_service: EventService
     transition_handler: TransitionHandler
@@ -79,7 +89,22 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         machine_repository=machine_repository,
         material_repository=material_repository,
     )
-    work_order_db = WorkOrderDB(settings.work_order_db_path)
+    work_order_repository = WorkOrderRepository(settings.work_order_db_path)
+    wo_job_repository = JobRepository(settings.work_order_db_path)
+    queue_repository = QueueRepository(settings.work_order_db_path)
+    queue_execution_repository = QueueExecutionRepository(
+        settings.work_order_db_path
+    )
+    work_order_service = WorkOrderService(
+        work_order_repository=work_order_repository,
+        job_repository=wo_job_repository,
+    )
+    queue_service = QueueService(
+        queue_repository=queue_repository,
+        execution_repository=queue_execution_repository,
+        work_order_repository=work_order_repository,
+        job_repository=wo_job_repository,
+    )
     upload_session_repository = UploadSessionRepository(
         settings.upload_session_db_path
     )
@@ -91,7 +116,6 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         job_repository=job_repository,
         machine_repository=machine_repository,
         material_repository=material_repository,
-        work_order_db=work_order_db,
         filament_db=filament_db,
         assignment_db=assignment_db,
         upload_session_db=upload_session_repository,
@@ -99,6 +123,8 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         runtime_state=runtime_state,
         snapshots_dir=settings.snapshots_dir,
         state_lock=state_lock,
+        queue_repository=queue_repository,
+        queue_execution_repository=queue_execution_repository,
     )
 
     farm_manager = PrintFarmManager(
@@ -111,8 +137,8 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         material_repository=material_repository,
         snapshots_dir=settings.snapshots_dir,
         data_dir=settings.data_dir,
-        work_order_db=work_order_db,
         upload_session_db=upload_session_repository,
+        queue_execution_repository=queue_execution_repository,
         event_service=event_service,
         transition_handler=transition_handler,
         runtime_state=runtime_state,
@@ -137,7 +163,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         settings.gcode_uploads_dir,
         upload_session_repository,
         farm_manager=farm_manager,
-        work_order_db=work_order_db,
+        queue_execution_repository=queue_execution_repository,
     )
 
     return AppContainer(
@@ -150,7 +176,12 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         material_repository=material_repository,
         production_service=production_service,
         export_service=export_service,
-        work_order_db=work_order_db,
+        work_order_repository=work_order_repository,
+        wo_job_repository=wo_job_repository,
+        queue_repository=queue_repository,
+        queue_execution_repository=queue_execution_repository,
+        work_order_service=work_order_service,
+        queue_service=queue_service,
         upload_session_repository=upload_session_repository,
         event_service=event_service,
         transition_handler=transition_handler,

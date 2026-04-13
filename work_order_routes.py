@@ -12,26 +12,28 @@ from werkzeug.utils import secure_filename
 
 work_order_api = Blueprint("work_order_api", __name__)
 
-_wo_db = None
+_work_order_service = None
+_queue_service = None
 _farm_manager = None
 _gcode_uploads_dir = None
-_upload_workflow = None
 _execution_service = None
 _ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 
 
-def register_work_order_routes(app, wo_db, farm_manager,
+def register_work_order_routes(app, farm_manager,
                                gcode_uploads_dir=None,
                                upload_workflow=None,
-                               execution_service=None):
+                               execution_service=None,
+                               work_order_service=None,
+                               queue_service=None):
     """Wire up the work order blueprint."""
-    global _wo_db, _farm_manager, _gcode_uploads_dir
-    global _upload_workflow, _execution_service
-    _wo_db = wo_db
+    global _work_order_service, _queue_service
+    global _farm_manager, _gcode_uploads_dir, _execution_service
+    _work_order_service = work_order_service
+    _queue_service = queue_service
     _farm_manager = farm_manager
     _gcode_uploads_dir = gcode_uploads_dir
     _execution_service = execution_service or upload_workflow
-    _upload_workflow = _execution_service
     app.register_blueprint(work_order_api)
 
 
@@ -97,94 +99,11 @@ def _parse_queue_ids(values, default_queue_id=None):
     return queue_ids
 
 
-def _validate_queue_print_items(queue_ids):
-    """Validate a queue selection for single- or multi-part printing."""
-    items = _wo_db.get_queue_items(queue_ids)
-    if len(items) != len(queue_ids):
-        raise LookupError("One or more selected parts were not found")
-
-    if any(item["status"] in _wo_db.ACTIVE_QUEUE_STATUSES for item in items):
-        raise RuntimeError("items already in progress")
-
-    printable_items = [
-        item for item in items
-        if item["status"] in _wo_db.PRINTABLE_QUEUE_STATUSES
-    ]
-    if not printable_items:
-        raise ValueError("no items to print")
-    if len(printable_items) != len(items):
-        raise ValueError(
-            "Selected parts must be queued or retryable before printing"
-        )
-
-    wo_ids = {item["wo_id"] for item in items}
-    if len(wo_ids) != 1:
-        raise ValueError(
-            "Selected parts must belong to the same work order"
-        )
-
-    return items
-
-
-def _resolve_print_request_items(queue_ids, requested_job_id=None):
-    """Resolve the explicit queue items to print for this request."""
-    parsed_queue_ids = _parse_queue_ids(queue_ids) if queue_ids else []
-
-    if requested_job_id is not None:
-        job_items = _wo_db.get_job_queue_items(requested_job_id)
-        if job_items is None:
-            raise LookupError("job not found")
-
-        if parsed_queue_ids:
-            job_item_ids = {item["queue_id"] for item in job_items}
-            if any(queue_id not in job_item_ids for queue_id in parsed_queue_ids):
-                raise ValueError(
-                    "selected parts must belong to the requested job"
-                )
-
-        if any(item["status"] in _wo_db.ACTIVE_QUEUE_STATUSES
-               for item in job_items):
-            raise RuntimeError("items already in progress")
-
-        printable_items = [
-            item for item in job_items
-            if item["status"] in _wo_db.PRINTABLE_QUEUE_STATUSES
-        ]
-        if not printable_items:
-            raise ValueError("no items to print")
-
-        return [item["queue_id"] for item in printable_items], printable_items
-
-    queue_items = _validate_queue_print_items(parsed_queue_ids)
-    _validate_selected_job(queue_items)
-    return parsed_queue_ids, queue_items
-
-
-def _validate_selected_job(queue_items, requested_job_id=None):
-    """Ensure a print selection stays within one persisted work-order job."""
-    job_ids = {
-        item.get("job_id") for item in queue_items if item.get("job_id")
-    }
-
-    if requested_job_id is not None:
-        if any(item.get("job_id") not in (None, requested_job_id)
-               for item in queue_items):
-            raise ValueError(
-                "Selected parts must belong to the requested job"
-            )
-        return
-
-    if len(job_ids) > 1:
-        raise ValueError(
-            "Selected parts must belong to the same job before printing"
-        )
-
-
 def _print_queue_items(queue_ids):
     """Assign one or more queue items, upload, verify, and start printing."""
     requested_job_id = request.form.get("job_id", type=int)
     try:
-        queue_ids, queue_items = _resolve_print_request_items(
+        queue_ids, queue_items = _queue_service.resolve_print_request_items(
             queue_ids, requested_job_id=requested_job_id
         )
     except ValueError as exc:
@@ -235,7 +154,7 @@ def _print_queue_items(queue_ids):
 
     printer_name = status.get("name", printer_id)
     try:
-        execution = _wo_db.start_queue_job_execution(
+        execution = _queue_service.start_queue_job_execution(
             queue_ids,
             printer_id,
             printer_name,
@@ -295,16 +214,7 @@ def _print_queue_items(queue_ids):
 
 @work_order_api.route("/api/workorders", methods=["POST"])
 def api_create_work_order():
-    """Create a new work order with line items.
-
-    Body: {
-        "customer_name": "Acme Corp",
-        "line_items": [
-            {"part_name": "Widget", "material": "PLA", "quantity": 10},
-            {"part_name": "Bracket", "material": "PETG", "quantity": 5}
-        ]
-    }
-    """
+    """Create a new work order with line items."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
@@ -335,7 +245,7 @@ def api_create_work_order():
                 "error": "Line item {} has invalid quantity".format(i + 1)
             }), 400
 
-    result = _wo_db.create_work_order(customer, items)
+    result = _work_order_service.create_work_order(customer, items)
     return jsonify(result), 201
 
 
@@ -345,15 +255,16 @@ def api_list_work_orders():
     status = request.args.get("status")
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
-    orders = _wo_db.get_all_work_orders(status=status,
-                                         limit=limit, offset=offset)
+    orders = _work_order_service.get_work_orders(
+        status=status, limit=limit, offset=offset
+    )
     return jsonify(orders)
 
 
 @work_order_api.route("/api/workorders/<wo_id>")
 def api_get_work_order(wo_id):
     """Get work order detail with line items and queue items."""
-    wo = _wo_db.get_work_order(wo_id)
+    wo = _work_order_service.get_work_order(wo_id)
     if not wo:
         return jsonify({"error": "Work order not found"}), 404
     return jsonify(wo)
@@ -362,7 +273,7 @@ def api_get_work_order(wo_id):
 @work_order_api.route("/api/workorders/<wo_id>/jobs")
 def api_get_work_order_jobs(wo_id):
     """List persisted jobs for a work order."""
-    jobs = _wo_db.get_work_order_jobs(wo_id)
+    jobs = _work_order_service.get_work_order_jobs(wo_id)
     if jobs is None:
         return jsonify({"error": "Work order not found"}), 404
     return jsonify(jobs)
@@ -381,7 +292,7 @@ def api_create_work_order_job(wo_id):
             return jsonify({"error": str(exc)}), 400
 
     try:
-        job = _wo_db.create_job(wo_id, queue_ids=queue_ids)
+        job = _work_order_service.create_job(wo_id, queue_ids=queue_ids)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except LookupError as exc:
@@ -404,7 +315,9 @@ def api_assign_work_order_job_items(wo_id, job_id):
 
     try:
         queue_ids = _parse_queue_ids(data.get("queue_ids"))
-        job = _wo_db.assign_queue_items_to_job(wo_id, job_id, queue_ids)
+        job = _work_order_service.assign_queue_items_to_job(
+            wo_id, job_id, queue_ids
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except LookupError as exc:
@@ -428,10 +341,7 @@ def api_update_work_order(wo_id):
     if new_status not in ("open", "in_progress", "completed", "cancelled"):
         return jsonify({"error": "Invalid status"}), 400
 
-    if new_status == "cancelled":
-        success = _wo_db.cancel_work_order(wo_id)
-    else:
-        success = _wo_db.update_work_order_status(wo_id, new_status)
+    success = _work_order_service.update_work_order_status(wo_id, new_status)
 
     if success:
         return jsonify({"success": True})
@@ -441,7 +351,7 @@ def api_update_work_order(wo_id):
 @work_order_api.route("/api/workorders/<wo_id>", methods=["DELETE"])
 def api_delete_work_order(wo_id):
     """Cancel a work order."""
-    success = _wo_db.cancel_work_order(wo_id)
+    success = _work_order_service.cancel_work_order(wo_id)
     if success:
         return jsonify({"success": True})
     return jsonify({"error": "Work order not found"}), 404
@@ -456,33 +366,30 @@ def api_queue():
     """Get the production queue, FIFO ordered."""
     status = request.args.get("status")
     limit = request.args.get("limit", 200, type=int)
-    items = _wo_db.get_queue(status=status, limit=limit)
+    items = _queue_service.get_queue(status=status, limit=limit)
     return jsonify(items)
 
 
 @work_order_api.route("/api/queue/stats")
 def api_queue_stats():
     """Get queue summary counts."""
-    return jsonify(_wo_db.get_queue_stats())
+    return jsonify(_queue_service.get_queue_stats())
 
 
 @work_order_api.route("/api/queue/<int:queue_id>", methods=["PATCH"])
 def api_update_queue_item(queue_id):
-    """Update a queue item status.
-
-    Body: {"status": "queued"} to re-queue a failed item.
-    """
+    """Update a queue item status."""
     data = request.get_json()
     if not data or "status" not in data:
         return jsonify({"error": "Missing status"}), 400
 
     new_status = data["status"]
     if new_status == "queued":
-        success = _wo_db.requeue_item(queue_id)
+        success = _queue_service.requeue_item(queue_id)
     elif new_status == "completed":
-        success = _wo_db.complete_queue_item(queue_id)
+        success = _queue_service.complete_queue_item(queue_id)
     elif new_status == "failed":
-        success = _wo_db.fail_queue_item(queue_id)
+        success = _queue_service.fail_queue_item(queue_id)
     else:
         return jsonify({"error": "Invalid status"}), 400
 
@@ -493,13 +400,7 @@ def api_update_queue_item(queue_id):
 
 @work_order_api.route("/api/queue/<int:queue_id>/print", methods=["POST"])
 def api_print_queue_item(queue_id):
-    """Assign a printer, upload gcode, and start printing.
-
-    Expects multipart form data:
-    - printer_id: which printer to use
-    - file: the gcode file
-    - operator_initials: required traceability field
-    """
+    """Assign a printer, upload gcode, and start printing."""
     return _print_queue_items([queue_id])
 
 
@@ -520,7 +421,7 @@ def api_retry_queue_item(queue_id):
     if not _execution_service:
         return jsonify({"error": "Upload workflow unavailable"}), 500
 
-    item = _wo_db.get_queue_item(queue_id)
+    item = _queue_service.get_queue_item(queue_id)
     if not item:
         return jsonify({"error": "Queue item not found"}), 404
     if item.get("status") not in ("upload_failed", "start_failed"):

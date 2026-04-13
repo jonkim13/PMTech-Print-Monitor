@@ -66,10 +66,11 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
     )
     register_work_order_routes(
         app,
-        container.work_order_db,
         container.farm_manager,
         gcode_uploads_dir=container.settings.gcode_uploads_dir,
         execution_service=container.execution_service,
+        work_order_service=container.work_order_service,
+        queue_service=container.queue_service,
     )
 
 

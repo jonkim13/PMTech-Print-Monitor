@@ -135,7 +135,6 @@ class UploadWorkflowTests(unittest.TestCase):
             os.path.join(self.tempdir.name, "gcode_uploads"),
             self.upload_db,
             farm_manager=self.farm_manager,
-            work_order_db=None,
         )
         self.service.verify_timeout_sec = 1
         self.service.verify_poll_sec = 0

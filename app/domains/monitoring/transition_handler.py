@@ -12,20 +12,22 @@ from app.shared.constants import EventType
 class TransitionHandler:
     """Dispatch detected printer transitions to focused side-effect handlers."""
 
-    def __init__(self, history_db=None, work_order_db=None,
+    def __init__(self, history_db=None,
                  filament_db=None, assignment_db=None,
                  upload_session_db=None, event_service=None,
                  runtime_state=None, snapshots_dir=None, state_lock=None,
                  production_handler=None, queue_handler=None,
                  filament_handler=None, job_repository=None,
-                 machine_repository=None, material_repository=None):
+                 machine_repository=None, material_repository=None,
+                 queue_repository=None, queue_execution_repository=None):
         self.history_db = history_db
         self.event_service = event_service
         self.runtime_state = runtime_state
         self.state_lock = state_lock
         self.queue_handler = queue_handler or QueueHandler(
-            work_order_db=work_order_db,
             runtime_state=runtime_state,
+            queue_repository=queue_repository,
+            execution_repository=queue_execution_repository,
         )
         self.production_handler = production_handler or ProductionHandler(
             job_repository=job_repository,

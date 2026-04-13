@@ -22,8 +22,9 @@ class ExecutionService:
     """Reusable upload/verify/start workflow shared by printer routes."""
 
     def __init__(self, uploads_dir: str, upload_session_repository=None,
-                 farm_manager=None, work_order_db=None,
-                 upload_session_db=None):
+                 farm_manager=None,
+                 upload_session_db=None,
+                 queue_execution_repository=None):
         repository = upload_session_repository or upload_session_db
         if repository is None:
             raise ValueError("upload_session_repository is required")
@@ -31,7 +32,7 @@ class ExecutionService:
         self.upload_session_repository = repository
         self.upload_session_db = repository
         self.farm_manager = farm_manager
-        self.work_order_db = work_order_db
+        self.queue_execution_repository = queue_execution_repository
         self.verify_timeout_sec = 45
         self.verify_poll_sec = 2
         self.start_confirm_timeout_sec = 30
@@ -151,22 +152,23 @@ class ExecutionService:
 
     def _sync_queue_job_status(self, queue_job_id: int, status: str,
                                upload_session_id: str = None) -> None:
-        if not self.work_order_db or not queue_job_id:
+        repo = self.queue_execution_repository
+        if not repo or not queue_job_id:
             return
         if status == "uploading":
-            self.work_order_db.mark_queue_job_uploading(
+            repo.mark_queue_job_uploading(
                 queue_job_id, upload_session_id=upload_session_id
             )
         elif status == "uploaded":
-            self.work_order_db.mark_queue_job_uploaded(queue_job_id)
+            repo.mark_queue_job_uploaded(queue_job_id)
         elif status == "starting":
-            self.work_order_db.mark_queue_job_starting(queue_job_id)
+            repo.mark_queue_job_starting(queue_job_id)
         elif status == "printing":
-            self.work_order_db.mark_queue_job_printing(queue_job_id)
+            repo.mark_queue_job_printing(queue_job_id)
         elif status == "upload_failed":
-            self.work_order_db.mark_queue_job_upload_failed(queue_job_id)
+            repo.mark_queue_job_upload_failed(queue_job_id)
         elif status == "start_failed":
-            self.work_order_db.mark_queue_job_start_failed(queue_job_id)
+            repo.mark_queue_job_start_failed(queue_job_id)
 
     def _verify_remote_file(self, client, remote_filename: str,
                             storage: str) -> dict:

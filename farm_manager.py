@@ -31,8 +31,9 @@ class PrintFarmManager:
                  assignment_db: FilamentAssignmentDB = None,
                  job_repository=None, machine_repository=None,
                  material_repository=None, snapshots_dir=None,
-                 data_dir=None, work_order_db=None,
+                 data_dir=None,
                  upload_session_db=None,
+                 queue_execution_repository=None,
                  event_service=None, transition_handler=None,
                  runtime_state=None, state_lock=None):
         self.printers = {}
@@ -43,8 +44,8 @@ class PrintFarmManager:
         self.job_repository = job_repository
         self.machine_repository = machine_repository
         self.material_repository = material_repository
-        self.work_order_db = work_order_db
         self.upload_session_db = upload_session_db
+        self.queue_execution_repository = queue_execution_repository
         if event_service is None:
             from app.domains.monitoring.event_service import EventService
             event_service = EventService()
@@ -142,7 +143,6 @@ class PrintFarmManager:
             job_repository=getattr(self, "job_repository", None),
             machine_repository=getattr(self, "machine_repository", None),
             material_repository=getattr(self, "material_repository", None),
-            work_order_db=getattr(self, "work_order_db", None),
             filament_db=getattr(self, "filament_db", None),
             assignment_db=getattr(self, "assignment_db", None),
             upload_session_db=getattr(self, "upload_session_db", None),
@@ -150,6 +150,8 @@ class PrintFarmManager:
             runtime_state=self._get_runtime_state(),
             snapshots_dir=getattr(self, "snapshots_dir", None),
             state_lock=getattr(self, "_lock", None),
+            queue_execution_repository=getattr(
+                self, "queue_execution_repository", None),
         )
 
     def _get_transition_handler(self):
@@ -216,10 +218,11 @@ class PrintFarmManager:
                     except (ValueError, KeyError):
                         pass
 
-        if self.work_order_db:
+        _qe_repo = getattr(self, "queue_execution_repository", None)
+        if _qe_repo:
             for pid in self.printers:
                 try:
-                    queue_job = self.work_order_db.get_active_queue_job_for_printer(
+                    queue_job = _qe_repo.get_active_queue_job_for_printer(
                         pid
                     )
                 except Exception:

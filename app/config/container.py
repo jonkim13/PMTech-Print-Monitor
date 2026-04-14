@@ -26,6 +26,7 @@ from ..domains.production.job_repository import PrintJobRepository
 from ..domains.production.machine_repository import MachineLogRepository
 from ..domains.production.material_repository import MaterialUsageRepository
 from ..domains.production.service import ProductionService
+from ..domains.reports.weekly_service import WeeklyReportService
 
 from .settings import AppSettings, load_settings
 
@@ -57,6 +58,7 @@ class AppContainer:
     execution_service: ExecutionService
     inventory_service: InventoryService
     assignment_service: AssignmentService
+    weekly_report_service: WeeklyReportService
 
     @property
     def upload_session_db(self) -> UploadSessionRepository:
@@ -173,6 +175,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         farm_manager=farm_manager,
         queue_execution_repository=queue_execution_repository,
     )
+    weekly_report_service = WeeklyReportService(
+        settings=settings, farm_manager=farm_manager,
+    )
 
     return AppContainer(
         settings=settings,
@@ -198,4 +203,5 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         execution_service=execution_service,
         inventory_service=inventory_service,
         assignment_service=assignment_service,
+        weekly_report_service=weekly_report_service,
     )

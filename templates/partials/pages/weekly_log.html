@@ -1,0 +1,146 @@
+        <!-- ==================== WEEKLY LOG PAGE ==================== -->
+        <div class="section-page" id="page-weekly-log">
+
+            <!-- Week picker header -->
+            <div class="wl-header">
+                <div class="wl-week-picker">
+                    <button class="btn wl-week-nav" id="wlPrevWeek" onclick="wlNavigateWeek(-1)">&#9664; Previous Week</button>
+                    <div class="wl-week-label" id="wlWeekLabel">Loading…</div>
+                    <button class="btn wl-week-nav" id="wlNextWeek" onclick="wlNavigateWeek(1)">Next Week &#9654;</button>
+                </div>
+                <div class="wl-header-actions">
+                    <button class="btn" id="wlExportBtn" onclick="wlExportCsv()">Export CSV</button>
+                </div>
+            </div>
+
+            <!-- Summary stat cards -->
+            <div class="wl-stats">
+                <div class="wl-stat-card">
+                    <span class="stat-label">Prints Completed</span>
+                    <span class="stat-value green" id="wlSummaryCompleted">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Success Rate</span>
+                    <span class="stat-value blue" id="wlSummarySuccess">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Print Hours</span>
+                    <span class="stat-value purple" id="wlSummaryHours">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Material Used</span>
+                    <span class="stat-value orange" id="wlSummaryMaterial">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Orders Created</span>
+                    <span class="stat-value" id="wlSummaryWoCreated">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Orders Completed</span>
+                    <span class="stat-value green" id="wlSummaryWoCompleted">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Parts Failed</span>
+                    <span class="stat-value red" id="wlSummaryPartsFailed">--</span>
+                </div>
+                <div class="wl-stat-card">
+                    <span class="stat-label">Maintenance</span>
+                    <span class="stat-value orange" id="wlSummaryMaint">--</span>
+                </div>
+            </div>
+
+            <!-- Section tabs -->
+            <div class="wl-tabs" id="wlTabs">
+                <button class="wl-tab active" data-wltab="production" onclick="wlSwitchTab('production')">Production</button>
+                <button class="wl-tab" data-wltab="materials" onclick="wlSwitchTab('materials')">Materials</button>
+                <button class="wl-tab" data-wltab="equipment" onclick="wlSwitchTab('equipment')">Equipment</button>
+                <button class="wl-tab" data-wltab="work-orders" onclick="wlSwitchTab('work-orders')">Work Orders</button>
+                <button class="wl-tab" data-wltab="timeline" onclick="wlSwitchTab('timeline')">Timeline</button>
+            </div>
+
+            <!-- ---- Production panel ---- -->
+            <div class="wl-panel active" id="wlPanel-production">
+                <div class="section-header">
+                    Production Log
+                    <span class="count-badge" id="wlProductionCount">0</span>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Printer</th>
+                                <th>File</th>
+                                <th>Status</th>
+                                <th>Duration</th>
+                                <th>Operator</th>
+                                <th>Material</th>
+                                <th>Spool ID</th>
+                                <th>Grams</th>
+                                <th>QC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="wlProductionBody">
+                            <tr><td colspan="10" class="table-empty">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ---- Materials panel ---- -->
+            <div class="wl-panel" id="wlPanel-materials">
+                <div class="section-header">Material Usage by Spool</div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Spool ID</th>
+                                <th>Material</th>
+                                <th>Brand</th>
+                                <th>Grams Used</th>
+                                <th>Prints</th>
+                                <th>Printers</th>
+                            </tr>
+                        </thead>
+                        <tbody id="wlMaterialsUsageBody">
+                            <tr><td colspan="6" class="table-empty">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="section-header" style="margin-top: 20px;">Inventory Changes</div>
+                <div id="wlInventoryChanges">
+                    <div class="events-empty">Loading…</div>
+                </div>
+            </div>
+
+            <!-- ---- Equipment panel ---- -->
+            <div class="wl-panel" id="wlPanel-equipment">
+                <div class="section-header">Per-Printer Activity</div>
+                <div class="wl-equipment-cards" id="wlEquipmentCards">
+                    <div class="events-empty">Loading…</div>
+                </div>
+            </div>
+
+            <!-- ---- Work orders panel ---- -->
+            <div class="wl-panel" id="wlPanel-work-orders">
+                <div class="wl-parts-summary" id="wlPartsSummary"></div>
+                <div class="section-header">Created This Week</div>
+                <div id="wlOrdersCreated"><div class="events-empty">Loading…</div></div>
+                <div class="section-header" style="margin-top: 20px;">Completed This Week</div>
+                <div id="wlOrdersCompleted"><div class="events-empty">Loading…</div></div>
+                <div class="section-header" style="margin-top: 20px;">Active During Week</div>
+                <div id="wlOrdersActive"><div class="events-empty">Loading…</div></div>
+            </div>
+
+            <!-- ---- Timeline panel ---- -->
+            <div class="wl-panel" id="wlPanel-timeline">
+                <div class="section-header">
+                    Event Timeline
+                    <span class="count-badge" id="wlTimelineCount">0</span>
+                </div>
+                <div class="wl-timeline" id="wlTimelineBody">
+                    <div class="events-empty">Loading…</div>
+                </div>
+            </div>
+
+        </div>

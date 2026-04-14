@@ -11,6 +11,7 @@ from work_order_routes import register_work_order_routes
 
 from .config.container import AppContainer, build_container
 from .config.settings import AppSettings, load_settings
+from .domains.reports.routes import register_reports_routes
 
 _runtime_lock = threading.Lock()
 _runtime_container = None
@@ -72,6 +73,7 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         work_order_service=container.work_order_service,
         queue_service=container.queue_service,
     )
+    register_reports_routes(app, container.weekly_report_service)
 
 
 def create_app(settings: AppSettings = None, start_poller: bool = True) -> Flask:

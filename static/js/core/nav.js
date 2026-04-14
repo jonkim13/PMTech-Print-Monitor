@@ -9,7 +9,7 @@ function switchPage(page) {
     document.querySelectorAll('.section-page').forEach(p => p.classList.remove('active'));
     document.getElementById(`page-${page}`).classList.add('active');
 
-    const titles = { dashboard: 'Dashboard', drone: 'Drone', inventory: 'Inventory', production: 'Production Log', workorders: 'Work Orders', history: 'History' };
+    const titles = { dashboard: 'Dashboard', drone: 'Drone', inventory: 'Inventory', production: 'Production Log', workorders: 'Work Orders', history: 'History', 'weekly-log': 'Weekly Log' };
     document.getElementById('pageTitle').textContent = titles[page] || page;
 
     if(page === 'inventory') loadInventory();
@@ -17,6 +17,7 @@ function switchPage(page) {
     if(page === 'drone') loadDroneData();
     if(page === 'production') loadProductionData();
     if(page === 'workorders') loadWorkOrdersPage();
+    if(page === 'weekly-log') loadWeeklyLog();
 
     // Stop WO auto-refresh when navigating to any other page.
     if (page !== 'workorders') {

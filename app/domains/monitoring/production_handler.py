@@ -61,7 +61,7 @@ class ProductionHandler:
                 pending_start, upload_session
             )
             spool_id, spool_material, spool_brand = self._primary_spool(
-                printer_id
+                printer_id, details
             )
             job_id = self.job_repository.create_job(
                 printer_id=printer_id, printer_name=state["name"],
@@ -188,19 +188,77 @@ class ProductionHandler:
         )
         return pending_start, upload_session_id, upload_session
 
-    def _primary_spool(self, printer_id):
+    def _primary_spool(self, printer_id, details=None):
+        """Pick the spool that goes on the `print_jobs` primary columns.
+
+        XL prints can run on any extruder, not just tool 0. We use the
+        gcode per-tool filament arrays (exposed in the job meta) to find
+        the active tool; if multiple tools are active we leave the
+        primary spool unset so completion-time per-tool rows in
+        `material_usage` remain authoritative and `tool_spools` (the
+        full per-tool snapshot) carries traceability. Single-tool
+        printers keep their existing behavior via the only-one-assigned
+        branch.
+        """
         if not self.assignment_db or not self.filament_db:
             return None, None, None
+        tool_index = self._active_print_tool(printer_id, details)
+        if tool_index is None:
+            print(f"[PRODUCTION] {printer_id}: multi-tool print detected, "
+                  f"primary spool deferred to per-tool usage rows")
+            return None, None, None
         assignment = self.assignment_db.get_assignment(
-            printer_id, tool_index=0)
+            printer_id, tool_index=tool_index)
         if not assignment:
             return None, None, None
         spool = self.filament_db.get_by_id(assignment["spool_id"])
+        print(f"[PRODUCTION] {printer_id}: primary spool "
+              f"{assignment['spool_id']} (T{tool_index + 1})")
         return (
             assignment["spool_id"],
             spool.get("material") if spool else None,
             spool.get("brand") if spool else None,
         )
+
+    def _active_print_tool(self, printer_id, details):
+        """Return the tool index consuming filament, or None if ambiguous.
+
+        Uses the PrusaLink /api/v1/job meta (`filament_used_g_per_tool`
+        / `filament_used_mm_per_tool`) to identify the single active
+        extruder for a print. If the meta lists multiple nonzero tools,
+        the print is multi-tool and no single primary can be picked.
+        If the meta is empty but exactly one tool has a spool assigned,
+        that tool is the primary. Otherwise falls back to tool 0 for
+        backward compatibility.
+        """
+        details = details or {}
+        active = self._nonzero_indices(
+            details.get("filament_used_g_per_tool")
+        )
+        if not active:
+            active = self._nonzero_indices(
+                details.get("filament_used_mm_per_tool")
+            )
+        if len(active) == 1:
+            return active[0]
+        if len(active) > 1:
+            return None
+        assignments = self.assignment_db.get_printer_assignments(
+            printer_id) or []
+        if len(assignments) == 1:
+            return int(assignments[0].get("tool_index", 0) or 0)
+        return 0
+
+    @staticmethod
+    def _nonzero_indices(values):
+        indices = []
+        for idx, val in enumerate(values or []):
+            try:
+                if float(val) > 0:
+                    indices.append(idx)
+            except (TypeError, ValueError):
+                continue
+        return indices
 
     def _tool_spools(self, printer_id):
         if not self.assignment_db or not self.filament_db:

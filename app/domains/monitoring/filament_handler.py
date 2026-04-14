@@ -82,14 +82,21 @@ class FilamentHandler:
             FILAMENT_SOURCE_API,
             FILAMENT_SOURCE_FILENAME,
         ):
-            assignment = self.assignment_db.get_assignment(
-                printer_id, tool_index=0)
-            if assignment:
+            # XL prints can start on any extruder. When per-tool grams
+            # are unavailable, deduct from the spool recorded on the
+            # production job (set at print-start from active-tool
+            # detection) rather than hardcoding tool 0.
+            target = self._resolve_primary_assignment(
+                printer_id, production_job
+            )
+            if target:
                 self.filament_db.deduct_weight(
-                    assignment["spool_id"], total_usage["grams"])
+                    target["spool_id"], total_usage["grams"])
+                tool_idx = int(target.get("tool_index", 0) or 0)
                 print(f"[FILAMENT] Deducted {total_usage['grams']:g}g "
-                      f"from spool {assignment['spool_id']} on "
-                      f"{state['name']} [source={total_usage['source']}]")
+                      f"from spool {target['spool_id']} "
+                      f"(T{tool_idx + 1}) on {state['name']} "
+                      f"[source={total_usage['source']}]")
             return True
 
         for tool_idx, value in enumerate(per_tool_mm or []):
@@ -107,6 +114,35 @@ class FilamentHandler:
                       f"[source={FILAMENT_SOURCE_MM_ESTIMATE}]")
                 deducted_any = True
         return deducted_any
+
+    def _resolve_primary_assignment(self, printer_id, production_job):
+        """Return the assignment row for the production job's primary spool.
+
+        Prefers matching the `spool_id` the production job captured at
+        print start (which reflects the active extruder for single-tool
+        XL prints). Falls back to a sole-assigned tool if only one
+        exists, or tool 0 with a warning if neither signal is
+        available.
+        """
+        prod_spool_id = (
+            (production_job or {}).get("spool_id")
+            if production_job else None
+        )
+        assignments = (
+            self.assignment_db.get_printer_assignments(printer_id) or []
+        )
+        if prod_spool_id:
+            for row in assignments:
+                if str(row.get("spool_id")) == str(prod_spool_id):
+                    return row
+        if len(assignments) == 1:
+            return assignments[0]
+        tool0 = self.assignment_db.get_assignment(
+            printer_id, tool_index=0)
+        if tool0:
+            print(f"[FILAMENT] XL attribution falling back to T1 for "
+                  f"{printer_id} (no active-tool signal)")
+        return tool0
 
     def _get_active_production_job_record(self, printer_id: str):
         if not self.job_repository or not self.runtime_state:

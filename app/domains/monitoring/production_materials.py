@@ -1,5 +1,7 @@
 """Production material usage helpers."""
 
+import json as _json
+
 from filament_usage import (
     FILAMENT_SOURCE_API,
     FILAMENT_SOURCE_FILENAME,
@@ -35,7 +37,15 @@ class ProductionMaterialUsage:
                 grams, mm_used, source = xl_grams, xl_mm, xl_source
         if (not rows and job and job.get("spool_id") and grams > 0
                 and source != FILAMENT_SOURCE_NONE):
-            rows.append(self._row(job["spool_id"], grams, mm_used, 0, source))
+            # Attribute the fallback row to the tool that actually holds
+            # this spool, not hardcoded tool 0 — XL prints can start on
+            # any extruder.
+            tool_index = self._resolve_tool_index_for_spool(
+                printer_id, job.get("spool_id"), job.get("tool_spools")
+            )
+            rows.append(self._row(
+                job["spool_id"], grams, mm_used, tool_index, source
+            ))
         return grams, mm_used, source, rows
 
     def log_rows(self, job_id, printer_id, rows):
@@ -90,6 +100,36 @@ class ProductionMaterialUsage:
             ) if self.assignment_db else None
         )
         return assignment["spool_id"] if assignment else None
+
+    def _resolve_tool_index_for_spool(self, printer_id, spool_id,
+                                      tool_spools_json=None):
+        """Locate which tool_index is currently (or was) holding spool_id.
+
+        Checks current assignments first, then the tool_spools JSON
+        snapshot captured on the print_jobs row at print start, then
+        falls back to 0 (logged) so legacy rows stay consistent with
+        prior behavior.
+        """
+        if not spool_id:
+            return 0
+        if self.assignment_db:
+            for row in (self.assignment_db.get_printer_assignments(
+                    printer_id) or []):
+                if str(row.get("spool_id")) == str(spool_id):
+                    return int(row.get("tool_index", 0) or 0)
+        if tool_spools_json:
+            try:
+                data = (_json.loads(tool_spools_json)
+                        if isinstance(tool_spools_json, str)
+                        else tool_spools_json)
+                for tool_idx, info in (data or {}).items():
+                    if str((info or {}).get("spool_id")) == str(spool_id):
+                        return int(tool_idx)
+            except (ValueError, TypeError):
+                pass
+        print(f"[PRODUCTION] Could not resolve tool_index for spool "
+              f"{spool_id} on {printer_id}; defaulting to T1")
+        return 0
 
     @staticmethod
     def _row(spool_id, grams, mm_used, tool_index, source):

@@ -97,9 +97,14 @@ class PrintJobRepository:
                    fill_density=None, nozzle_temp=None, bed_temp=None,
                    tool_spools=None, operator_initials=None):
         """Create a new print job record when a print starts.
-        Idempotent: if a 'started' job already exists for this printer
-        with the same file_name within the last 24 hours, return that
-        job's ID instead of creating a duplicate.
+        Poll-loop dedup: if a 'started' job for this printer+file_name
+        was created within the last 120 seconds, reuse it instead of
+        inserting a duplicate. The window is intentionally short —
+        the status poller only fires every few seconds, so genuine
+        duplicates collapse instantly, while a legitimate re-print of
+        the same gcode (minutes/hours later) gets its own production
+        record. The prior 24-hour window collapsed same-day re-runs
+        into one row and lost per-run traceability.
 
         tool_spools: dict mapping tool_index -> {spool_id, material,
         brand, color} for ISO 9001 traceability of multi-tool prints.
@@ -109,10 +114,11 @@ class PrintJobRepository:
         operator_initials = str(operator_initials or "").strip() or None
 
         # Check for existing active job with same file on same printer
+        # within the short poll-dedup window.
         existing = conn.execute("""
             SELECT job_id, operator_initials FROM print_jobs
             WHERE printer_id = ? AND file_name = ? AND status = 'started'
-              AND started_at >= datetime('now', '-24 hours')
+              AND started_at >= datetime('now', '-120 seconds')
             ORDER BY job_id DESC LIMIT 1
         """, (printer_id, file_name)).fetchone()
         if existing:
@@ -125,6 +131,20 @@ class PrintJobRepository:
                 conn.commit()
             conn.close()
             return existing["job_id"]
+
+        # Log when a new job is created despite a prior row existing
+        # for the same printer+file — useful post-fix for diagnosing
+        # re-print vs. polling-duplicate patterns.
+        prior = conn.execute("""
+            SELECT job_id, status, started_at FROM print_jobs
+            WHERE printer_id = ? AND file_name = ?
+            ORDER BY job_id DESC LIMIT 1
+        """, (printer_id, file_name)).fetchone()
+        if prior:
+            print(f"[PRODUCTION] Creating new job for {printer_id} / "
+                  f"{file_name} (prior job #{prior['job_id']} "
+                  f"status={prior['status']}, "
+                  f"started={prior['started_at']})")
 
         tool_spools_json = _json.dumps(tool_spools) if tool_spools else "{}"
 

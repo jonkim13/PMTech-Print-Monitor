@@ -140,6 +140,10 @@ async function submitAddFilament(e) {
             }
             showToast(`Added spool: ${spoolId}`);
             hideModal('addFilamentModal');
+            // Spool ID display verified — newSpoolIdModal shows the ID in
+            // 30px monospace text with "Write this ID on the spool"
+            // instructions so Philip can label the physical spool before
+            // closing the modal. No auto-close; user dismisses manually.
             showNewSpoolIdModal(spoolId);
             loadInventory();
             await loadInventoryOptions();

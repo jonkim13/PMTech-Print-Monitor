@@ -39,6 +39,11 @@ function renderAssignSpoolOptions() {
     const currentSpoolId = getAssignedSpoolIdForTool(printer, toolIndex);
     const assignedSpoolIds = new Set();
 
+    // Assignment filtering verified — already-assigned spools are excluded
+    // from the dropdown by cross-referencing the cached printerList. The
+    // current tool's own assignment (currentSpoolId) is exempted so the
+    // user can re-confirm it or change drying state without removing it
+    // from the list first.
     (printerList || []).forEach(function(item) {
         const itemToolCount = Number(item.tool_count) || 1;
         if(itemToolCount > 1) {

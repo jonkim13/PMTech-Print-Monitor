@@ -285,6 +285,12 @@ def api_printer_stop(printer_id):
     result = client.stop_job()
     if result.get("success"):
         _farm_manager.record_stopped_printer(printer_id)
+    # Flag a stop-pending marker regardless of stop_job()'s reported
+    # success: even if the printer reports failure it may still have
+    # stopped, and we'd rather avoid a false 'print_complete' than risk
+    # one.  The marker expires after 120s so it can't mask a real
+    # future completion.
+    _farm_manager.mark_stop_pending(printer_id)
     status_code = 200 if result.get("success") else 500
     return jsonify(result), status_code
 

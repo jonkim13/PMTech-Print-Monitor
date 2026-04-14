@@ -70,6 +70,11 @@ class PrintFarmManager:
             self.runtime_state.pending_print_starts
         )
         self._stopped_printers = self.runtime_state.stopped_printers
+        # Printers whose current print is being cancelled via the UI.
+        # Maps printer_id -> time.time() timestamp when the cancel was
+        # requested.  Entries live for at most 120s so stale markers from
+        # a prior cancel don't suppress real completions.
+        self._stop_pending = {}
         self.printer_service = PrinterStatusService(self.printers, self._lock)
         self.transition_handler = (
             transition_handler or self._build_transition_handler()
@@ -181,6 +186,10 @@ class PrintFarmManager:
         restored = {}
         runtime_state = self._get_runtime_state()
 
+        # Stop-pending markers are in-memory only; starting fresh on boot
+        # avoids a stale entry suppressing a real completion detection.
+        self._stop_pending = {}
+
         # Step 1: Try loading from state file
         state_path = self._state_file_path()
         if state_path and os.path.exists(state_path):
@@ -289,6 +298,29 @@ class PrintFarmManager:
                 printer_id
             )
 
+    def mark_stop_pending(self, printer_id: str):
+        """Flag that a stop was just requested for this printer.
+
+        The next printing->idle transition will be logged as a cancel
+        rather than being treated as a completion (so we don't deduct
+        filament or mark the queue job complete).
+        """
+        if not printer_id:
+            return
+        with self._lock:
+            self._stop_pending[printer_id] = time.time()
+
+    def get_active_job_id(self, printer_id: str):
+        """Return the production job_id currently tracked for a printer."""
+        return self._active_job_ids.get(printer_id)
+
+    def clear_active_job(self, printer_id: str):
+        """Drop tracked active/queue job ids and start time for a printer."""
+        with self._lock:
+            self._active_job_ids.pop(printer_id, None)
+            self._active_queue_job_ids.pop(printer_id, None)
+            self._print_start_times.pop(printer_id, None)
+
     # ------------------------------------------------------------------
     # Polling
     # ------------------------------------------------------------------
@@ -325,6 +357,36 @@ class PrintFarmManager:
             )
 
             if transition_type == PRINT_COMPLETE:
+                # If a cancel was just issued for this printer, skip the
+                # normal completion/stop pipeline entirely so we don't
+                # deduct filament or mark the production/queue job as a
+                # successful completion.  Stale entries older than 120s
+                # are ignored so real completions aren't suppressed.
+                stop_pending_at = self._stop_pending.get(printer_id)
+                if (stop_pending_at is not None
+                        and (time.time() - stop_pending_at) < 120):
+                    self._stop_pending.pop(printer_id, None)
+                    event["type"] = "print_cancelled"
+                    if self.history_db:
+                        try:
+                            self.history_db.log_event(event)
+                        except Exception as log_exc:
+                            print(
+                                f"[CANCEL] Failed to log cancel event: "
+                                f"{log_exc}"
+                            )
+                    print(
+                        f"[EVENT] Print cancelled on "
+                        f"{state.get('name') or printer_id}: "
+                        f"{state.get('job', {}).get('filename')}"
+                    )
+                    printer_data["previous_status"] = new_status
+                    return state
+                if stop_pending_at is not None:
+                    # Stale marker (>=120s old): drop it so future polls
+                    # behave normally.
+                    self._stop_pending.pop(printer_id, None)
+
                 if self._consume_stopped_printer(printer_id):
                     self._get_transition_handler().handle_print_stopped(
                         printer_id, state["name"], state, client, event

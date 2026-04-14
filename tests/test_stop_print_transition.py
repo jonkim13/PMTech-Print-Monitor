@@ -56,12 +56,16 @@ class RecordingFarmManager:
     def __init__(self, client):
         self.client = client
         self.recorded_stops = []
+        self.stop_pending_marks = []
 
     def get_printer_client(self, printer_id):
         return self.client if printer_id == "printer-1" else None
 
     def record_stopped_printer(self, printer_id):
         self.recorded_stops.append(printer_id)
+
+    def mark_stop_pending(self, printer_id):
+        self.stop_pending_marks.append(printer_id)
 
 
 def build_manager(client, handler):
@@ -79,6 +83,8 @@ def build_manager(client, handler):
     manager._active_queue_job_ids = runtime_state.active_queue_job_ids
     manager._pending_print_starts = runtime_state.pending_print_starts
     manager._stopped_printers = runtime_state.stopped_printers
+    manager._stop_pending = {}
+    manager.history_db = None
     manager._lock = threading.Lock()
     manager.transition_handler = handler
     return manager

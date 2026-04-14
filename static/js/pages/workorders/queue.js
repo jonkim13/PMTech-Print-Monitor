@@ -34,13 +34,15 @@ async function loadQueue() {
 
             if (qi.status === 'queued') {
                 actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>';
+            } else if (qi.status === 'printing') {
+                actions = '<button class="btn btn-danger" style="font-size:10px;padding:3px 8px;" onclick="cancelQueuePrint(' + qi.queue_id + ')">Cancel Print</button>';
             } else if (qi.status === 'upload_failed' || qi.status === 'start_failed') {
                 actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="retryQueueSession(' + qi.queue_id + ')">' +
                     (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>' +
                     ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>';
             } else if (qi.status === 'failed') {
                 actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
-                    ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry</button>';
+                    ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry Print</button>';
             } else if (qi.status === 'completed' && qi.print_job_id) {
                 actions = '<button class="btn" style="font-size:10px;padding:3px 8px;" onclick="showJobDetail(' + qi.print_job_id + ')">View Print Log</button>';
             }
@@ -113,6 +115,35 @@ async function retryQueueSession(queueId) {
             loadQueueStats();
         } else {
             showToast('Error: ' + (result.message || result.error || 'Unknown'), 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function cancelQueuePrint(queueId) {
+    if (!confirm('Cancel this print? The printer will be stopped and the item will be requeued.')) {
+        return;
+    }
+    try {
+        var resp = await fetch('/api/queue/' + queueId + '/cancel-print', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        var result = await resp.json();
+        if (result.success) {
+            showToast(result.message || 'Print cancelled');
+            if (_woDetailId) {
+                var detailPanel = document.getElementById('woPanel-detail');
+                if (detailPanel && detailPanel.classList.contains('active')) {
+                    viewWorkOrder(_woDetailId);
+                }
+            }
+            loadQueue();
+            loadQueueStats();
+        } else {
+            showToast('Error: ' + (result.error || result.message || 'Unknown'), 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');

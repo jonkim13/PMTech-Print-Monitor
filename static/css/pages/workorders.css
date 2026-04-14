@@ -47,10 +47,13 @@
     letter-spacing: 0.5px;
 }
 .qs-queued { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
-.qs-assigned { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.qs-uploading { background: rgba(0, 150, 255, 0.12); color: var(--accent-blue); }
+.qs-uploaded { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.qs-starting { background: rgba(0, 150, 255, 0.18); color: var(--accent-blue); }
 .qs-printing { background: rgba(0, 150, 255, 0.2); color: var(--accent-blue); }
 .qs-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
 .qs-failed { background: rgba(255, 60, 60, 0.15); color: var(--accent-red); }
+.qs-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
 
 /* WO status badges */
 .wo-status {
@@ -62,10 +65,18 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
-.wos-open { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
-.wos-inprogress { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
-.wos-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
-.wos-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
+.wo-open { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
+.wo-in-progress { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.wo-attention { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
+.wo-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
+.wo-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
+
+/* Job card status badges */
+.job-open { background: rgba(255, 165, 0, 0.15); color: var(--accent-orange); }
+.job-in-progress { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
+.job-attention { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
+.job-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
+.job-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
 
 /* WO progress bar */
 .wo-progress-bar {

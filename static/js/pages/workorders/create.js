@@ -43,8 +43,7 @@ function addWoLineItem() {
 
 async function loadMaterialsForLineItem(selectEl) {
     try {
-        var resp = await fetch('/api/inventory/options');
-        var options = await resp.json();
+        var options = await apiGet('/api/inventory/options');
         var materials = options.materials || [];
         selectEl.innerHTML = '<option value="">Select...</option>' +
             materials.map(function(m) {
@@ -98,25 +97,32 @@ async function submitCreateWorkOrder() {
     }
 
     try {
-        var resp = await fetch('/api/workorders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                customer_name: customer,
-                line_items: lineItems
-            })
+        var result = await apiPost('/api/workorders', {
+            customer_name: customer,
+            line_items: lineItems
         });
-        var result = await resp.json();
 
         if (result.wo_id) {
-            showToast('Work order ' + result.wo_id + ' created');
+            var partsCreated = result.parts_created;
+            var lineItemCount = result.line_item_count || lineItems.length;
+            var msg = 'Created ' + result.wo_id;
+            if (partsCreated !== undefined && partsCreated !== null) {
+                msg += ' — ' + partsCreated + ' part' +
+                    (partsCreated === 1 ? '' : 's') + ' queued from ' +
+                    lineItemCount + ' line item' +
+                    (lineItemCount === 1 ? '' : 's');
+            }
+            showToast(msg);
             // Reset form
             document.getElementById('woCustomerName').value = '';
             document.getElementById('woLineItems').innerHTML = '';
             _woLineItemCounter = 0;
             addWoLineItem();
-            // Switch to queue view
-            switchWoTab('queue');
+            // Jump straight into the new work order's detail view so
+            // the user can see exactly what was created.
+            switchWoTab('orders');
+            await loadWorkOrders();
+            viewWorkOrder(result.wo_id);
         } else {
             showToast('Error: ' + (result.error || 'Unknown'), 'error');
         }

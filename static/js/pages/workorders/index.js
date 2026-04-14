@@ -7,10 +7,58 @@ var _woDetailId = null;
 var _woDetailQueueItems = [];
 var _woDetailJobs = [];
 var _woSelectedQueueIds = {};
+var _woQueueRefreshTimer = null;
+var _woDetailRefreshTimer = null;
+
+function _woRefreshIntervalMs() {
+    var cfg = (typeof window !== 'undefined' && window.APP_CONFIG)
+        ? window.APP_CONFIG : {};
+    var base = cfg.pollIntervalMs;
+    if (typeof base !== 'number' || base <= 0) {
+        return 10000;
+    }
+    // Use 2x the dashboard poll cadence for WO views so we don't
+    // over-fetch from a user parking on the page.
+    return Math.max(5000, base * 2);
+}
+
+function startWoQueueAutoRefresh() {
+    stopWoQueueAutoRefresh();
+    _woQueueRefreshTimer = setInterval(function() {
+        loadQueue();
+        loadQueueStats();
+    }, _woRefreshIntervalMs());
+}
+
+function stopWoQueueAutoRefresh() {
+    if (_woQueueRefreshTimer !== null) {
+        clearInterval(_woQueueRefreshTimer);
+        _woQueueRefreshTimer = null;
+    }
+}
+
+function startWoDetailAutoRefresh() {
+    stopWoDetailAutoRefresh();
+    _woDetailRefreshTimer = setInterval(function() {
+        if (_woDetailId) {
+            viewWorkOrder(_woDetailId);
+        } else {
+            stopWoDetailAutoRefresh();
+        }
+    }, _woRefreshIntervalMs());
+}
+
+function stopWoDetailAutoRefresh() {
+    if (_woDetailRefreshTimer !== null) {
+        clearInterval(_woDetailRefreshTimer);
+        _woDetailRefreshTimer = null;
+    }
+}
 
 function loadWorkOrdersPage() {
     loadQueue();
     loadQueueStats();
+    startWoQueueAutoRefresh();
 }
 
 function isQueueActiveStatus(status) {
@@ -27,50 +75,6 @@ function isQueuePrintableStatus(status) {
 
 function isQueueRetrySessionStatus(status) {
     return status === 'upload_failed' || status === 'start_failed';
-}
-
-function formatQueueStatusLabel(status) {
-    var map = {
-        queued: 'Queued',
-        uploading: 'Uploading to printer',
-        uploaded: 'Uploaded to printer',
-        starting: 'Starting print',
-        printing: 'Print started',
-        completed: 'Completed',
-        upload_failed: 'Upload failed',
-        start_failed: 'Start failed',
-        failed: 'Print failed',
-        cancelled: 'Cancelled'
-    };
-    return map[status] || status || 'unknown';
-}
-
-function getQueueStatusClass(status) {
-    var map = {
-        queued: 'qs-queued',
-        assigned: 'qs-assigned',
-        uploading: 'qs-assigned',
-        uploaded: 'qs-assigned',
-        starting: 'qs-printing',
-        printing: 'qs-printing',
-        completed: 'qs-completed',
-        upload_failed: 'qs-failed',
-        start_failed: 'qs-failed',
-        failed: 'qs-failed'
-    };
-    return map[status] || '';
-}
-
-function getWoStatusClass(status) {
-    var map = {
-        open: 'wos-open',
-        in_progress: 'wos-inprogress',
-        completed: 'wos-completed',
-        cancelled: 'wos-cancelled',
-        failed: 'wos-cancelled',
-        attention: 'wos-open'
-    };
-    return map[status] || '';
 }
 
 // ============================================================
@@ -101,13 +105,21 @@ function switchWoTab(tab) {
     }
 
     if (tab !== 'detail') {
+        _woDetailId = null;
         _woDetailQueueItems = [];
         _woDetailJobs = [];
         _woSelectedQueueIds = {};
+        stopWoDetailAutoRefresh();
         updateWoSelectionToolbar();
     }
 
-    if (tab === 'queue') { loadQueue(); loadQueueStats(); }
+    if (tab === 'queue') {
+        loadQueue();
+        loadQueueStats();
+        startWoQueueAutoRefresh();
+    } else {
+        stopWoQueueAutoRefresh();
+    }
     if (tab === 'orders') loadWorkOrders();
     if (tab === 'create') initCreateForm();
 }

@@ -1,0 +1,26 @@
+<!-- ===== WORK ORDER QC OUTCOME MODAL ===== -->
+<div class="modal-overlay" id="woQcModal">
+    <div class="modal" style="width: 420px;">
+        <h2>Set QC Outcome</h2>
+        <div class="form-group">
+            <label class="form-label" for="woQcOutcome">Outcome</label>
+            <select class="form-input" id="woQcOutcome">
+                <option value="pass">Pass</option>
+                <option value="fail">Fail</option>
+                <option value="unknown">Pending</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="woQcOperator">Inspector</label>
+            <input type="text" class="form-input" id="woQcOperator" maxlength="64" placeholder="Your name" required>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="woQcNotes">Notes</label>
+            <textarea class="form-input" id="woQcNotes" rows="3" placeholder="Optional"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="hideModal('woQcModal')">Cancel</button>
+            <button type="button" class="btn btn-green" onclick="submitWoQc()">Save QC</button>
+        </div>
+    </div>
+</div>

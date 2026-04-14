@@ -17,8 +17,12 @@
                         <span class="stat-value orange" id="queueStatQueued">0</span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-label">Active</span>
+                        <span class="stat-label">Printing</span>
                         <span class="stat-value blue" id="queueStatPrinting">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">In Upload</span>
+                        <span class="stat-value" id="queueStatInUpload" style="color: var(--accent-blue); opacity: 0.7;">0</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Completed</span>
@@ -34,12 +38,12 @@
                     <select class="input-field" id="queueFilterStatus">
                         <option value="">All Active</option>
                         <option value="queued">Queued</option>
-                        <option value="uploading">Uploading to printer</option>
-                        <option value="uploaded">Uploaded to printer</option>
-                        <option value="starting">Starting print</option>
+                        <option value="uploading">Uploading</option>
+                        <option value="uploaded">Uploaded</option>
+                        <option value="starting">Starting</option>
                         <option value="printing">Printing</option>
-                        <option value="upload_failed">Upload failed</option>
-                        <option value="start_failed">Start failed</option>
+                        <option value="upload_failed">Upload Failed</option>
+                        <option value="start_failed">Start Failed</option>
                         <option value="completed">Completed</option>
                         <option value="failed">Failed</option>
                     </select>
@@ -75,6 +79,7 @@
                         <option value="">All Statuses</option>
                         <option value="open">Open</option>
                         <option value="in_progress">In Progress</option>
+                        <option value="attention">Needs Attention</option>
                         <option value="completed">Completed</option>
                         <option value="cancelled">Cancelled</option>
                     </select>

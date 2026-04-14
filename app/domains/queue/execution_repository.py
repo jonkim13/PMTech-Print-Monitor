@@ -5,13 +5,14 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 from app.domains.queue.execution_lifecycle import QueueExecutionLifecycleMixin
+from app.domains.work_orders import status_sync
 
 
 class QueueExecutionRepository(QueueExecutionLifecycleMixin):
     """Manages queue_jobs execution sessions in work_orders.db."""
 
-    ACTIVE_QUEUE_STATUSES = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_QUEUE_STATUSES = ("upload_failed", "start_failed", "failed")
+    ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
+    FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
     PRINTABLE_QUEUE_STATUSES = ("queued", "failed", "upload_failed",
                                 "start_failed")
 
@@ -129,73 +130,14 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
         return dict(row) if row else None
 
     # ------------------------------------------------------------------
-    # Status rollup helpers (shared DB)
+    # Status rollup helpers — delegate to status_sync module
     # ------------------------------------------------------------------
 
-    ACTIVE_STATUS_SET = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_STATUS_SET = ("upload_failed", "start_failed", "failed")
-
     def _sync_job_status(self, conn, job_id: int) -> None:
-        rows = conn.execute("""
-            SELECT status FROM queue_items WHERE job_id = ?
-        """, (job_id,)).fetchall()
-        now = datetime.now(timezone.utc).isoformat()
-
-        if not rows:
-            conn.execute("""
-                UPDATE jobs SET status = 'open', completed_at = NULL
-                WHERE job_id = ?
-            """, (job_id,))
-            return
-
-        statuses = [r["status"] for r in rows]
-        active = [s for s in statuses if s != "cancelled"]
-        if not active and statuses:
-            new_status = "cancelled"
-        elif active and all(s == "completed" for s in active):
-            new_status = "completed"
-        elif any(s in self.ACTIVE_STATUS_SET for s in active):
-            new_status = "in_progress"
-        elif any(s in self.FAILURE_STATUS_SET for s in active):
-            new_status = "attention"
-        elif any(s == "completed" for s in active):
-            new_status = "in_progress"
-        else:
-            new_status = "open"
-
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE jobs SET status = ?, completed_at = ?
-            WHERE job_id = ?
-        """, (new_status, completed_at, job_id))
+        status_sync.sync_job_status(conn, job_id)
 
     def _update_wo_status_from_items(self, conn, wo_id: str) -> None:
-        rows = conn.execute(
-            "SELECT status FROM queue_items WHERE wo_id = ?", (wo_id,)
-        ).fetchall()
-        if not rows:
-            return
-
-        statuses = [r["status"] for r in rows]
-        active = [s for s in statuses if s != "cancelled"]
-        now = datetime.now(timezone.utc).isoformat()
-
-        if not active and statuses:
-            new_status = "cancelled"
-        elif active and all(s == "completed" for s in active):
-            new_status = "completed"
-        elif any(s in (self.ACTIVE_STATUS_SET + self.FAILURE_STATUS_SET
-                       + ("completed",))
-                 for s in active):
-            new_status = "in_progress"
-        else:
-            new_status = "open"
-
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE work_orders SET status = ?, completed_at = ?
-            WHERE wo_id = ?
-        """, (new_status, completed_at, wo_id))
+        status_sync.sync_work_order_status(conn, wo_id)
 
     # ------------------------------------------------------------------
     # Resolve or create work-order job for execution
@@ -204,6 +146,23 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
     def _resolve_work_order_job_id(self, conn, items: List[dict],
                                    requested_job_id: Optional[int]
                                    ) -> Optional[int]:
+        result = self._resolve_work_order_job_id_detail(
+            conn, items, requested_job_id
+        )
+        if result is None:
+            return None
+        return result[0]
+
+    def _resolve_work_order_job_id_detail(
+        self, conn, items: List[dict],
+        requested_job_id: Optional[int],
+    ):
+        """Like _resolve_work_order_job_id but also reports whether the
+        resolved job row was newly created by this call.
+
+        Returns (job_id, was_newly_created) or None when the request
+        can't be satisfied.
+        """
         if not items:
             return None
 
@@ -223,7 +182,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
                    for item in items):
                 return None
             self._move_queue_items_to_job(conn, requested_job_id, items)
-            return requested_job_id
+            return requested_job_id, False
 
         if len(existing_job_ids) > 1:
             return None
@@ -231,7 +190,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
         if existing_job_ids:
             job_id = next(iter(existing_job_ids))
             self._move_queue_items_to_job(conn, job_id, items)
-            return job_id
+            return job_id, False
 
         now = datetime.now(timezone.utc).isoformat()
         cursor = conn.execute("""
@@ -240,7 +199,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
         """, (wo_id, now))
         job_id = cursor.lastrowid
         self._move_queue_items_to_job(conn, job_id, items)
-        return job_id
+        return job_id, True
 
     def _move_queue_items_to_job(self, conn, job_id: int,
                                  items: List[dict]) -> None:
@@ -302,16 +261,17 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
                     "selected parts must be queued or retryable before printing"
                 )
 
-            work_order_job_id = self._resolve_work_order_job_id(
+            resolved = self._resolve_work_order_job_id_detail(
                 conn, items, requested_job_id=job_id
             )
-            if work_order_job_id is None:
+            if resolved is None:
                 if job_id is not None:
                     raise LookupError("job not found")
                 raise ValueError(
                     "selected parts must belong to the same job "
                     "before printing"
                 )
+            work_order_job_id, auto_created_job = resolved
 
             queue_job_id = self._create_queue_job_session(
                 conn, items[0]["wo_id"], work_order_job_id,
@@ -364,6 +324,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
                 "job_id": work_order_job_id,
                 "wo_id": items[0]["wo_id"],
                 "queue_ids": queue_ids,
+                "auto_created_job": auto_created_job,
             }
         except Exception:
             conn.rollback()

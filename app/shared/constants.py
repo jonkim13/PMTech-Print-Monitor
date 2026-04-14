@@ -27,7 +27,6 @@ class QueueItemStatus:
     UPLOAD_FAILED = "upload_failed"
     START_FAILED = "start_failed"
     CANCELLED = "cancelled"
-    ASSIGNED = "assigned"
 
 
 class ProductionJobStatus:

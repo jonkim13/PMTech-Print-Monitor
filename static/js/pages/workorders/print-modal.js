@@ -17,9 +17,12 @@ async function showQueuePrintModal(queueId, jobId) {
 
     // Load queue item info
     try {
-        var items = (_woDetailQueueItems && _woDetailQueueItems.length)
-            ? _woDetailQueueItems.slice()
-            : await (await fetch('/api/queue')).json();
+        var items;
+        if (_woDetailQueueItems && _woDetailQueueItems.length) {
+            items = _woDetailQueueItems.slice();
+        } else {
+            items = await apiGet('/api/queue');
+        }
         var selected = [];
 
         if (isJobExecution) {
@@ -92,8 +95,7 @@ async function showQueuePrintModal(queueId, jobId) {
     printerSel.innerHTML = '<option value="">Loading...</option>';
 
     try {
-        var resp = await fetch('/api/printers');
-        var printers = await resp.json();
+        var printers = await apiGet('/api/printers');
         var idle = printers.filter(function(p) {
             return p.status === 'idle' || p.status === 'finished';
         });
@@ -163,27 +165,24 @@ async function submitQueuePrint() {
             formData.append('queue_ids', queueId);
         });
 
-        var resp = await fetch('/api/queue/print', {
-            method: 'POST',
-            body: formData
-        });
-        var result = await resp.json();
-
-        if (result.success) {
-            showToast(result.message || 'Print started');
-            hideModal('queuePrintModal');
-            clearWoSelection();
-            if (_woDetailId) {
-                var detailPanel = document.getElementById('woPanel-detail');
-                if (detailPanel && detailPanel.classList.contains('active')) {
-                    viewWorkOrder(_woDetailId);
-                }
-            }
-            loadQueue();
-            loadQueueStats();
-        } else {
-            showToast('Error: ' + (result.error || 'Unknown'), 'error');
+        var result = await apiPostForm('/api/queue/print', formData);
+        showToast(result.message || 'Print started');
+        if (result.auto_created_job === true && result.job_id) {
+            showToast(
+                'Job #' + result.job_id +
+                ' was automatically created for this print'
+            );
         }
+        hideModal('queuePrintModal');
+        clearWoSelection();
+        if (_woDetailId) {
+            var detailPanel = document.getElementById('woPanel-detail');
+            if (detailPanel && detailPanel.classList.contains('active')) {
+                viewWorkOrder(_woDetailId);
+            }
+        }
+        loadQueue();
+        loadQueueStats();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     } finally {

@@ -74,7 +74,24 @@ function updateWoSelectionToolbar() {
     } else {
         text.textContent = selectedIds.length + ' selected';
     }
-    printBtn.disabled = selectedIds.length === 0 || !canPrintSelection;
+    var selectedPrintable = selectedItems.filter(function(qi) {
+        return isQueuePrintableStatus(qi.status);
+    });
+    var hasPrintableSelection = selectedPrintable.length > 0;
+    printBtn.disabled = selectedIds.length === 0 ||
+        !canPrintSelection || !hasPrintableSelection;
+    if (selectedIds.length === 0) {
+        printBtn.title = '';
+    } else if (!canPrintSelection) {
+        printBtn.title = 'Cannot print parts from different jobs ' +
+            'together. Select parts from one job, or create a new job ' +
+            'first.';
+    } else if (!hasPrintableSelection) {
+        printBtn.title = 'No printable items selected (items may ' +
+            'already be printing or completed)';
+    } else {
+        printBtn.title = '';
+    }
     createBtn.disabled = selectedIds.length === 0;
     clearBtn.disabled = selectedIds.length === 0;
 
@@ -155,14 +172,12 @@ async function createWoJobFromSelected() {
     }
 
     try {
-        var resp = await fetch('/api/workorders/' + encodeURIComponent(_woDetailId) + '/jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ queue_ids: queueIds })
-        });
-        var result = await resp.json();
+        var result = await apiPost(
+            '/api/workorders/' + encodeURIComponent(_woDetailId) + '/jobs',
+            { queue_ids: queueIds }
+        );
 
-        if (result.success && result.job) {
+        if (result.job) {
             showToast('Job #' + result.job.job_id + ' created with ' +
                 (result.assigned_count || queueIds.length) + ' part' +
                 ((result.assigned_count || queueIds.length) === 1 ? '' : 's'));
@@ -171,7 +186,7 @@ async function createWoJobFromSelected() {
             loadWorkOrders();
             loadQueue();
         } else {
-            showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            showToast('Error: Unknown response', 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
@@ -201,8 +216,7 @@ async function loadWorkOrders() {
     if (statusFilter) url += '?status=' + statusFilter;
 
     try {
-        var resp = await fetch(url);
-        var orders = await resp.json();
+        var orders = await apiGet(url);
         var body = document.getElementById('workOrdersBody');
 
         if (orders.length === 0) {
@@ -214,10 +228,10 @@ async function loadWorkOrders() {
             var total = wo.total_parts || 0;
             var done = wo.completed_parts || 0;
             var pct = total > 0 ? Math.round(done / total * 100) : 0;
-            var statusClass = getWoStatusClass(wo.status);
+            var statusInfo = formatWoStatus(wo.status);
 
             var actions = '<button class="btn btn-primary" style="font-size:10px;padding:3px 8px;" onclick="viewWorkOrder(\'' + escapeHtml(wo.wo_id) + '\')">View</button>';
-            if (wo.status === 'open' || wo.status === 'in_progress') {
+            if (wo.status === 'open' || wo.status === 'in_progress' || wo.status === 'attention') {
                 actions += ' <button class="btn btn-danger" style="font-size:10px;padding:3px 8px;" onclick="cancelWorkOrder(\'' + escapeHtml(wo.wo_id) + '\')">Cancel</button>';
             }
 
@@ -227,7 +241,7 @@ async function loadWorkOrders() {
                 '<td>' + formatDateTime(wo.created_at) + '</td>' +
                 '<td>' + total + '</td>' +
                 '<td><div class="wo-progress-bar"><div class="wo-progress-fill" style="width:' + pct + '%"></div></div><span class="wo-progress-text">' + done + '/' + total + '</span></td>' +
-                '<td><span class="wo-status ' + statusClass + '">' + escapeHtml(wo.status) + '</span></td>' +
+                '<td><span class="wo-status ' + statusInfo.cssClass + '">' + escapeHtml(statusInfo.label) + '</span></td>' +
                 '<td>' + actions + '</td>' +
                 '</tr>';
         }).join('');
@@ -238,21 +252,16 @@ async function loadWorkOrders() {
 }
 
 async function cancelWorkOrder(woId) {
-    if (!confirm('Cancel work order ' + woId + '? This will cancel all queued items.')) return;
+    if (!confirm('Cancel work order ' + woId + '? This will stop any active prints and cancel all remaining items.')) return;
 
     try {
-        var resp = await fetch('/api/workorders/' + woId, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'cancelled' })
-        });
-        var result = await resp.json();
-        if (result.success) {
-            showToast('Work order cancelled');
-            loadWorkOrders();
-            loadQueueStats();
-        } else {
-            showToast('Error: ' + result.error, 'error');
+        await apiPatch('/api/workorders/' + woId, { status: 'cancelled' });
+        showToast('Work order cancelled');
+        loadWorkOrders();
+        loadQueue();
+        loadQueueStats();
+        if (_woDetailId === woId) {
+            viewWorkOrder(woId);
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
@@ -284,7 +293,7 @@ function summarizeWoJobItems(items) {
         statuses.push(qi.status);
         if (qi.status === 'completed') summary.completed_parts += 1;
         if (qi.status === 'queued') summary.queued_parts += 1;
-        if (isQueueActiveStatus(qi.status) || qi.status === 'assigned') {
+        if (isQueueActiveStatus(qi.status)) {
             summary.printing_parts += 1;
         }
         if (isQueueFailureStatus(qi.status)) summary.failed_parts += 1;
@@ -307,7 +316,7 @@ function summarizeWoJobItems(items) {
     })) {
         summary.status = 'completed';
     } else if (activeStatuses.some(function(status) {
-        return isQueueActiveStatus(status) || status === 'assigned';
+        return isQueueActiveStatus(status);
     })) {
         summary.status = 'in_progress';
     } else if (activeStatuses.some(function(status) {
@@ -323,8 +332,42 @@ function summarizeWoJobItems(items) {
     return summary;
 }
 
+function renderWoQcBadge(qi) {
+    if (!qi.print_job_id) {
+        return '-';
+    }
+    var outcome = qi.production_outcome || 'unknown';
+    var labelMap = { pass: 'Pass', fail: 'Fail', unknown: 'Pending' };
+    var classMap = {
+        pass: 'qs-completed',
+        fail: 'qs-failed',
+        unknown: 'qs-queued'
+    };
+    var label = labelMap[outcome] || outcome;
+    var klass = classMap[outcome] || '';
+    return '<span class="queue-status ' + klass + '">' +
+        escapeHtml(label) + '</span>';
+}
+
+function renderWoQcAction(qi) {
+    if (qi.status !== 'completed' || !qi.print_job_id) {
+        return '';
+    }
+    return '<button class="btn" style="font-size:10px;padding:3px 8px;" ' +
+        'onclick="openWoQcModal(' + qi.print_job_id + ', ' + qi.queue_id + ')">' +
+        'Set QC</button>';
+}
+
+function renderWoJobLogLink(qi) {
+    if (!qi.print_job_id) {
+        return '-';
+    }
+    return '<a href="#" onclick="showJobDetail(' + qi.print_job_id +
+        ');return false;">#' + qi.print_job_id + '</a>';
+}
+
 function renderWoQueueRow(qi) {
-    var sc = getQueueStatusClass(qi.status);
+    var statusInfo = formatQueueStatus(qi.status);
     var actions = '';
     var canSelect = isQueuePrintableStatus(qi.status);
     var selector = canSelect
@@ -343,30 +386,67 @@ function renderWoQueueRow(qi) {
             ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>';
     }
 
+    var qcAction = renderWoQcAction(qi);
+    if (qcAction) {
+        actions = actions ? (actions + ' ' + qcAction) : qcAction;
+    }
+
+    var operatorText = qi.operator_initials
+        || qi.queue_job_operator_initials || '-';
+
     return '<tr>' +
         '<td>' + selector + '</td>' +
         '<td>' + escapeHtml(qi.part_name) + '</td>' +
         '<td>' + escapeHtml(qi.material) + '</td>' +
         '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
-        '<td><span class="queue-status ' + sc + '">' + escapeHtml(formatQueueStatusLabel(qi.status)) + '</span></td>' +
+        '<td><span class="queue-status ' + statusInfo.cssClass + '">' + escapeHtml(statusInfo.label) + '</span></td>' +
         '<td>' + escapeHtml(qi.assigned_printer_name || '-') + '</td>' +
         '<td>' + escapeHtml(qi.gcode_file || '-') + '</td>' +
+        '<td>' + (qi.completed_at ? formatDateTime(qi.completed_at) : '-') + '</td>' +
+        '<td>' + escapeHtml(operatorText) + '</td>' +
+        '<td>' + renderWoQcBadge(qi) + '</td>' +
+        '<td>' + renderWoJobLogLink(qi) + '</td>' +
         '<td>' + actions + '</td>' +
         '</tr>';
+}
+
+function summarizeJobQc(items) {
+    var pass = 0;
+    var fail = 0;
+    var pending = 0;
+    items.forEach(function(qi) {
+        if (qi.status !== 'completed' || !qi.print_job_id) {
+            return;
+        }
+        var outcome = qi.production_outcome;
+        if (outcome === 'pass') pass += 1;
+        else if (outcome === 'fail') fail += 1;
+        else pending += 1;
+    });
+    if (pass + fail + pending === 0) {
+        return '';
+    }
+    return 'QC: ' + pass + ' pass / ' + fail + ' fail / ' +
+        pending + ' pending';
 }
 
 function renderWoJobCard(title, job, items, isUnassigned) {
     var printableCount = items.filter(function(qi) {
         return isQueuePrintableStatus(qi.status);
     }).length;
-    var badgeClass = getWoStatusClass(job.status);
-    var meta = [
+    var jobStatusInfo = formatJobStatus(job.status);
+    var metaParts = [
         'Parts: ' + (job.part_count || items.length || 0),
         'Done: ' + (job.completed_parts || 0),
         'Queued: ' + (job.queued_parts || 0),
         'Printing: ' + (job.printing_parts || 0),
         'Failed: ' + (job.failed_parts || 0)
-    ].join(' | ');
+    ];
+    var qcSummary = summarizeJobQc(items);
+    if (qcSummary) {
+        metaParts.push(qcSummary);
+    }
+    var meta = metaParts.join(' | ');
 
     var printButton = '';
     if (printableCount > 0 && !isUnassigned && job.job_id) {
@@ -386,6 +466,10 @@ function renderWoJobCard(title, job, items, isUnassigned) {
             '<th>Status</th>' +
             '<th>Printer</th>' +
             '<th>GCode</th>' +
+            '<th>Completed</th>' +
+            '<th>Operator</th>' +
+            '<th>QC</th>' +
+            '<th>Print Log</th>' +
             '<th>Actions</th>' +
             '</tr>' +
             '</thead>' +
@@ -399,7 +483,7 @@ function renderWoJobCard(title, job, items, isUnassigned) {
         '<div>' +
         '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">' +
         '<strong style="font-size:15px;">' + escapeHtml(title) + '</strong>' +
-        '<span class="wo-status ' + badgeClass + '" style="font-size:12px;">' + escapeHtml(job.status || 'open') + '</span>' +
+        '<span class="wo-status ' + jobStatusInfo.cssClass + '" style="font-size:12px;">' + escapeHtml(jobStatusInfo.label) + '</span>' +
         '</div>' +
         '<div style="margin-top:6px; color:var(--text-secondary); font-size:12px;">' + escapeHtml(meta) + '</div>' +
         '<div style="margin-top:4px; color:var(--text-secondary); font-size:12px;">Latest print: ' +
@@ -458,11 +542,85 @@ function renderWoJobs(wo) {
     syncWoSelectionCheckboxes();
 }
 
+async function openWoQcModal(printJobId, queueId) {
+    var modal = document.getElementById('woQcModal');
+    if (!modal) {
+        return;
+    }
+    modal.dataset.printJobId = printJobId;
+    modal.dataset.queueId = queueId || '';
+    var outcomeEl = document.getElementById('woQcOutcome');
+    var operatorEl = document.getElementById('woQcOperator');
+    var notesEl = document.getElementById('woQcNotes');
+    if (outcomeEl) outcomeEl.value = 'pass';
+    if (operatorEl) operatorEl.value = '';
+    if (notesEl) notesEl.value = '';
+
+    // Pre-fill from the current queue item if we have it cached
+    var qi = (_woDetailQueueItems || []).find(function(item) {
+        return item.print_job_id === printJobId;
+    });
+    if (qi) {
+        if (outcomeEl && qi.production_outcome &&
+            qi.production_outcome !== 'unknown') {
+            outcomeEl.value = qi.production_outcome;
+        }
+        if (operatorEl && qi.production_operator) {
+            operatorEl.value = qi.production_operator;
+        }
+        if (notesEl && qi.production_notes) {
+            notesEl.value = qi.production_notes;
+        }
+    }
+
+    showModal('woQcModal');
+}
+
+async function submitWoQc() {
+    var modal = document.getElementById('woQcModal');
+    if (!modal) return;
+    var printJobId = parseInt(modal.dataset.printJobId, 10);
+    if (!printJobId) {
+        showToast('No print job selected', 'error');
+        return;
+    }
+    var outcome = document.getElementById('woQcOutcome').value;
+    var operator = document.getElementById('woQcOperator').value.trim();
+    var notes = document.getElementById('woQcNotes').value.trim();
+
+    if (!operator) {
+        showToast('Inspector name is required', 'error');
+        return;
+    }
+
+    try {
+        await apiPatch('/api/production/jobs/' + printJobId, {
+            outcome: outcome,
+            operator: operator,
+            notes: notes
+        });
+        showToast('QC saved');
+        hideModal('woQcModal');
+        if (_woDetailId) {
+            viewWorkOrder(_woDetailId);
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
 async function viewWorkOrder(woId) {
+    // Preserve selection state across refreshes of the same WO, reset
+    // it when the user navigates to a different WO.
+    var preservedSelection = (_woDetailId === woId)
+        ? Object.assign({}, _woSelectedQueueIds) : {};
+    var preservedScrollY = (typeof window !== 'undefined' &&
+        _woDetailId === woId) ? window.scrollY : null;
+
     _woDetailId = woId;
     _woDetailQueueItems = [];
     _woDetailJobs = [];
-    _woSelectedQueueIds = {};
+    _woSelectedQueueIds = preservedSelection;
 
     // Hide all wo panels, show detail
     var panels = ['queue', 'orders', 'create'];
@@ -475,17 +633,20 @@ async function viewWorkOrder(woId) {
         b.classList.remove('active');
     });
 
+    // Tab-level refreshes don't apply while detail is open
+    stopWoQueueAutoRefresh();
+
     var detailPanel = document.getElementById('woPanel-detail');
     detailPanel.style.display = '';
     detailPanel.classList.add('active');
 
     try {
-        var resp = await fetch('/api/workorders/' + woId);
-        var wo = await resp.json();
-
-        if (wo.error) {
+        var wo;
+        try {
+            wo = await apiGet('/api/workorders/' + woId);
+        } catch (fetchErr) {
             document.getElementById('woDetailHeader').innerHTML =
-                '<div class="events-empty">' + escapeHtml(wo.error) + '</div>';
+                '<div class="events-empty">' + escapeHtml(fetchErr.message) + '</div>';
             document.getElementById('woJobsContainer').innerHTML = '';
             updateWoSelectionToolbar();
             return;
@@ -494,13 +655,13 @@ async function viewWorkOrder(woId) {
         var total = wo.total_parts || 0;
         var done = wo.completed_parts || 0;
         var pct = total > 0 ? Math.round(done / total * 100) : 0;
-        var statusClass = getWoStatusClass(wo.status);
+        var statusInfo = formatWoStatus(wo.status);
 
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="wo-detail-head">' +
             '<div><h3 style="margin:0;">' + escapeHtml(wo.wo_id) + '</h3>' +
             '<span style="color:var(--text-secondary);font-size:12px;">' + escapeHtml(wo.customer_name) + ' — ' + formatDateTime(wo.created_at) + ' — ' + escapeHtml(String(wo.job_count || (wo.jobs || []).length || 0)) + ' job' + (((wo.job_count || (wo.jobs || []).length || 0) === 1) ? '' : 's') + '</span></div>' +
-            '<span class="wo-status ' + statusClass + '" style="font-size:13px;">' + escapeHtml(wo.status) + '</span>' +
+            '<span class="wo-status ' + statusInfo.cssClass + '" style="font-size:13px;">' + escapeHtml(statusInfo.label) + '</span>' +
             '</div>' +
             '<div class="wo-detail-progress">' +
             '<div class="wo-progress-bar" style="height:8px;flex:1;"><div class="wo-progress-fill" style="width:' + pct + '%"></div></div>' +
@@ -510,8 +671,29 @@ async function viewWorkOrder(woId) {
         var queueItems = wo.queue_items || [];
         _woDetailJobs = wo.jobs || [];
         _woDetailQueueItems = queueItems;
+
+        // Drop any preserved selection for items that no longer exist
+        // or are no longer printable (e.g. completed during the
+        // refresh window).
+        var validIds = {};
+        queueItems.forEach(function(qi) {
+            if (isQueuePrintableStatus(qi.status)) {
+                validIds[String(qi.queue_id)] = true;
+            }
+        });
+        Object.keys(_woSelectedQueueIds).forEach(function(id) {
+            if (!validIds[id]) {
+                delete _woSelectedQueueIds[id];
+            }
+        });
+
         renderWoJobs(wo);
         updateWoSelectionToolbar();
+
+        if (preservedScrollY !== null) {
+            window.scrollTo(0, preservedScrollY);
+        }
+        startWoDetailAutoRefresh();
     } catch (e) {
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="events-empty">Error loading work order</div>';

@@ -95,9 +95,14 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     queue_execution_repository = QueueExecutionRepository(
         settings.work_order_db_path
     )
+    # farm_manager is built below; pass a mutable closure cell so the
+    # service can resolve it after construction without rebuilding.
     work_order_service = WorkOrderService(
         work_order_repository=work_order_repository,
         job_repository=wo_job_repository,
+        queue_repository=queue_repository,
+        queue_execution_repository=queue_execution_repository,
+        production_job_repository=job_repository,
     )
     queue_service = QueueService(
         queue_repository=queue_repository,
@@ -144,6 +149,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         runtime_state=runtime_state,
         state_lock=state_lock,
     )
+    # Late-bind farm_manager now that it's constructed so the WO
+    # service can issue stop_job calls on cancel.
+    work_order_service.farm_manager = farm_manager
     inventory_service = InventoryService(filament_db)
 
     def _resolve_printer_name(printer_id):

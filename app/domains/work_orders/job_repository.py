@@ -4,12 +4,14 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, List
 
+from app.domains.work_orders import status_sync
+
 
 class JobRepository:
     """Manages persisted work-order jobs in the work_orders.db file."""
 
-    ACTIVE_QUEUE_STATUSES = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_QUEUE_STATUSES = ("upload_failed", "start_failed", "failed")
+    ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
+    FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -72,51 +74,11 @@ class JobRepository:
     # Status Derivation
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _derive_job_status(statuses: List[str]) -> str:
-        active_statuses = [s for s in statuses if s != "cancelled"]
-
-        if not active_statuses and statuses:
-            return "cancelled"
-        if active_statuses and all(s == "completed" for s in active_statuses):
-            return "completed"
-        if any(s in JobRepository.ACTIVE_QUEUE_STATUSES
-               for s in active_statuses):
-            return "in_progress"
-        if any(s in JobRepository.FAILURE_QUEUE_STATUSES
-               for s in active_statuses):
-            return "attention"
-        if any(s == "completed" for s in active_statuses):
-            return "in_progress"
-        return "open"
+    _derive_job_status = staticmethod(status_sync.derive_job_status)
 
     def sync_job_status(self, conn, job_id: int) -> None:
         """Recalculate a persisted job status from its queue items."""
-        rows = conn.execute("""
-            SELECT status
-            FROM queue_items
-            WHERE job_id = ?
-        """, (job_id,)).fetchall()
-        now = datetime.now(timezone.utc).isoformat()
-
-        if not rows:
-            conn.execute("""
-                UPDATE jobs
-                SET status = 'open',
-                    completed_at = NULL
-                WHERE job_id = ?
-            """, (job_id,))
-            return
-
-        statuses = [row["status"] for row in rows]
-        new_status = self._derive_job_status(statuses)
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE jobs
-            SET status = ?,
-                completed_at = ?
-            WHERE job_id = ?
-        """, (new_status, completed_at, job_id))
+        status_sync.sync_job_status(conn, job_id)
 
     # ------------------------------------------------------------------
     # Job Summary

@@ -4,12 +4,14 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, List
 
+from app.domains.work_orders import status_sync
+
 
 class QueueRepository:
     """Manages queue items in the work_orders.db file."""
 
-    ACTIVE_QUEUE_STATUSES = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_QUEUE_STATUSES = ("upload_failed", "start_failed", "failed")
+    ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
+    FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
     PRINTABLE_QUEUE_STATUSES = ("queued", "failed", "upload_failed",
                                 "start_failed")
 
@@ -393,70 +395,11 @@ class QueueRepository:
         conn.close()
 
     # ------------------------------------------------------------------
-    # Status rollup helpers (shared DB, so we query jobs/work_orders)
+    # Status rollup helpers — delegate to app.domains.work_orders.status_sync
     # ------------------------------------------------------------------
 
-    ACTIVE_STATUS_SET = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_STATUS_SET = ("upload_failed", "start_failed", "failed")
-
     def _sync_job_status(self, conn, job_id: int) -> None:
-        rows = conn.execute("""
-            SELECT status FROM queue_items WHERE job_id = ?
-        """, (job_id,)).fetchall()
-        now = datetime.now(timezone.utc).isoformat()
-
-        if not rows:
-            conn.execute("""
-                UPDATE jobs SET status = 'open', completed_at = NULL
-                WHERE job_id = ?
-            """, (job_id,))
-            return
-
-        statuses = [r["status"] for r in rows]
-        active = [s for s in statuses if s != "cancelled"]
-        if not active and statuses:
-            new_status = "cancelled"
-        elif active and all(s == "completed" for s in active):
-            new_status = "completed"
-        elif any(s in self.ACTIVE_STATUS_SET for s in active):
-            new_status = "in_progress"
-        elif any(s in self.FAILURE_STATUS_SET for s in active):
-            new_status = "attention"
-        elif any(s == "completed" for s in active):
-            new_status = "in_progress"
-        else:
-            new_status = "open"
-
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE jobs SET status = ?, completed_at = ?
-            WHERE job_id = ?
-        """, (new_status, completed_at, job_id))
+        status_sync.sync_job_status(conn, job_id)
 
     def _update_wo_status_from_items(self, conn, wo_id: str) -> None:
-        rows = conn.execute(
-            "SELECT status FROM queue_items WHERE wo_id = ?", (wo_id,)
-        ).fetchall()
-        if not rows:
-            return
-
-        statuses = [r["status"] for r in rows]
-        active = [s for s in statuses if s != "cancelled"]
-        now = datetime.now(timezone.utc).isoformat()
-
-        if not active and statuses:
-            new_status = "cancelled"
-        elif active and all(s == "completed" for s in active):
-            new_status = "completed"
-        elif any(s in (self.ACTIVE_STATUS_SET + self.FAILURE_STATUS_SET
-                       + ("completed",))
-                 for s in active):
-            new_status = "in_progress"
-        else:
-            new_status = "open"
-
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE work_orders SET status = ?, completed_at = ?
-            WHERE wo_id = ?
-        """, (new_status, completed_at, wo_id))
+        status_sync.sync_work_order_status(conn, wo_id)

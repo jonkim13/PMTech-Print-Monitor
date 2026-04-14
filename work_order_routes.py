@@ -172,6 +172,7 @@ def _print_queue_items(queue_ids):
     queue_job_id = execution["queue_job_id"]
     work_order_job_id = execution["job_id"]
     queue_ids = execution["queue_ids"]
+    auto_created_job = bool(execution.get("auto_created_job"))
 
     result = _execution_service.create_and_upload(
         printer_id=printer_id,
@@ -188,6 +189,7 @@ def _print_queue_items(queue_ids):
         "job_id": work_order_job_id,
         "printer_id": printer_id,
         "wo_id": execution["wo_id"],
+        "auto_created_job": auto_created_job,
     })
 
     if not result.get("ok"):
@@ -305,6 +307,8 @@ def api_create_work_order_job(wo_id):
     }), 201
 
 
+# NOTE: No frontend UI currently calls this endpoint. See
+# WORKORDER_AUDIT.md §BE-15.
 @work_order_api.route("/api/workorders/<wo_id>/jobs/<int:job_id>/assign",
                       methods=["POST"])
 def api_assign_work_order_job_items(wo_id, job_id):

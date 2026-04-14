@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, List
 
+from app.domains.work_orders import status_sync
+
 
 class WorkOrderRepository:
     """Manages work orders and line items in the work_orders.db file."""
@@ -87,42 +89,19 @@ class WorkOrderRepository:
     # Status Derivation
     # ------------------------------------------------------------------
 
-    ACTIVE_QUEUE_STATUSES = ("uploading", "uploaded", "starting", "printing")
-    FAILURE_QUEUE_STATUSES = ("upload_failed", "start_failed", "failed")
+    ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
+    FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
 
-    @staticmethod
-    def _derive_work_order_status(statuses: List[str]) -> str:
-        active_statuses = [s for s in statuses if s != "cancelled"]
+    _derive_work_order_status = staticmethod(
+        status_sync.derive_work_order_status
+    )
 
-        if not active_statuses and statuses:
-            return "cancelled"
-        if active_statuses and all(s == "completed" for s in active_statuses):
-            return "completed"
-        if any(s in (WorkOrderRepository.ACTIVE_QUEUE_STATUSES
-                     + WorkOrderRepository.FAILURE_QUEUE_STATUSES
-                     + ("completed",))
-               for s in active_statuses):
-            return "in_progress"
-        return "open"
+    def sync_work_order_status(self, conn, wo_id: str) -> str:
+        """Recalculate a work order's derived status from queue items."""
+        return status_sync.sync_work_order_status(conn, wo_id)
 
     def _update_wo_status_from_items(self, conn, wo_id: str):
-        rows = conn.execute(
-            "SELECT status FROM queue_items WHERE wo_id = ?",
-            (wo_id,)
-        ).fetchall()
-        if not rows:
-            return
-
-        statuses = [r["status"] for r in rows]
-        now = datetime.now(timezone.utc).isoformat()
-        new_status = self._derive_work_order_status(statuses)
-        completed_at = now if new_status in ("completed", "cancelled") else None
-        conn.execute("""
-            UPDATE work_orders
-            SET status = ?,
-                completed_at = ?
-            WHERE wo_id = ?
-        """, (new_status, completed_at, wo_id))
+        status_sync.sync_work_order_status(conn, wo_id)
 
     # ------------------------------------------------------------------
     # CRUD
@@ -140,6 +119,7 @@ class WorkOrderRepository:
             VALUES (?, ?, ?, 'open')
         """, (wo_id, customer_name, now))
 
+        parts_created = 0
         for li in line_items:
             part_name = li["part_name"]
             material = li["material"]
@@ -161,11 +141,18 @@ class WorkOrderRepository:
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                 """, (item_id, wo_id, part_name, material,
                       customer_name, seq, quantity, now))
+                parts_created += 1
 
         conn.commit()
         conn.close()
-        return {"wo_id": wo_id, "customer_name": customer_name,
-                "status": "open", "created_at": now}
+        return {
+            "wo_id": wo_id,
+            "customer_name": customer_name,
+            "status": "open",
+            "created_at": now,
+            "parts_created": parts_created,
+            "line_item_count": len(line_items),
+        }
 
     def get_work_order(self, wo_id: str) -> Optional[dict]:
         conn = self._get_conn()
@@ -185,7 +172,8 @@ class WorkOrderRepository:
         result["line_items"] = [dict(r) for r in li_rows]
 
         qi_rows = conn.execute(
-            "SELECT qi.*, qj.status AS queue_job_status "
+            "SELECT qi.*, qj.status AS queue_job_status, "
+            "qj.operator_initials AS queue_job_operator_initials "
             "FROM queue_items qi "
             "LEFT JOIN queue_jobs qj ON qi.queue_job_id = qj.queue_job_id "
             "WHERE qi.wo_id = ? "
@@ -294,23 +282,7 @@ class WorkOrderRepository:
             job[key] = int(job.get(key) or 0)
         return job
 
-    @staticmethod
-    def _derive_job_status(statuses: List[str]) -> str:
-        active_statuses = [s for s in statuses if s != "cancelled"]
-
-        if not active_statuses and statuses:
-            return "cancelled"
-        if active_statuses and all(s == "completed" for s in active_statuses):
-            return "completed"
-        if any(s in WorkOrderRepository.ACTIVE_QUEUE_STATUSES
-               for s in active_statuses):
-            return "in_progress"
-        if any(s in WorkOrderRepository.FAILURE_QUEUE_STATUSES
-               for s in active_statuses):
-            return "attention"
-        if any(s == "completed" for s in active_statuses):
-            return "in_progress"
-        return "open"
+    _derive_job_status = staticmethod(status_sync.derive_job_status)
 
     def _get_work_order_jobs(self, conn, wo_id: str) -> list:
         rows = conn.execute("""

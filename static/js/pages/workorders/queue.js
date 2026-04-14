@@ -2,14 +2,40 @@
 // Work Orders - Queue table, stats, queue item actions
 // ============================================================
 
+function renderQueueStats(stats) {
+    stats = stats || {};
+    var el = function(id) { return document.getElementById(id); };
+    var queued = el('queueStatQueued');
+    var printing = el('queueStatPrinting');
+    var inUpload = el('queueStatInUpload');
+    var completed = el('queueStatCompleted');
+    var failed = el('queueStatFailed');
+
+    var uploadingCount = stats.uploading || 0;
+    var uploadedCount = stats.uploaded || 0;
+    var startingCount = stats.starting || 0;
+    // `stats.printing` is total active (upload + uploaded + starting +
+    // printing).  Subtract the upload stages to get the strictly
+    // "on-printer" count.
+    var activeCount = stats.printing || 0;
+    var trulyPrinting = Math.max(
+        0, activeCount - uploadingCount - uploadedCount - startingCount
+    );
+
+    if (queued) queued.textContent = stats.queued || 0;
+    if (printing) printing.textContent = trulyPrinting;
+    if (inUpload) {
+        inUpload.textContent =
+            uploadingCount + uploadedCount + startingCount;
+    }
+    if (completed) completed.textContent = stats.completed || 0;
+    if (failed) failed.textContent = stats.failed || 0;
+}
+
 async function loadQueueStats() {
     try {
-        var resp = await fetch('/api/queue/stats');
-        var stats = await resp.json();
-        document.getElementById('queueStatQueued').textContent = stats.queued || 0;
-        document.getElementById('queueStatPrinting').textContent = stats.printing || 0;
-        document.getElementById('queueStatCompleted').textContent = stats.completed || 0;
-        document.getElementById('queueStatFailed').textContent = stats.failed || 0;
+        var stats = await apiGet('/api/queue/stats');
+        renderQueueStats(stats);
     } catch (e) { /* ignore */ }
 }
 
@@ -19,8 +45,7 @@ async function loadQueue() {
     if (statusFilter) url += '?status=' + statusFilter;
 
     try {
-        var resp = await fetch(url);
-        var items = await resp.json();
+        var items = await apiGet(url);
         var body = document.getElementById('queueBody');
 
         if (items.length === 0) {
@@ -29,7 +54,7 @@ async function loadQueue() {
         }
 
         body.innerHTML = items.map(function(qi, idx) {
-            var statusClass = getQueueStatusClass(qi.status);
+            var statusInfo = formatQueueStatus(qi.status);
             var actions = '';
 
             if (qi.status === 'queued') {
@@ -56,7 +81,7 @@ async function loadQueue() {
                 '<td>' + escapeHtml(qi.part_name) + formatQueueJobSummary(qi) + '</td>' +
                 '<td>' + escapeHtml(qi.material) + '</td>' +
                 '<td>' + qi.sequence_number + '/' + qi.total_quantity + '</td>' +
-                '<td><span class="queue-status ' + statusClass + '">' + escapeHtml(formatQueueStatusLabel(qi.status)) + '</span></td>' +
+                '<td><span class="queue-status ' + statusInfo.cssClass + '">' + escapeHtml(statusInfo.label) + '</span></td>' +
                 '<td>' + escapeHtml(printerText) + '</td>' +
                 '<td>' + actions + '</td>' +
                 '</tr>';
@@ -97,25 +122,16 @@ function formatQueueJobSummary(qi) {
 
 async function retryQueueSession(queueId) {
     try {
-        var resp = await fetch('/api/queue/' + queueId + '/retry', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
-        });
-        var result = await resp.json();
-        if (result.success || result.ok) {
-            showToast(result.message || 'Retry sent to printer');
-            if (_woDetailId) {
-                var detailPanel = document.getElementById('woPanel-detail');
-                if (detailPanel && detailPanel.classList.contains('active')) {
-                    viewWorkOrder(_woDetailId);
-                }
+        var result = await apiPost('/api/queue/' + queueId + '/retry', {});
+        showToast(result.message || 'Retry sent to printer');
+        if (_woDetailId) {
+            var detailPanel = document.getElementById('woPanel-detail');
+            if (detailPanel && detailPanel.classList.contains('active')) {
+                viewWorkOrder(_woDetailId);
             }
-            loadQueue();
-            loadQueueStats();
-        } else {
-            showToast('Error: ' + (result.message || result.error || 'Unknown'), 'error');
         }
+        loadQueue();
+        loadQueueStats();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }
@@ -126,25 +142,16 @@ async function cancelQueuePrint(queueId) {
         return;
     }
     try {
-        var resp = await fetch('/api/queue/' + queueId + '/cancel-print', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
-        });
-        var result = await resp.json();
-        if (result.success) {
-            showToast(result.message || 'Print cancelled');
-            if (_woDetailId) {
-                var detailPanel = document.getElementById('woPanel-detail');
-                if (detailPanel && detailPanel.classList.contains('active')) {
-                    viewWorkOrder(_woDetailId);
-                }
+        var result = await apiPost('/api/queue/' + queueId + '/cancel-print', {});
+        showToast(result.message || 'Print cancelled');
+        if (_woDetailId) {
+            var detailPanel = document.getElementById('woPanel-detail');
+            if (detailPanel && detailPanel.classList.contains('active')) {
+                viewWorkOrder(_woDetailId);
             }
-            loadQueue();
-            loadQueueStats();
-        } else {
-            showToast('Error: ' + (result.error || result.message || 'Unknown'), 'error');
         }
+        loadQueue();
+        loadQueueStats();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }
@@ -152,25 +159,16 @@ async function cancelQueuePrint(queueId) {
 
 async function requeueItem(queueId) {
     try {
-        var resp = await fetch('/api/queue/' + queueId, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'queued' })
-        });
-        var result = await resp.json();
-        if (result.success) {
-            showToast('Item re-queued');
-            if (_woDetailId) {
-                var detailPanel = document.getElementById('woPanel-detail');
-                if (detailPanel && detailPanel.classList.contains('active')) {
-                    viewWorkOrder(_woDetailId);
-                }
+        await apiPatch('/api/queue/' + queueId, { status: 'queued' });
+        showToast('Item re-queued');
+        if (_woDetailId) {
+            var detailPanel = document.getElementById('woPanel-detail');
+            if (detailPanel && detailPanel.classList.contains('active')) {
+                viewWorkOrder(_woDetailId);
             }
-            loadQueue();
-            loadQueueStats();
-        } else {
-            showToast('Error: ' + result.error, 'error');
         }
+        loadQueue();
+        loadQueueStats();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }

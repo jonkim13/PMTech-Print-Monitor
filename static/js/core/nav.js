@@ -18,6 +18,16 @@ function switchPage(page) {
     if(page === 'production') loadProductionData();
     if(page === 'workorders') loadWorkOrdersPage();
 
+    // Stop WO auto-refresh when navigating to any other page.
+    if (page !== 'workorders') {
+        if (typeof stopWoQueueAutoRefresh === 'function') {
+            stopWoQueueAutoRefresh();
+        }
+        if (typeof stopWoDetailAutoRefresh === 'function') {
+            stopWoDetailAutoRefresh();
+        }
+    }
+
     document.getElementById('sidebar').classList.remove('open');
 }
 

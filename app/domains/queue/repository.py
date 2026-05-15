@@ -12,8 +12,12 @@ class QueueRepository:
 
     ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
     FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
+    # A cancelled item is re-printable directly — the cancel UI commits
+    # to "fix the physical issue then hit Print again" and the Print
+    # button must work without a prior Re-queue step. See the Row-4 UX
+    # audit.
     PRINTABLE_QUEUE_STATUSES = ("queued", "failed", "upload_failed",
-                                "start_failed")
+                                "start_failed", "cancelled")
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -361,16 +365,242 @@ class QueueRepository:
         conn.close()
         return changed
 
+    # ------------------------------------------------------------------
+    # Cancel / Retry (bulk)
+    # ------------------------------------------------------------------
+
+    # States that can be transitioned to 'cancelled'. Completed and
+    # already-cancelled rows are protected.
+    _CANCELLABLE_STATUSES = (
+        "queued", "uploading", "uploaded", "starting", "printing",
+        "failed", "upload_failed", "start_failed",
+    )
+
+    # States that can be requeued (back to 'queued').
+    _RETRYABLE_STATUSES = (
+        "cancelled", "failed", "upload_failed", "start_failed",
+    )
+
+    def cancel_queue_items(self, queue_ids: list) -> list:
+        """Mark the given queue items cancelled if they're non-terminal.
+
+        Returns a list of dicts for every item that was actually
+        cancelled, including fields the service layer needs to stop
+        printers / close production records:
+
+            {queue_id, wo_id, job_id, queue_job_id, assigned_printer_id,
+             print_job_id, prior_status, was_printing}
+
+        Completed and already-cancelled items are silently skipped.
+        """
+        ids = self._normalize_queue_ids(queue_ids)
+        if not ids:
+            return []
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute("""
+                SELECT queue_id, wo_id, job_id, queue_job_id,
+                       assigned_printer_id, print_job_id, status
+                FROM queue_items
+                WHERE queue_id IN ({})
+            """.format(placeholders), ids).fetchall()
+
+            affected = []
+            for row in rows:
+                if row["status"] not in self._CANCELLABLE_STATUSES:
+                    continue
+                conn.execute("""
+                    UPDATE queue_items
+                    SET status = 'cancelled', completed_at = ?
+                    WHERE queue_id = ?
+                """, (now, row["queue_id"]))
+                affected.append({
+                    "queue_id": row["queue_id"],
+                    "wo_id": row["wo_id"],
+                    "job_id": row["job_id"],
+                    "queue_job_id": row["queue_job_id"],
+                    "assigned_printer_id": row["assigned_printer_id"],
+                    "print_job_id": row["print_job_id"],
+                    "prior_status": row["status"],
+                    "was_printing": row["status"] == "printing",
+                })
+
+            if not affected:
+                conn.rollback()
+                return []
+
+            # Mark any queue_jobs whose items were all cancelled as
+            # cancelled too so the session reflects final state.
+            queue_job_ids = sorted({
+                a["queue_job_id"] for a in affected if a["queue_job_id"]
+            })
+            for qjid in queue_job_ids:
+                remaining = conn.execute("""
+                    SELECT status FROM queue_items WHERE queue_job_id = ?
+                """, (qjid,)).fetchall()
+                statuses = [r["status"] for r in remaining]
+                if statuses and all(s in ("cancelled", "completed")
+                                    for s in statuses):
+                    terminal = ("cancelled"
+                                if all(s == "cancelled" for s in statuses)
+                                else "completed")
+                    conn.execute("""
+                        UPDATE queue_jobs
+                        SET status = ?, completed_at = ?
+                        WHERE queue_job_id = ?
+                    """, (terminal, now, qjid))
+
+            job_ids = sorted({a["job_id"] for a in affected if a["job_id"]})
+            wo_ids = sorted({a["wo_id"] for a in affected if a["wo_id"]})
+            for jid in job_ids:
+                self._sync_job_status(conn, jid)
+            for wid in wo_ids:
+                self._update_wo_status_from_items(conn, wid)
+
+            conn.commit()
+            return affected
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def cancel_queue_items_for_wo(self, wo_id: str) -> list:
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in self._CANCELLABLE_STATUSES)
+        rows = conn.execute("""
+            SELECT queue_id FROM queue_items
+            WHERE wo_id = ? AND status IN ({})
+        """.format(placeholders),
+                            [wo_id] + list(self._CANCELLABLE_STATUSES)
+                            ).fetchall()
+        conn.close()
+        return self.cancel_queue_items([r["queue_id"] for r in rows])
+
+    def cancel_queue_items_for_job(self, job_id: int) -> list:
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in self._CANCELLABLE_STATUSES)
+        rows = conn.execute("""
+            SELECT queue_id FROM queue_items
+            WHERE job_id = ? AND status IN ({})
+        """.format(placeholders),
+                            [job_id] + list(self._CANCELLABLE_STATUSES)
+                            ).fetchall()
+        conn.close()
+        return self.cancel_queue_items([r["queue_id"] for r in rows])
+
+    def requeue_queue_items(self, queue_ids: list) -> list:
+        """Requeue the given queue items if they're cancelled/failed.
+
+        Returns a list of dicts (queue_id, wo_id, job_id) for every
+        item that was requeued. Clears assignment fields so the item
+        can be re-scheduled cleanly.
+        """
+        ids = self._normalize_queue_ids(queue_ids)
+        if not ids:
+            return []
+
+        conn = self._get_conn()
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute("""
+                SELECT queue_id, wo_id, job_id, status
+                FROM queue_items
+                WHERE queue_id IN ({})
+            """.format(placeholders), ids).fetchall()
+
+            affected = []
+            for row in rows:
+                if row["status"] not in self._RETRYABLE_STATUSES:
+                    continue
+                conn.execute("""
+                    UPDATE queue_items
+                    SET status = 'queued',
+                        queue_job_id = NULL,
+                        assigned_printer_id = NULL,
+                        assigned_printer_name = NULL,
+                        gcode_file = NULL,
+                        upload_session_id = NULL,
+                        print_job_id = NULL,
+                        assigned_at = NULL,
+                        started_at = NULL,
+                        completed_at = NULL
+                    WHERE queue_id = ?
+                """, (row["queue_id"],))
+                affected.append({
+                    "queue_id": row["queue_id"],
+                    "wo_id": row["wo_id"],
+                    "job_id": row["job_id"],
+                    "prior_status": row["status"],
+                })
+
+            if not affected:
+                conn.rollback()
+                return []
+
+            job_ids = sorted({a["job_id"] for a in affected if a["job_id"]})
+            wo_ids = sorted({a["wo_id"] for a in affected if a["wo_id"]})
+            for jid in job_ids:
+                self._sync_job_status(conn, jid)
+            for wid in wo_ids:
+                self._update_wo_status_from_items(conn, wid)
+
+            conn.commit()
+            return affected
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def requeue_queue_items_for_wo(self, wo_id: str) -> list:
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in self._RETRYABLE_STATUSES)
+        rows = conn.execute("""
+            SELECT queue_id FROM queue_items
+            WHERE wo_id = ? AND status IN ({})
+        """.format(placeholders),
+                            [wo_id] + list(self._RETRYABLE_STATUSES)
+                            ).fetchall()
+        conn.close()
+        return self.requeue_queue_items([r["queue_id"] for r in rows])
+
+    def requeue_queue_items_for_job(self, job_id: int) -> list:
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in self._RETRYABLE_STATUSES)
+        rows = conn.execute("""
+            SELECT queue_id FROM queue_items
+            WHERE job_id = ? AND status IN ({})
+        """.format(placeholders),
+                            [job_id] + list(self._RETRYABLE_STATUSES)
+                            ).fetchall()
+        conn.close()
+        return self.requeue_queue_items([r["queue_id"] for r in rows])
+
     def find_printing_item_by_filename(self, printer_id: str,
                                        filename: str) -> Optional[dict]:
+        """Find an in-flight queue_item on ``printer_id`` matching ``filename``.
+
+        Widened from ``status='printing'`` to any ACTIVE_QUEUE_STATUSES
+        state so completion routing can resolve queue_items that never
+        reached 'printing' (the stuck-in-'starting' bug). Kept the
+        historical name; the docstring records the widened semantics.
+        """
+        placeholders = ",".join("?" for _ in self.ACTIVE_QUEUE_STATUSES)
+        active_params = tuple(self.ACTIVE_QUEUE_STATUSES)
         conn = self._get_conn()
         row = conn.execute("""
             SELECT * FROM queue_items
             WHERE assigned_printer_id = ?
               AND gcode_file = ?
-              AND status = 'printing'
+              AND status IN ({})
             ORDER BY queue_id DESC LIMIT 1
-        """, (printer_id, filename)).fetchone()
+        """.format(placeholders),
+                           (printer_id, filename) + active_params
+                           ).fetchone()
 
         if not row and filename:
             bare = filename.rsplit("/", 1)[-1] if "/" in filename else filename
@@ -378,9 +608,11 @@ class QueueRepository:
                 SELECT * FROM queue_items
                 WHERE assigned_printer_id = ?
                   AND (gcode_file = ? OR gcode_file LIKE ?)
-                  AND status = 'printing'
+                  AND status IN ({})
                 ORDER BY queue_id DESC LIMIT 1
-            """, (printer_id, bare, "%" + bare)).fetchone()
+            """.format(placeholders),
+                              (printer_id, bare, "%" + bare) + active_params
+                              ).fetchone()
 
         conn.close()
         return dict(row) if row else None

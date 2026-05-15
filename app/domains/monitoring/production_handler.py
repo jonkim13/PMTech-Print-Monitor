@@ -155,6 +155,38 @@ class ProductionHandler:
             duration_sec=duration_sec, error_label="stop",
         )
 
+    def cancel(self, printer_id, state, duration_sec=0):
+        """Close the production record as cancelled.
+
+        Same wiring as ``stop`` but additionally stamps
+        ``outcome='cancelled'`` so business-level readers (exports, QC
+        rollups) can distinguish an operator cancel from a bare printer
+        stop. Filament is NOT deducted — the caller (transition
+        handler) is responsible for skipping the filament path.
+        """
+        if not self.job_repository:
+            return
+        job_id = self._active_jobs().get(printer_id)
+        self._close_in_production(
+            printer_id, state, self.job_repository.stop_job,
+            MachineEventType.PRINT_STOP, ProductionJobStatus.STOPPED,
+            {"file": state.get("job", {}).get("filename"),
+             "outcome": "cancelled"},
+            duration_sec=duration_sec, error_label="cancel",
+        )
+        # _close_in_production popped the active job id, so use the
+        # one we captured above.
+        if job_id is not None:
+            try:
+                self.job_repository.update_job_qc(
+                    job_id, outcome="cancelled"
+                )
+                print("[PRODUCTION] Job #{} outcome=cancelled".format(
+                    job_id))
+            except Exception as exc:
+                print("[PRODUCTION] update_job_qc(cancelled) failed "
+                      "for job_id={}: {}".format(job_id, exc))
+
     def _close_in_production(self, printer_id, state, close_job, event_type,
                              label, details, duration_sec=0,
                              error_label=None):

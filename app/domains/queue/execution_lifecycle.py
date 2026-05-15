@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.domains.work_orders.status_sync import ACTIVE_QUEUE_STATUSES
+
 
 class QueueExecutionLifecycleMixin:
     """Lifecycle status transitions for queue_jobs.
@@ -66,28 +68,49 @@ class QueueExecutionLifecycleMixin:
 
     def get_active_queue_job_for_printer(self,
                                          printer_id: str) -> Optional[dict]:
+        """Return the most recent in-flight queue_job for ``printer_id``.
+
+        Widened from ``status='printing'`` to any ACTIVE_QUEUE_STATUSES
+        state so completion routing can resolve queue_jobs that never
+        reached 'printing' (the stuck-in-'starting' bug). The narrow
+        predicate was masking the queue rollup when
+        ``link_print_job_on_start`` couldn't promote the queue_job.
+        """
+        placeholders = ",".join("?" for _ in ACTIVE_QUEUE_STATUSES)
         conn = self._get_conn()
         try:
             row = conn.execute("""
                 SELECT * FROM queue_jobs
                 WHERE assigned_printer_id = ?
-                  AND status = 'printing'
+                  AND status IN ({})
                 ORDER BY queue_job_id DESC LIMIT 1
-            """, (printer_id,)).fetchone()
+            """.format(placeholders),
+                               (printer_id,) + tuple(ACTIVE_QUEUE_STATUSES)
+                               ).fetchone()
             return dict(row) if row else None
         finally:
             conn.close()
 
     def find_printing_queue_job_by_filename(self, printer_id: str,
                                             filename: str) -> Optional[dict]:
+        """Find an in-flight queue_job on ``printer_id`` matching ``filename``.
+
+        Widened from ``status='printing'`` to any ACTIVE_QUEUE_STATUSES
+        state. Kept the historical name because external callers
+        reference it; the docstring records the new semantics.
+        """
+        placeholders = ",".join("?" for _ in ACTIVE_QUEUE_STATUSES)
+        active_params = tuple(ACTIVE_QUEUE_STATUSES)
         conn = self._get_conn()
         row = conn.execute("""
             SELECT * FROM queue_jobs
             WHERE assigned_printer_id = ?
               AND gcode_file = ?
-              AND status = 'printing'
+              AND status IN ({})
             ORDER BY queue_job_id DESC LIMIT 1
-        """, (printer_id, filename)).fetchone()
+        """.format(placeholders),
+                           (printer_id, filename) + active_params
+                           ).fetchone()
 
         if not row and filename:
             bare = filename.rsplit("/", 1)[-1] if "/" in filename else filename
@@ -95,9 +118,11 @@ class QueueExecutionLifecycleMixin:
                 SELECT * FROM queue_jobs
                 WHERE assigned_printer_id = ?
                   AND (gcode_file = ? OR gcode_file LIKE ?)
-                  AND status = 'printing'
+                  AND status IN ({})
                 ORDER BY queue_job_id DESC LIMIT 1
-            """, (printer_id, bare, "%" + bare)).fetchone()
+            """.format(placeholders),
+                              (printer_id, bare, "%" + bare) + active_params
+                              ).fetchone()
 
         conn.close()
         return dict(row) if row else None
@@ -262,13 +287,19 @@ class QueueExecutionLifecycleMixin:
             conn.close()
             return False
 
+        # Widened from status='printing' to ACTIVE_QUEUE_STATUSES to match
+        # _set_queue_job_status's "any non-terminal" semantics. See
+        # tests/test_status_propagation_bug.py::test_predicate_asymmetry_in_complete_queue_job
+        placeholders = ",".join("?" for _ in ACTIVE_QUEUE_STATUSES)
         conn.execute("""
             UPDATE queue_items
             SET status = 'completed',
                 completed_at = ?,
                 print_job_id = COALESCE(?, print_job_id)
-            WHERE queue_job_id = ? AND status = 'printing'
-        """, (now, print_job_id, queue_job_id))
+            WHERE queue_job_id = ? AND status IN ({})
+        """.format(placeholders),
+                     (now, print_job_id, queue_job_id)
+                     + tuple(ACTIVE_QUEUE_STATUSES))
 
         conn.execute("""
             UPDATE queue_jobs

@@ -301,14 +301,17 @@ class PrintFarmManager:
     def mark_stop_pending(self, printer_id: str):
         """Flag that a stop was just requested for this printer.
 
-        The next printing->idle transition will be logged as a cancel
-        rather than being treated as a completion (so we don't deduct
-        filament or mark the queue job complete).
+        The next printing->idle transition will be handled by
+        ``handle_print_cancelled`` rather than ``handle_print_completed``
+        (so we don't deduct filament or mark the queue job complete).
+        Must be set BEFORE sending the stop to the printer — otherwise
+        the poller can observe the transition before we set the flag.
         """
         if not printer_id:
             return
         with self._lock:
             self._stop_pending[printer_id] = time.time()
+        print(f"[CANCEL] mark_stop_pending set for {printer_id}")
 
     def get_active_job_id(self, printer_id: str):
         """Return the production job_id currently tracked for a printer."""
@@ -357,34 +360,34 @@ class PrintFarmManager:
             )
 
             if transition_type == PRINT_COMPLETE:
-                # If a cancel was just issued for this printer, skip the
-                # normal completion/stop pipeline entirely so we don't
-                # deduct filament or mark the production/queue job as a
-                # successful completion.  Stale entries older than 120s
-                # are ignored so real completions aren't suppressed.
+                # Route to the cancel handler if a stop was pending when
+                # the printer went idle. This makes the poller finish
+                # the cancel (queue_item->cancelled, production
+                # outcome=cancelled, no filament deduction) even if the
+                # service-initiated cancel crashed mid-flight. Stale
+                # markers (>=120s) are dropped so a missed observation
+                # can't mask a legitimate later completion.
                 stop_pending_at = self._stop_pending.get(printer_id)
                 if (stop_pending_at is not None
                         and (time.time() - stop_pending_at) < 120):
                     self._stop_pending.pop(printer_id, None)
-                    event["type"] = "print_cancelled"
-                    if self.history_db:
-                        try:
-                            self.history_db.log_event(event)
-                        except Exception as log_exc:
-                            print(
-                                f"[CANCEL] Failed to log cancel event: "
-                                f"{log_exc}"
-                            )
                     print(
-                        f"[EVENT] Print cancelled on "
-                        f"{state.get('name') or printer_id}: "
-                        f"{state.get('job', {}).get('filename')}"
+                        f"[CANCEL] poller observed printing->idle on "
+                        f"{printer_id} with stop_pending set "
+                        f"(age={time.time() - stop_pending_at:.1f}s) — "
+                        f"routing to cancel handler"
+                    )
+                    self._get_transition_handler().handle_print_cancelled(
+                        printer_id, state["name"], state, client, event
                     )
                     printer_data["previous_status"] = new_status
                     return state
                 if stop_pending_at is not None:
-                    # Stale marker (>=120s old): drop it so future polls
-                    # behave normally.
+                    print(
+                        f"[CANCEL] dropping stale stop_pending marker on "
+                        f"{printer_id} "
+                        f"(age={time.time() - stop_pending_at:.1f}s)"
+                    )
                     self._stop_pending.pop(printer_id, None)
 
                 if self._consume_stopped_printer(printer_id):

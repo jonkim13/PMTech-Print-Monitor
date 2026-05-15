@@ -130,13 +130,16 @@ function renderCard(printer) {
 
 function renderEvent(event) {
     const dotClass = event.type === "print_complete" ? "complete"
-        : event.type === "printer_error" ? "error" : "started";
+        : event.type === "printer_error" ? "error"
+        : event.type === "print_cancelled" ? "cancelled" : "started";
 
     let text = "";
     if(event.type === "print_complete") {
         text = `<strong>${escapeHtml(event.printer_name)}</strong> finished printing ${escapeHtml(event.filename || 'a job')}`;
     } else if(event.type === "print_started") {
         text = `<strong>${escapeHtml(event.printer_name)}</strong> started printing ${escapeHtml(event.filename || 'a job')}`;
+    } else if(event.type === "print_cancelled") {
+        text = `<strong>${escapeHtml(event.printer_name)}</strong> cancelled ${escapeHtml(event.filename || 'a job')}`;
     } else if(event.type === "printer_error") {
         text = `<strong>${escapeHtml(event.printer_name)}</strong> encountered an error`;
     } else {

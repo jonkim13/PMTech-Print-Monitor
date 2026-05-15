@@ -7,11 +7,14 @@ class QueueService:
     """Orchestrates queue operations."""
 
     def __init__(self, queue_repository, execution_repository,
-                 work_order_repository=None, job_repository=None):
+                 work_order_repository=None, job_repository=None,
+                 farm_manager=None, production_job_repository=None):
         self.queue_repository = queue_repository
         self.execution_repository = execution_repository
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
+        self.farm_manager = farm_manager
+        self.production_job_repository = production_job_repository
 
     # ------------------------------------------------------------------
     # Query
@@ -47,6 +50,81 @@ class QueueService:
 
     def fail_queue_item(self, queue_id: int) -> bool:
         return self.queue_repository.fail_queue_item(queue_id)
+
+    # ------------------------------------------------------------------
+    # Cancel / Retry (part level)
+    # ------------------------------------------------------------------
+
+    def cancel_queue_item(self, queue_id: int) -> dict:
+        """Cancel a single queue item; stop the printer if it's printing."""
+        item = self.queue_repository.get_queue_item(queue_id)
+        if not item:
+            return {"found": False, "cancelled_count": 0, "printing_count": 0}
+
+        affected = self.queue_repository.cancel_queue_items([queue_id])
+        if affected and affected[0].get("was_printing"):
+            self._stop_printer_for(affected[0])
+        return {
+            "found": True,
+            "cancelled_count": len(affected),
+            "printing_count": sum(1 for a in affected if a["was_printing"]),
+            "affected": affected,
+        }
+
+    def retry_queue_item(self, queue_id: int) -> dict:
+        """Requeue a single cancelled/failed queue item."""
+        item = self.queue_repository.get_queue_item(queue_id)
+        if not item:
+            return {"found": False, "requeued_count": 0}
+
+        affected = self.queue_repository.requeue_queue_items([queue_id])
+        return {
+            "found": True,
+            "requeued_count": len(affected),
+            "affected": affected,
+        }
+
+    def _stop_printer_for(self, affected_item: dict) -> None:
+        """Stop the printer + close production for a cancelled printing part.
+
+        Mirror of WorkOrderService._stop_printer_and_close_production.
+        The pending-stop flag is set BEFORE stop_job so the polling loop
+        can't misread the printing->idle transition as a completion and
+        deduct filament; see farm_manager.poll_printer.
+        """
+        printer_id = affected_item.get("assigned_printer_id")
+        if not printer_id or not self.farm_manager:
+            return
+        try:
+            self.farm_manager.mark_stop_pending(printer_id)
+        except Exception as exc:
+            print("[CANCEL] mark_stop_pending failed for {}: {}".format(
+                printer_id, exc))
+        client = self.farm_manager.get_printer_client(printer_id)
+        if client:
+            try:
+                client.stop_job()
+            except Exception as exc:
+                print("[CANCEL] stop_job raised on {}: {}".format(
+                    printer_id, exc))
+        try:
+            active_job_id = self.farm_manager.get_active_job_id(printer_id)
+        except Exception:
+            active_job_id = None
+        if active_job_id is not None and self.production_job_repository:
+            try:
+                self.production_job_repository.stop_job(active_job_id)
+                self.production_job_repository.update_job_qc(
+                    active_job_id, outcome="cancelled"
+                )
+            except Exception as exc:
+                print("[CANCEL] production close failed for job_id={}: "
+                      "{}".format(active_job_id, exc))
+        try:
+            self.farm_manager.clear_active_job(printer_id)
+        except Exception as exc:
+            print("[CANCEL] clear_active_job failed for {}: {}".format(
+                printer_id, exc))
 
     # ------------------------------------------------------------------
     # Print Validation

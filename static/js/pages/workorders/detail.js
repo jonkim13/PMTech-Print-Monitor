@@ -234,6 +234,9 @@ async function loadWorkOrders() {
             if (wo.status === 'open' || wo.status === 'in_progress' || wo.status === 'attention') {
                 actions += ' <button class="btn btn-danger" style="font-size:10px;padding:3px 8px;" onclick="cancelWorkOrder(\'' + escapeHtml(wo.wo_id) + '\')">Cancel</button>';
             }
+            if (wo.status === 'cancelled' || wo.status === 'attention') {
+                actions += ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="retryWorkOrder(\'' + escapeHtml(wo.wo_id) + '\')">Re-queue</button>';
+            }
 
             return '<tr>' +
                 '<td><a href="#" onclick="viewWorkOrder(\'' + escapeHtml(wo.wo_id) + '\');return false;" class="wo-link">' + escapeHtml(wo.wo_id) + '</a></td>' +
@@ -252,19 +255,92 @@ async function loadWorkOrders() {
 }
 
 async function cancelWorkOrder(woId) {
-    if (!confirm('Cancel work order ' + woId + '? This will stop any active prints and cancel all remaining items.')) return;
+    if (!confirm('Cancel work order ' + woId + '? This stops any active prints ' +
+        'and cancels every remaining item in the order.')) return;
 
     try {
-        await apiPatch('/api/workorders/' + woId, { status: 'cancelled' });
-        showToast('Work order cancelled');
-        loadWorkOrders();
-        loadQueue();
-        loadQueueStats();
-        if (_woDetailId === woId) {
-            viewWorkOrder(woId);
+        var result = await apiDelete('/api/workorders/' + woId);
+        var n = result.cancelled_count || 0;
+        showToast('Cancelled ' + n + ' part' + (n === 1 ? '' : 's'));
+        refreshWorkOrderViews(woId);
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function retryWorkOrder(woId, countHint) {
+    var n = countHint || '';
+    if (!confirm('Requeue ' + (n ? n + ' ' : '') + 'cancelled/failed part' +
+        (n === 1 ? '' : 's') + ' in ' + woId + '?')) return;
+    try {
+        var result = await apiPost('/api/workorders/' + woId + '/retry', {});
+        var count = result.requeued_count || 0;
+        showToast('Re-queued ' + count + ' part' + (count === 1 ? '' : 's'));
+        refreshWorkOrderViews(woId);
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function cancelWoJob(jobId, countHint) {
+    var n = countHint || 0;
+    if (!confirm('Cancel ' + n + ' part' + (n === 1 ? '' : 's') +
+        ' in Job #' + jobId + '? Any active print will be stopped.')) return;
+    try {
+        var woId = _woDetailId;
+        var result = await apiDelete('/api/workorders/' +
+            encodeURIComponent(woId) + '/jobs/' + jobId);
+        var count = result.cancelled_count || 0;
+        showToast('Cancelled ' + count + ' part' + (count === 1 ? '' : 's'));
+        refreshWorkOrderViews(woId);
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function retryWoJob(jobId, countHint) {
+    var n = countHint || 0;
+    if (!confirm('Re-queue ' + n + ' cancelled/failed part' +
+        (n === 1 ? '' : 's') + ' in Job #' + jobId + '?')) return;
+    try {
+        var woId = _woDetailId;
+        var result = await apiPost('/api/workorders/' +
+            encodeURIComponent(woId) + '/jobs/' + jobId + '/retry', {});
+        var count = result.requeued_count || 0;
+        showToast('Re-queued ' + count + ' part' + (count === 1 ? '' : 's'));
+        refreshWorkOrderViews(woId);
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function cancelQueueItem(queueId, partLabel) {
+    var label = partLabel ? ' "' + partLabel + '"' : '';
+    if (!confirm('Cancel this part' + label + '? If it is currently printing, ' +
+        'the printer will be stopped.')) return;
+    try {
+        var result = await apiPost('/api/queue/' + queueId + '/cancel', {});
+        var stoppedPrinter = result.printing_count > 0;
+        showToast(stoppedPrinter
+            ? 'Cancelled (printer stopped)'
+            : 'Cancelled');
+        if (_woDetailId) refreshWorkOrderViews(_woDetailId);
+        else {
+            loadQueue();
+            loadQueueStats();
+            loadWorkOrders();
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
+    }
+}
+
+function refreshWorkOrderViews(woId) {
+    loadWorkOrders();
+    loadQueue();
+    loadQueueStats();
+    if (_woDetailId === woId) {
+        viewWorkOrder(woId);
     }
 }
 
@@ -337,11 +413,15 @@ function renderWoQcBadge(qi) {
         return '-';
     }
     var outcome = qi.production_outcome || 'unknown';
-    var labelMap = { pass: 'Pass', fail: 'Fail', unknown: 'Pending' };
+    var labelMap = {
+        pass: 'Pass', fail: 'Fail', unknown: 'Pending',
+        cancelled: 'Cancelled'
+    };
     var classMap = {
         pass: 'qs-completed',
         fail: 'qs-failed',
-        unknown: 'qs-queued'
+        unknown: 'qs-queued',
+        cancelled: 'qs-cancelled'
     };
     var label = labelMap[outcome] || outcome;
     var klass = classMap[outcome] || '';
@@ -368,28 +448,41 @@ function renderWoJobLogLink(qi) {
 
 function renderWoQueueRow(qi) {
     var statusInfo = formatQueueStatus(qi.status);
-    var actions = '';
+    var actionParts = [];
     var canSelect = isQueuePrintableStatus(qi.status);
     var selector = canSelect
         ? '<input type="checkbox" class="wo-queue-select" data-queue-id="' + qi.queue_id + '" onchange="toggleWoQueueSelection(' + qi.queue_id + ', this.checked)">'
         : '';
     var printArgs = qi.job_id ? (qi.queue_id + ', ' + qi.job_id) : qi.queue_id;
+    var btnSm = 'style="font-size:10px;padding:3px 8px;"';
 
-    if (qi.status === 'queued') {
-        actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Print</button>';
+    if (qi.status === 'queued' || qi.status === 'cancelled') {
+        actionParts.push('<button class="btn btn-green" ' + btnSm +
+            ' onclick="showQueuePrintModal(' + printArgs + ')">Print</button>');
     } else if (qi.status === 'upload_failed' || qi.status === 'start_failed') {
-        actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="retryQueueSession(' + qi.queue_id + ')">' +
-            (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>' +
-            ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>';
+        actionParts.push('<button class="btn btn-green" ' + btnSm +
+            ' onclick="retryQueueSession(' + qi.queue_id + ')">' +
+            (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') +
+            '</button>');
     } else if (qi.status === 'failed') {
-        actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
-            ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>';
+        actionParts.push('<button class="btn btn-green" ' + btnSm +
+            ' onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>');
+    }
+
+    // Cancel is offered on every non-terminal state. For 'printing' it
+    // will stop the printer AND close the production record as cancelled.
+    if (isQueueCancellableStatus(qi.status)) {
+        var cancelLabel = qi.status === 'printing' ? 'Cancel Print' : 'Cancel';
+        actionParts.push('<button class="btn btn-danger" ' + btnSm +
+            ' onclick="cancelQueueItem(' + qi.queue_id + ', \'' +
+            escapeHtml(qi.part_name) + '\')">' + cancelLabel + '</button>');
     }
 
     var qcAction = renderWoQcAction(qi);
     if (qcAction) {
-        actions = actions ? (actions + ' ' + qcAction) : qcAction;
+        actionParts.push(qcAction);
     }
+    var actions = actionParts.join(' ');
 
     var operatorText = qi.operator_initials
         || qi.queue_job_operator_initials || '-';
@@ -448,10 +541,31 @@ function renderWoJobCard(title, job, items, isUnassigned) {
     }
     var meta = metaParts.join(' | ');
 
-    var printButton = '';
+    var jobButtons = [];
     if (printableCount > 0 && !isUnassigned && job.job_id) {
-        printButton = '<button class="btn btn-green" style="font-size:11px;padding:4px 10px;" onclick="printWoJob(' + job.job_id + ')">Print Job</button>';
+        jobButtons.push('<button class="btn btn-green" ' +
+            'style="font-size:11px;padding:4px 10px;" onclick="printWoJob(' +
+            job.job_id + ')">Print Job</button>');
     }
+    if (!isUnassigned && job.job_id) {
+        var cancellableInJob = items.filter(function(qi) {
+            return isQueueCancellableStatus(qi.status);
+        }).length;
+        var retryableInJob = items.filter(function(qi) {
+            return isQueueRetryableStatus(qi.status);
+        }).length;
+        if (retryableInJob > 0) {
+            jobButtons.push('<button class="btn btn-orange" ' +
+                'style="font-size:11px;padding:4px 10px;" onclick="retryWoJob(' +
+                job.job_id + ', ' + retryableInJob + ')">Retry Job</button>');
+        }
+        if (cancellableInJob > 0) {
+            jobButtons.push('<button class="btn btn-danger" ' +
+                'style="font-size:11px;padding:4px 10px;" onclick="cancelWoJob(' +
+                job.job_id + ', ' + cancellableInJob + ')">Cancel Job</button>');
+        }
+    }
+    var printButton = jobButtons.join(' ');
 
     var bodyHtml = '<div class="events-empty" style="padding: 18px 12px;">No parts assigned yet</div>';
     if (items.length) {
@@ -657,11 +771,33 @@ async function viewWorkOrder(woId) {
         var pct = total > 0 ? Math.round(done / total * 100) : 0;
         var statusInfo = formatWoStatus(wo.status);
 
+        var headerButtons = [];
+        var woCancellableCount = (wo.queue_items || []).filter(function(qi) {
+            return isQueueCancellableStatus(qi.status);
+        }).length;
+        var woRetryableCount = (wo.queue_items || []).filter(function(qi) {
+            return isQueueRetryableStatus(qi.status);
+        }).length;
+        if (woRetryableCount > 0) {
+            headerButtons.push('<button class="btn btn-orange" ' +
+                'style="font-size:11px;padding:4px 10px;" onclick="retryWorkOrder(\'' +
+                escapeHtml(wo.wo_id) + '\', ' + woRetryableCount +
+                ')">Re-queue ' + woRetryableCount + '</button>');
+        }
+        if (woCancellableCount > 0 && wo.status !== 'cancelled') {
+            headerButtons.push('<button class="btn btn-danger" ' +
+                'style="font-size:11px;padding:4px 10px;" onclick="cancelWorkOrder(\'' +
+                escapeHtml(wo.wo_id) + '\')">Cancel WO</button>');
+        }
+
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="wo-detail-head">' +
             '<div><h3 style="margin:0;">' + escapeHtml(wo.wo_id) + '</h3>' +
             '<span style="color:var(--text-secondary);font-size:12px;">' + escapeHtml(wo.customer_name) + ' — ' + formatDateTime(wo.created_at) + ' — ' + escapeHtml(String(wo.job_count || (wo.jobs || []).length || 0)) + ' job' + (((wo.job_count || (wo.jobs || []).length || 0) === 1) ? '' : 's') + '</span></div>' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
             '<span class="wo-status ' + statusInfo.cssClass + '" style="font-size:13px;">' + escapeHtml(statusInfo.label) + '</span>' +
+            headerButtons.join(' ') +
+            '</div>' +
             '</div>' +
             '<div class="wo-detail-progress">' +
             '<div class="wo-progress-bar" style="height:8px;flex:1;"><div class="wo-progress-fill" style="width:' + pct + '%"></div></div>' +

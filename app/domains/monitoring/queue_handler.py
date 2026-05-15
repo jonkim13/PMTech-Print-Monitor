@@ -1,6 +1,7 @@
 """Work-order queue side effects for print transitions."""
 
 from app.domains.monitoring.runtime_state import normalize_print_filename
+from app.domains.work_orders.status_sync import ACTIVE_QUEUE_STATUSES
 from app.shared.constants import QueueItemStatus
 
 
@@ -141,6 +142,73 @@ class QueueHandler:
         except Exception as exc:
             print(f"[WORKORDER] Error completing queue item: {exc}")
 
+    def cancel(self, printer_id, state):
+        """Mark the active queue item/job for this printer as cancelled.
+
+        Called from the transition handler when the poller observes a
+        printing->idle transition while a stop-pending flag is set.
+        Idempotent with the service-initiated cancel: if the queue item
+        is already cancelled/completed, ``cancel_queue_items`` is a
+        no-op thanks to its terminal-state filter.
+        """
+        if not self.queue_repository and not self.execution_repository:
+            return
+
+        queue_job_id = self._active_queue_job_ids().pop(printer_id, None)
+        filename = state.get("job", {}).get("filename", "")
+
+        target_queue_ids = []
+        try:
+            if queue_job_id:
+                queue_job = self._get_queue_job(queue_job_id)
+                if queue_job:
+                    target_queue_ids = self._queue_ids_for_queue_job(
+                        queue_job_id
+                    )
+
+            if not target_queue_ids and filename:
+                qj = self._find_printing_queue_job_by_filename(
+                    printer_id, filename
+                )
+                if qj:
+                    target_queue_ids = self._queue_ids_for_queue_job(
+                        qj["queue_job_id"]
+                    )
+
+            if not target_queue_ids and filename:
+                qi = self._find_printing_item_by_filename(
+                    printer_id, filename
+                )
+                if qi:
+                    target_queue_ids = [qi["queue_id"]]
+
+            if not target_queue_ids:
+                return
+
+            affected = self.queue_repository.cancel_queue_items(
+                target_queue_ids
+            )
+            for row in affected:
+                print("[WORKORDER] Queue item #{} cancelled via poller "
+                      "(prior={})".format(
+                          row["queue_id"], row["prior_status"]))
+        except Exception as exc:
+            print("[WORKORDER] cancel-via-poller failed: {}".format(exc))
+
+    def _queue_ids_for_queue_job(self, queue_job_id):
+        """Return queue_item ids attached to a queue_job."""
+        if not self.queue_repository:
+            return []
+        conn = self.queue_repository._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT queue_id FROM queue_items WHERE queue_job_id = ?",
+                (queue_job_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [r[0] for r in rows]
+
     def fail(self, printer_id, state):
         """Auto-fail a queue item when a printer errors or stops."""
         if not self.execution_repository:
@@ -205,7 +273,7 @@ class QueueHandler:
     def _complete_known_queue_job(self, queue_job_id, filename):
         try:
             queue_job = self._get_queue_job(queue_job_id)
-            if self._matches_printing_queue_job(queue_job, filename):
+            if self._matches_active_queue_job(queue_job, filename):
                 if self._complete_queue_job_repo(queue_job_id):
                     print(f"[WORKORDER] Queue job #{queue_job_id} completed")
                     return True
@@ -216,7 +284,7 @@ class QueueHandler:
     def _fail_known_queue_job(self, queue_job_id, filename):
         try:
             queue_job = self._get_queue_job(queue_job_id)
-            if self._matches_printing_queue_job(queue_job, filename):
+            if self._matches_active_queue_job(queue_job, filename):
                 if self._fail_queue_job_repo(queue_job_id):
                     print(f"[WORKORDER] Queue job #{queue_job_id} failed")
                     return True
@@ -225,14 +293,25 @@ class QueueHandler:
         return False
 
     @staticmethod
-    def _matches_printing_queue_job(queue_job, filename):
+    def _matches_active_queue_job(queue_job, filename):
+        """Match any in-flight queue_job for completion routing.
+
+        Widened from the previous strict `status == 'printing'` check to
+        any ACTIVE_QUEUE_STATUSES status. A completion event from the
+        printer's polling loop is only valid when the printer transitioned
+        printing -> idle/finished, so any queue_job for that printer in
+        an active state ('uploading', 'uploaded', 'starting', 'printing')
+        is the rollup target. Terminal states (completed, cancelled,
+        failed, upload_failed, start_failed) are still rejected — those
+        rows are already closed.
+        """
         queued_file = normalize_print_filename(
             queue_job.get("gcode_file") if queue_job else ""
         )
         current_file = normalize_print_filename(filename)
         return (
             queue_job
-            and queue_job.get("status") == QueueItemStatus.PRINTING
+            and queue_job.get("status") in ACTIVE_QUEUE_STATUSES
             and (not queued_file or not current_file
                  or queued_file == current_file)
         )

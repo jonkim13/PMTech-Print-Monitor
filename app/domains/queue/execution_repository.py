@@ -14,7 +14,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
     ACTIVE_QUEUE_STATUSES = status_sync.ACTIVE_QUEUE_STATUSES
     FAILURE_QUEUE_STATUSES = status_sync.FAILURE_QUEUE_STATUSES
     PRINTABLE_QUEUE_STATUSES = ("queued", "failed", "upload_failed",
-                                "start_failed")
+                                "start_failed", "cancelled")
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -295,7 +295,7 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
                     completed_at = NULL
                 WHERE queue_id IN ({})
                   AND status IN ('queued', 'failed', 'upload_failed',
-                                 'start_failed')
+                                 'start_failed', 'cancelled')
             """.format(placeholders),
                                   [work_order_job_id, queue_job_id, printer_id,
                                    printer_name, gcode_file, now]

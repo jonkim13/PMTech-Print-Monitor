@@ -8,7 +8,6 @@ import os
 import time
 
 from flask import Blueprint, jsonify, render_template, request
-from werkzeug.utils import secure_filename
 
 api = Blueprint("api", __name__)
 
@@ -22,23 +21,17 @@ _event_service = None
 _inventory_service = None
 _assignment_service = None
 _ui_config = {}
-_gcode_uploads_dir = None
-_upload_workflow = None
-_execution_service = None
-_ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 
 
 def register_routes(app, farm_manager, filament_db, history_db,
                     drone_controller, assignment_db=None, ui_config=None,
-                    gcode_uploads_dir=None, upload_workflow=None,
-                    execution_service=None, event_service=None,
-                    inventory_service=None, assignment_service=None):
+                    event_service=None, inventory_service=None,
+                    assignment_service=None):
     """Wire up the blueprint with the application's shared objects."""
     global _farm_manager, _filament_db, _history_db, _drone_controller
     global _assignment_db, _event_service, _inventory_service
-    global _assignment_service, _ui_config, _gcode_uploads_dir
-    global _upload_workflow, _execution_service
+    global _assignment_service, _ui_config
     _farm_manager = farm_manager
     _filament_db = filament_db
     _history_db = history_db
@@ -48,44 +41,7 @@ def register_routes(app, farm_manager, filament_db, history_db,
     _inventory_service = inventory_service
     _assignment_service = assignment_service
     _ui_config = ui_config or {}
-    _gcode_uploads_dir = gcode_uploads_dir
-    _execution_service = execution_service or upload_workflow
-    _upload_workflow = _execution_service
     app.register_blueprint(api)
-
-
-def _validate_operator_initials(value):
-    initials = str(value or "").strip()
-    if not initials:
-        raise ValueError("operator_initials is required when starting a print")
-    return initials
-
-
-def _workflow_status_code(result):
-    status_code = result.get("http_status") or result.get("status_code")
-    if status_code is None:
-        status_code = 200 if result.get("ok") or result.get("success") else 500
-    return status_code
-
-
-def _log_route_failure(route_name: str, printer_id: str,
-                       result: dict, status_code: int) -> None:
-    downstream = result.get("downstream_result") or result
-    details = downstream.get("details") or {}
-    downstream_message = (
-        details.get("downstream_message")
-        or result.get("message")
-        or result.get("error")
-    )
-    print("[UPLOAD][ROUTE] {} failure for {}: status_code={} "
-          "error_type={} http_status={} downstream_message={}".format(
-              route_name, printer_id, status_code,
-              result.get("error_type"),
-              result.get("http_status"),
-              downstream_message))
-    print("[UPLOAD][ROUTE] {} structured_result={}".format(
-        route_name, downstream
-    ))
 
 
 # --- Dashboard ---
@@ -124,130 +80,6 @@ def api_printer_files(printer_id):
         return jsonify({"error": "Unknown printer"}), 404
     storage = request.args.get("storage")
     return jsonify(client.get_files(storage=storage))
-
-
-@api.route("/api/printers/<printer_id>/upload", methods=["POST"])
-def api_printer_upload(printer_id):
-    """
-    Upload a G-code file to printer storage and optionally start it after the
-    upload has been verified.
-    """
-    if not _farm_manager.get_printer_client(printer_id):
-        return jsonify({"error": "Unknown printer"}), 404
-    if not _execution_service:
-        return jsonify({"error": "Upload workflow unavailable"}), 500
-
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    uploaded = request.files["file"]
-    if not uploaded.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
-    start_print = request.args.get("print_after", "0") == "1"
-    operator_initials = None
-    if start_print:
-        try:
-            operator_initials = _validate_operator_initials(
-                request.form.get("operator_initials")
-            )
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    filename = secure_filename(uploaded.filename)
-    if not filename:
-        return jsonify({"error": "Invalid filename"}), 400
-
-    ext = os.path.splitext(filename)[1].lower()
-    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
-        return jsonify({"error": "Unsupported extension: {}".format(ext)}), 400
-
-    result = _execution_service.create_and_upload(
-        printer_id=printer_id,
-        uploaded_file=uploaded,
-        original_filename=filename,
-        start_print=start_print,
-        operator_initials=operator_initials,
-    )
-    result["stored_on_server"] = True
-    status_code = _workflow_status_code(result)
-    if status_code >= 500:
-        _log_route_failure("api_printer_upload", printer_id, result,
-                           status_code)
-    return jsonify(result), status_code
-
-
-@api.route("/api/printers/<printer_id>/start-uploaded", methods=["POST"])
-def api_printer_start_uploaded(printer_id):
-    """Start a previously verified upload session without re-uploading it."""
-    if not _farm_manager.get_printer_client(printer_id):
-        return jsonify({"error": "Unknown printer"}), 404
-    if not _execution_service:
-        return jsonify({"error": "Upload workflow unavailable"}), 500
-
-    data = request.get_json() or {}
-    upload_session_id = str(data.get("upload_session_id") or "").strip()
-    if not upload_session_id:
-        return jsonify({"error": "Missing upload_session_id"}), 400
-
-    session = _execution_service.get_upload_session(upload_session_id)
-    if not session or session.get("printer_id") != printer_id:
-        return jsonify({"error": "Upload session not found"}), 404
-
-    try:
-        operator_initials = _validate_operator_initials(
-            data.get("operator_initials") or session.get("operator_initials")
-        )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    result = _execution_service.start_existing_session(
-        upload_session_id, operator_initials=operator_initials
-    )
-    result["stored_on_server"] = True
-    status_code = _workflow_status_code(result)
-    if status_code >= 500:
-        _log_route_failure("api_printer_start_uploaded", printer_id, result,
-                           status_code)
-    return jsonify(result), status_code
-
-
-@api.route("/api/printers/<printer_id>/retry-upload", methods=["POST"])
-def api_printer_retry_upload(printer_id):
-    """Retry an upload session by session id, with optional print start."""
-    if not _farm_manager.get_printer_client(printer_id):
-        return jsonify({"error": "Unknown printer"}), 404
-    if not _execution_service:
-        return jsonify({"error": "Upload workflow unavailable"}), 500
-
-    data = request.get_json() or {}
-    upload_session_id = str(data.get("upload_session_id") or "").strip()
-    if not upload_session_id:
-        return jsonify({"error": "Missing upload_session_id"}), 400
-
-    session = _execution_service.get_upload_session(upload_session_id)
-    if not session or session.get("printer_id") != printer_id:
-        return jsonify({"error": "Upload session not found"}), 404
-
-    start_print = bool(data.get("print_after", False))
-    operator_initials = data.get("operator_initials")
-    if start_print and operator_initials:
-        try:
-            operator_initials = _validate_operator_initials(operator_initials)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    result = _execution_service.retry_session(
-        upload_session_id,
-        start_print=start_print,
-        operator_initials=operator_initials,
-    )
-    result["stored_on_server"] = True
-    status_code = _workflow_status_code(result)
-    if status_code >= 500:
-        _log_route_failure("api_printer_retry_upload", printer_id, result,
-                           status_code)
-    return jsonify(result), status_code
 
 
 def cleanup_old_gcode_uploads(uploads_dir):

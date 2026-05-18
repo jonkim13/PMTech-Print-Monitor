@@ -57,8 +57,6 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         container.drone_controller,
         assignment_db=container.assignment_db,
         ui_config={"poll_interval_ms": container.settings.poll_interval_ms},
-        gcode_uploads_dir=container.settings.gcode_uploads_dir,
-        execution_service=container.execution_service,
         event_service=container.event_service,
         inventory_service=container.inventory_service,
         assignment_service=container.assignment_service,

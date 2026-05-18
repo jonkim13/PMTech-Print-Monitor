@@ -120,7 +120,6 @@ function renderCard(printer) {
             </div>
         </div>
         <div class="card-actions">
-            <button class="btn btn-primary" onclick="showUploadModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Send GCode</button>
             <button class="btn btn-green" onclick="showFilesModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Files</button>
             <button class="btn btn-orange" onclick="showAssignSpoolModal(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))">Assign Spool</button>
             <button class="btn btn-danger" onclick="stopPrint(decodeURIComponent('${pidEnc}'), decodeURIComponent('${nameEnc}'))" ${isPrinting ? '' : 'disabled'}>Stop Print</button>

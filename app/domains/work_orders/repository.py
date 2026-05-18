@@ -219,49 +219,6 @@ class WorkOrderRepository:
         conn.close()
         return [dict(r) for r in rows]
 
-    def update_work_order_status(self, wo_id: str,
-                                 status: str) -> bool:
-        conn = self._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        completed_at = now if status in ("completed", "cancelled") else None
-
-        cursor = conn.execute("""
-            UPDATE work_orders
-            SET status = ?, completed_at = COALESCE(?, completed_at)
-            WHERE wo_id = ?
-        """, (status, completed_at, wo_id))
-        conn.commit()
-        changed = cursor.rowcount > 0
-        conn.close()
-        return changed
-
-    def cancel_work_order(self, wo_id: str) -> bool:
-        conn = self._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-
-        conn.execute("""
-            UPDATE queue_items
-            SET status = 'cancelled', completed_at = ?
-            WHERE wo_id = ?
-              AND status IN ('queued', 'uploading', 'uploaded', 'starting')
-        """, (now, wo_id))
-
-        cursor = conn.execute("""
-            UPDATE work_orders
-            SET status = 'cancelled', completed_at = ?
-            WHERE wo_id = ?
-        """, (now, wo_id))
-        conn.execute("""
-            UPDATE jobs
-            SET status = 'cancelled',
-                completed_at = ?
-            WHERE wo_id = ?
-        """, (now, wo_id))
-        conn.commit()
-        changed = cursor.rowcount > 0
-        conn.close()
-        return changed
-
     def work_order_exists(self, conn, wo_id: str) -> bool:
         row = conn.execute(
             "SELECT 1 FROM work_orders WHERE wo_id = ?",

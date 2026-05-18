@@ -32,7 +32,9 @@ async function loadProductionJobs() {
                 : j.status === 'stopped' ? 'badge-offline'
                 : 'badge-printing';
             const outcomeClass = j.outcome === 'pass' ? 'outcome-pass'
-                : j.outcome === 'fail' ? 'outcome-fail' : 'outcome-unknown';
+                : j.outcome === 'fail' ? 'outcome-fail'
+                : j.outcome === 'cancelled' ? 'outcome-cancelled'
+                : 'outcome-unknown';
 
             return `<tr class="prod-row" onclick="showJobDetail(${j.job_id})">
                 <td>${j.job_id}</td>

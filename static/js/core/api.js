@@ -48,3 +48,7 @@ async function apiPostForm(url, formData) {
 async function apiGet(url) {
     return apiFetch(url);
 }
+
+async function apiDelete(url) {
+    return apiFetch(url, { method: 'DELETE' });
+}

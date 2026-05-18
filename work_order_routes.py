@@ -327,11 +327,54 @@ def api_update_work_order(wo_id):
 
 @work_order_api.route("/api/workorders/<wo_id>", methods=["DELETE"])
 def api_delete_work_order(wo_id):
-    """Cancel a work order."""
-    success = _work_order_service.cancel_work_order(wo_id)
-    if success:
-        return jsonify({"success": True})
-    return jsonify({"error": "Work order not found"}), 404
+    """Cancel every non-terminal item in a work order."""
+    result = _work_order_service.cancel_work_order(wo_id)
+    if not result.get("found"):
+        return jsonify({"error": "Work order not found"}), 404
+    return jsonify({
+        "success": True,
+        "cancelled_count": result["cancelled_count"],
+        "printing_count": result["printing_count"],
+    })
+
+
+@work_order_api.route("/api/workorders/<wo_id>/retry", methods=["POST"])
+def api_retry_work_order(wo_id):
+    """Requeue every cancelled/failed item in a work order."""
+    result = _work_order_service.retry_work_order(wo_id)
+    if not result.get("found"):
+        return jsonify({"error": "Work order not found"}), 404
+    return jsonify({
+        "success": True,
+        "requeued_count": result["requeued_count"],
+    })
+
+
+@work_order_api.route("/api/workorders/<wo_id>/jobs/<int:job_id>",
+                      methods=["DELETE"])
+def api_cancel_work_order_job(wo_id, job_id):
+    """Cancel every non-terminal item belonging to one job."""
+    result = _work_order_service.cancel_job(job_id)
+    if not result.get("found"):
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify({
+        "success": True,
+        "cancelled_count": result["cancelled_count"],
+        "printing_count": result["printing_count"],
+    })
+
+
+@work_order_api.route("/api/workorders/<wo_id>/jobs/<int:job_id>/retry",
+                      methods=["POST"])
+def api_retry_work_order_job(wo_id, job_id):
+    """Requeue every cancelled/failed item belonging to one job."""
+    result = _work_order_service.retry_job(job_id)
+    if not result.get("found"):
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify({
+        "success": True,
+        "requeued_count": result["requeued_count"],
+    })
 
 
 # ------------------------------------------------------------------
@@ -355,15 +398,30 @@ def api_queue_stats():
 
 @work_order_api.route("/api/queue/<int:queue_id>", methods=["PATCH"])
 def api_update_queue_item(queue_id):
-    """Update a queue item status."""
+    """Update a queue item status (queued/completed/failed/cancelled)."""
     data = request.get_json()
     if not data or "status" not in data:
         return jsonify({"error": "Missing status"}), 400
 
     new_status = data["status"]
     if new_status == "queued":
-        success = _queue_service.requeue_item(queue_id)
-    elif new_status == "completed":
+        result = _queue_service.retry_queue_item(queue_id)
+        if not result.get("found"):
+            return jsonify({"error": "Queue item not found"}), 404
+        return jsonify({
+            "success": True,
+            "requeued_count": result["requeued_count"],
+        })
+    if new_status == "cancelled":
+        result = _queue_service.cancel_queue_item(queue_id)
+        if not result.get("found"):
+            return jsonify({"error": "Queue item not found"}), 404
+        return jsonify({
+            "success": True,
+            "cancelled_count": result["cancelled_count"],
+            "printing_count": result["printing_count"],
+        })
+    if new_status == "completed":
         success = _queue_service.complete_queue_item(queue_id)
     elif new_status == "failed":
         success = _queue_service.fail_queue_item(queue_id)
@@ -392,81 +450,20 @@ def api_print_queue_items():
     return _print_queue_items(queue_ids)
 
 
-@work_order_api.route("/api/queue/<int:queue_id>/cancel-print",
-                      methods=["POST"])
-def api_cancel_queue_print(queue_id):
-    """Cancel an in-flight print for a queue item and requeue its parts."""
-    item = _queue_service.get_queue_item(queue_id)
-    if not item:
+@work_order_api.route("/api/queue/<int:queue_id>/cancel", methods=["POST"])
+def api_cancel_queue_item(queue_id):
+    """Cancel a single queue item; stop the printer if it's currently printing.
+
+    Service layer owns the state transition, printer stop, and
+    production-record close so every cancel path behaves the same.
+    """
+    result = _queue_service.cancel_queue_item(queue_id)
+    if not result.get("found"):
         return jsonify({"error": "Queue item not found"}), 404
-    if item.get("status") != "printing":
-        return jsonify({
-            "error": "Queue item is not currently printing (status: {})"
-                     .format(item.get("status", "unknown"))
-        }), 409
-
-    printer_id = item.get("assigned_printer_id")
-    if not printer_id:
-        return jsonify({"error": "No printer is assigned to this item"}), 409
-
-    # Stop the printer first.  Any failure here is non-fatal - the printer
-    # may already be idle or unreachable, and we still need to tear down
-    # the queue / production state.
-    client = _farm_manager.get_printer_client(printer_id)
-    stop_result = None
-    if client:
-        try:
-            stop_result = client.stop_job()
-        except Exception as exc:
-            stop_result = {"success": False, "error": str(exc)}
-            print("[CANCEL] stop_job raised on {}: {}".format(
-                printer_id, exc))
-
-    # Mark stop-pending so the next printing->idle poll transition is
-    # logged as a cancel rather than being treated as a completion (which
-    # would auto-deduct filament and mark the queue job complete).
-    _farm_manager.mark_stop_pending(printer_id)
-
-    # Fail the queue job, requeuing its items so they go back to 'queued'.
-    queue_job_id = item.get("queue_job_id")
-    requeued = False
-    if queue_job_id:
-        try:
-            requeued = _queue_service.execution_repository.fail_queue_job(
-                queue_job_id, requeue_items=True
-            )
-        except Exception as exc:
-            print("[CANCEL] fail_queue_job failed for queue_job_id={}: "
-                  "{}".format(queue_job_id, exc))
-    if not requeued:
-        # Fallback: no queue_job_id recorded, or fail_queue_job reported
-        # no rows - at minimum get this single item back to 'queued'.
-        try:
-            _queue_service.requeue_item(queue_id)
-        except Exception as exc:
-            print("[CANCEL] requeue_item failed for queue_id={}: {}".format(
-                queue_id, exc))
-
-    # Stop the production print_job if one is active for this printer.
-    production_job_id = _farm_manager.get_active_job_id(printer_id)
-    job_repo = getattr(_farm_manager, "job_repository", None)
-    if production_job_id is not None and job_repo is not None:
-        try:
-            job_repo.stop_job(production_job_id)
-        except Exception as exc:
-            print("[CANCEL] production stop_job failed for job_id={}: "
-                  "{}".format(production_job_id, exc))
-
-    # Clear tracked active job / queue job / start time for this printer
-    # so the poller starts clean on its next cycle.
-    _farm_manager.clear_active_job(printer_id)
-
-    print("[CANCEL] Queue id={} (printer={}) cancelled; stop_result={}"
-          .format(queue_id, printer_id, stop_result))
-
     return jsonify({
         "success": True,
-        "message": "Print cancelled and item requeued",
+        "cancelled_count": result["cancelled_count"],
+        "printing_count": result["printing_count"],
         "queue_id": queue_id,
     })
 

@@ -183,6 +183,10 @@ async function submitQueuePrint() {
         }
         loadQueue();
         loadQueueStats();
+        // Always refresh the WO list — the parent WO status rolls up
+        // from queue item transitions and the orders tab can be viewed
+        // without switching away from the detail view first.
+        loadWorkOrders();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     } finally {

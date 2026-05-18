@@ -55,22 +55,33 @@ async function loadQueue() {
 
         body.innerHTML = items.map(function(qi, idx) {
             var statusInfo = formatQueueStatus(qi.status);
-            var actions = '';
+            var btnSm = 'style="font-size:10px;padding:3px 8px;"';
+            var actionParts = [];
 
-            if (qi.status === 'queued') {
-                actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>';
-            } else if (qi.status === 'printing') {
-                actions = '<button class="btn btn-danger" style="font-size:10px;padding:3px 8px;" onclick="cancelQueuePrint(' + qi.queue_id + ')">Cancel Print</button>';
+            if (qi.status === 'queued' || qi.status === 'cancelled') {
+                actionParts.push('<button class="btn btn-green" ' + btnSm +
+                    ' onclick="showQueuePrintModal(' + qi.queue_id + ')">Print</button>');
             } else if (qi.status === 'upload_failed' || qi.status === 'start_failed') {
-                actions = '<button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="retryQueueSession(' + qi.queue_id + ')">' +
-                    (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>' +
-                    ' <button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>';
+                actionParts.push('<button class="btn btn-green" ' + btnSm +
+                    ' onclick="retryQueueSession(' + qi.queue_id + ')">' +
+                    (qi.status === 'start_failed' ? 'Retry Start' : 'Retry Upload') + '</button>');
             } else if (qi.status === 'failed') {
-                actions = '<button class="btn btn-orange" style="font-size:10px;padding:3px 8px;" onclick="requeueItem(' + qi.queue_id + ')">Re-queue</button>' +
-                    ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry Print</button>';
+                actionParts.push('<button class="btn btn-green" ' + btnSm +
+                    ' onclick="showQueuePrintModal(' + qi.queue_id + ')">Retry Print</button>');
             } else if (qi.status === 'completed' && qi.print_job_id) {
-                actions = '<button class="btn" style="font-size:10px;padding:3px 8px;" onclick="showJobDetail(' + qi.print_job_id + ')">View Print Log</button>';
+                actionParts.push('<button class="btn" ' + btnSm +
+                    ' onclick="showJobDetail(' + qi.print_job_id + ')">View Print Log</button>');
             }
+
+            if (isQueueCancellableStatus(qi.status)) {
+                var cancelLabel = qi.status === 'printing'
+                    ? 'Cancel Print' : 'Cancel';
+                actionParts.push('<button class="btn btn-danger" ' + btnSm +
+                    ' onclick="cancelQueueItem(' + qi.queue_id + ', \'' +
+                    escapeHtml(qi.part_name) + '\')">' + cancelLabel +
+                    '</button>');
+            }
+            var actions = actionParts.join(' ');
 
             var printerText = qi.assigned_printer_name || '-';
 
@@ -124,34 +135,7 @@ async function retryQueueSession(queueId) {
     try {
         var result = await apiPost('/api/queue/' + queueId + '/retry', {});
         showToast(result.message || 'Retry sent to printer');
-        if (_woDetailId) {
-            var detailPanel = document.getElementById('woPanel-detail');
-            if (detailPanel && detailPanel.classList.contains('active')) {
-                viewWorkOrder(_woDetailId);
-            }
-        }
-        loadQueue();
-        loadQueueStats();
-    } catch (e) {
-        showToast('Error: ' + e.message, 'error');
-    }
-}
-
-async function cancelQueuePrint(queueId) {
-    if (!confirm('Cancel this print? The printer will be stopped and the item will be requeued.')) {
-        return;
-    }
-    try {
-        var result = await apiPost('/api/queue/' + queueId + '/cancel-print', {});
-        showToast(result.message || 'Print cancelled');
-        if (_woDetailId) {
-            var detailPanel = document.getElementById('woPanel-detail');
-            if (detailPanel && detailPanel.classList.contains('active')) {
-                viewWorkOrder(_woDetailId);
-            }
-        }
-        loadQueue();
-        loadQueueStats();
+        refreshQueueViews();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }
@@ -161,15 +145,22 @@ async function requeueItem(queueId) {
     try {
         await apiPatch('/api/queue/' + queueId, { status: 'queued' });
         showToast('Item re-queued');
-        if (_woDetailId) {
-            var detailPanel = document.getElementById('woPanel-detail');
-            if (detailPanel && detailPanel.classList.contains('active')) {
-                viewWorkOrder(_woDetailId);
-            }
-        }
-        loadQueue();
-        loadQueueStats();
+        refreshQueueViews();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     }
+}
+
+function refreshQueueViews() {
+    if (_woDetailId) {
+        var detailPanel = document.getElementById('woPanel-detail');
+        if (detailPanel && detailPanel.classList.contains('active')) {
+            viewWorkOrder(_woDetailId);
+        }
+    }
+    loadQueue();
+    loadQueueStats();
+    // Keep the WO list in sync — every queue transition potentially
+    // rolls up into a new WO status.
+    loadWorkOrders();
 }

@@ -70,11 +70,24 @@ function isQueueFailureStatus(status) {
 }
 
 function isQueuePrintableStatus(status) {
-    return status === 'queued' || status === 'failed';
+    // 'cancelled' is printable — the UX contract is "cancel, fix the
+    // issue, hit Print again" without an intermediate Re-queue step.
+    return status === 'queued' || status === 'failed' ||
+        status === 'cancelled';
 }
 
 function isQueueRetrySessionStatus(status) {
     return status === 'upload_failed' || status === 'start_failed';
+}
+
+function isQueueCancellableStatus(status) {
+    return ['queued', 'uploading', 'uploaded', 'starting', 'printing',
+            'failed', 'upload_failed', 'start_failed'].indexOf(status) !== -1;
+}
+
+function isQueueRetryableStatus(status) {
+    // Cancelled and failed items can be re-queued.
+    return status === 'cancelled' || isQueueFailureStatus(status);
 }
 
 // ============================================================

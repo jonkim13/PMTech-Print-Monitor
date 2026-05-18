@@ -104,6 +104,31 @@ class TransitionHandler:
         print(f"[EVENT] Print stopped on {printer_name}: "
               f"{state['job']['filename']}")
 
+    def handle_print_cancelled(self, printer_id, printer_name, state, client,
+                               event):
+        """Handle a printer transitioning to idle while a cancel is pending.
+
+        Shares the stop machinery but writes outcome='cancelled' on the
+        production record and marks the queue item cancelled (not
+        failed). Filament is NOT deducted — that's the whole point of
+        this branch vs. ``handle_print_completed``.
+        """
+        event["type"] = "print_cancelled"
+        duration_sec = 0
+        start = self._print_start_times().pop(printer_id, None)
+        if start:
+            duration_sec = int(
+                (datetime.now(timezone.utc) - start).total_seconds()
+            )
+        event["duration_sec"] = duration_sec
+        self._record_transition_event(event, add_pending=True)
+        self.production_handler.cancel(
+            printer_id, state, duration_sec=duration_sec
+        )
+        self.queue_handler.cancel(printer_id, state)
+        print(f"[EVENT] Print cancelled on {printer_name}: "
+              f"{state['job']['filename']}")
+
     # ------------------------------------------------------------------
     # Event Logging
     # ------------------------------------------------------------------

@@ -268,6 +268,76 @@ async function cancelWorkOrder(woId) {
     }
 }
 
+async function cancelWoQueueItem(queueId) {
+    var qi = (_woDetailQueueItems || []).find(function(item) {
+        return item.queue_id === queueId;
+    });
+    if (!qi) {
+        showToast('Part not found', 'error');
+        return;
+    }
+    var msg = 'Cancel part ' + qi.sequence_number + '/' +
+        qi.total_quantity + ' of ' + qi.part_name + '?';
+    if (!confirm(msg)) return;
+
+    try {
+        await apiPost('/api/queue/' + queueId + '/cancel', {});
+        showToast('Part cancelled');
+        loadWorkOrders();
+        loadQueue();
+        loadQueueStats();
+        if (_woDetailId) {
+            viewWorkOrder(_woDetailId);
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function cancelWoJob(jobId) {
+    if (!_woDetailId) return;
+    var msg = 'Cancel job #' + jobId + '? All non-completed parts in this ' +
+        'job will be cancelled.';
+    if (!confirm(msg)) return;
+
+    try {
+        await apiFetch(
+            '/api/workorders/' + encodeURIComponent(_woDetailId) +
+            '/jobs/' + jobId,
+            { method: 'DELETE' }
+        );
+        showToast('Job cancelled');
+        loadWorkOrders();
+        loadQueue();
+        loadQueueStats();
+        viewWorkOrder(_woDetailId);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function cancelWoFromDetail(woId) {
+    var msg = 'Cancel entire work order ' + woId + '? All non-completed ' +
+        'parts will be cancelled.';
+    if (!confirm(msg)) return;
+
+    try {
+        await apiFetch(
+            '/api/workorders/' + encodeURIComponent(woId),
+            { method: 'DELETE' }
+        );
+        showToast('Work order cancelled');
+        loadWorkOrders();
+        loadQueue();
+        loadQueueStats();
+        if (_woDetailId === woId) {
+            viewWorkOrder(woId);
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
 // ============================================================
 // Work Order Detail View
 // ============================================================
@@ -386,6 +456,11 @@ function renderWoQueueRow(qi) {
             ' <button class="btn btn-green" style="font-size:10px;padding:3px 8px;" onclick="showQueuePrintModal(' + printArgs + ')">Retry</button>';
     }
 
+    if (qi.status === 'queued' || isQueueActiveStatus(qi.status)) {
+        var cancelBtn = '<button class="btn btn-danger" style="font-size:10px;padding:3px 8px;" onclick="cancelWoQueueItem(' + qi.queue_id + ')">Cancel Part</button>';
+        actions = actions ? (actions + ' ' + cancelBtn) : cancelBtn;
+    }
+
     var qcAction = renderWoQcAction(qi);
     if (qcAction) {
         actions = actions ? (actions + ' ' + qcAction) : qcAction;
@@ -453,6 +528,12 @@ function renderWoJobCard(title, job, items, isUnassigned) {
         printButton = '<button class="btn btn-green" style="font-size:11px;padding:4px 10px;" onclick="printWoJob(' + job.job_id + ')">Print Job</button>';
     }
 
+    var cancelJobButton = '';
+    if (!isUnassigned && job.job_id &&
+        job.status !== 'completed' && job.status !== 'cancelled') {
+        cancelJobButton = '<button class="btn btn-danger" style="font-size:11px;padding:4px 10px;margin-left:6px;" onclick="cancelWoJob(' + job.job_id + ')">Cancel Job</button>';
+    }
+
     var bodyHtml = '<div class="events-empty" style="padding: 18px 12px;">No parts assigned yet</div>';
     if (items.length) {
         bodyHtml = '<div class="table-container" style="margin-top: 12px;">' +
@@ -491,7 +572,7 @@ function renderWoJobCard(title, job, items, isUnassigned) {
         escapeHtml(job.gcode_file || '-') + ' | Operator: ' +
         escapeHtml(job.operator_initials || '-') + '</div>' +
         '</div>' +
-        '<div>' + printButton + '</div>' +
+        '<div>' + printButton + cancelJobButton + '</div>' +
         '</div>' +
         bodyHtml +
         '</div>';
@@ -657,11 +738,20 @@ async function viewWorkOrder(woId) {
         var pct = total > 0 ? Math.round(done / total * 100) : 0;
         var statusInfo = formatWoStatus(wo.status);
 
+        var woCanCancel = wo.status !== 'completed' &&
+            wo.status !== 'cancelled';
+        var woCancelButton = woCanCancel
+            ? '<button class="btn btn-danger" style="font-size:11px;padding:4px 10px;" onclick="cancelWoFromDetail(\'' + escapeHtml(wo.wo_id) + '\')">Cancel Work Order</button>'
+            : '';
+
         document.getElementById('woDetailHeader').innerHTML =
             '<div class="wo-detail-head">' +
             '<div><h3 style="margin:0;">' + escapeHtml(wo.wo_id) + '</h3>' +
             '<span style="color:var(--text-secondary);font-size:12px;">' + escapeHtml(wo.customer_name) + ' — ' + formatDateTime(wo.created_at) + ' — ' + escapeHtml(String(wo.job_count || (wo.jobs || []).length || 0)) + ' job' + (((wo.job_count || (wo.jobs || []).length || 0) === 1) ? '' : 's') + '</span></div>' +
+            '<div style="display:flex; align-items:center; gap:10px;">' +
             '<span class="wo-status ' + statusInfo.cssClass + '" style="font-size:13px;">' + escapeHtml(statusInfo.label) + '</span>' +
+            woCancelButton +
+            '</div>' +
             '</div>' +
             '<div class="wo-detail-progress">' +
             '<div class="wo-progress-bar" style="height:8px;flex:1;"><div class="wo-progress-fill" style="width:' + pct + '%"></div></div>' +

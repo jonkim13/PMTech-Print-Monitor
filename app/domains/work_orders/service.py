@@ -143,9 +143,3 @@ class WorkOrderService:
 
     def create_job(self, wo_id: str, queue_ids=None) -> dict:
         return self.job_repository.create_job(wo_id, queue_ids=queue_ids)
-
-    def assign_queue_items_to_job(self, wo_id: str,
-                                  job_id: int, queue_ids) -> dict:
-        return self.job_repository.assign_queue_items_to_job(
-            wo_id, job_id, queue_ids
-        )

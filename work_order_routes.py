@@ -307,33 +307,6 @@ def api_create_work_order_job(wo_id):
     }), 201
 
 
-# NOTE: No frontend UI currently calls this endpoint. See
-# WORKORDER_AUDIT.md §BE-15.
-@work_order_api.route("/api/workorders/<wo_id>/jobs/<int:job_id>/assign",
-                      methods=["POST"])
-def api_assign_work_order_job_items(wo_id, job_id):
-    """Assign selected queue items to an existing persisted job."""
-    data = request.get_json()
-    if not data or data.get("queue_ids") is None:
-        return jsonify({"error": "Missing queue_ids"}), 400
-
-    try:
-        queue_ids = _parse_queue_ids(data.get("queue_ids"))
-        job = _work_order_service.assign_queue_items_to_job(
-            wo_id, job_id, queue_ids
-        )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({"error": str(exc)}), 404
-
-    return jsonify({
-        "success": True,
-        "job": job,
-        "assigned_count": len(queue_ids),
-    })
-
-
 @work_order_api.route("/api/workorders/<wo_id>", methods=["PATCH"])
 def api_update_work_order(wo_id):
     """Update work order status. Body: {"status": "cancelled"}"""

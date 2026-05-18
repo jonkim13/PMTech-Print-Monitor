@@ -20,7 +20,6 @@ class FilamentInventoryDB:
         "PPSU": "PSU", "FR PC-ABS": "FPA",
         "ULTEM 1010": "U10", "ULTEM 9085": "U85", "TPU": "TPU", "SEBS": "SEB",
     }
-    DEPRECATED_CREATION_MATERIALS = frozenset()
     ALLOWED_SUPPLIERS = (
         "Prusa Research",
         "3DXTech",
@@ -182,10 +181,7 @@ class FilamentInventoryDB:
         return materials + extra_materials
 
     def get_creation_materials_list(self) -> list:
-        return [
-            material for material in self.MATERIALS
-            if material not in self.DEPRECATED_CREATION_MATERIALS
-        ]
+        return list(self.MATERIALS.keys())
 
     def get_brands_list(self) -> list:
         conn = self._get_conn()

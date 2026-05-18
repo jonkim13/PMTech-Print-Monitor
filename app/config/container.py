@@ -164,9 +164,16 @@ def build_container(settings: AppSettings = None) -> AppContainer:
             return f"{name} ({printer_id})"
         return name if name else printer_id
 
+    def _resolve_tool_count(printer_id):
+        printer_data = (farm_manager.printers or {}).get(printer_id, {})
+        client = printer_data.get("client")
+        model = getattr(client, "model", "") if client else ""
+        return 5 if model == "xl" else 1
+
     assignment_service = AssignmentService(
         assignment_db, filament_db,
         printer_name_resolver=_resolve_printer_name,
+        tool_count_resolver=_resolve_tool_count,
     )
     drone_controller = DroneController()
     execution_service = ExecutionService(

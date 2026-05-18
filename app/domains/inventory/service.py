@@ -127,9 +127,4 @@ class InventoryService:
         material = str(material or "").strip()
         if not material:
             raise ValueError("material is required")
-        if material in self.repository.DEPRECATED_CREATION_MATERIALS:
-            raise ValueError(
-                f"Material '{material}' is deprecated and cannot be used "
-                f"for new or updated filament entries"
-            )
         return material

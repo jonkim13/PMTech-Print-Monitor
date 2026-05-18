@@ -28,3 +28,11 @@ REFACTOR_PLAN.md
 data/*.db
 data/*.db.bak
 WORKORDER_AUDIT.md
+
+# Local-only audit and notes
+docs/
+smoke-test-*.md
+
+# SQLite WAL sidecars
+data/*.db-shm
+data/*.db-wal

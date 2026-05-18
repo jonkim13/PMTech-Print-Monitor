@@ -253,8 +253,7 @@ class JobRepository:
             self.sync_job_status(conn, prior_job_id)
         self.sync_job_status(conn, job_id)
 
-    def _validate_job_assignment(self, conn, wo_id: str,
-                                 queue_ids, job_id: int = None) -> list:
+    def _validate_job_assignment(self, conn, wo_id: str, queue_ids) -> list:
         queue_ids = self._normalize_queue_ids(queue_ids)
         if not queue_ids:
             raise ValueError("At least one part must be selected")
@@ -272,15 +271,6 @@ class JobRepository:
             raise ValueError(
                 "Only queued or failed parts can be assigned to a job"
             )
-
-        if job_id is not None:
-            job = conn.execute("""
-                SELECT job_id
-                FROM jobs
-                WHERE job_id = ? AND wo_id = ?
-            """, (job_id, wo_id)).fetchone()
-            if not job:
-                raise LookupError("Job not found")
 
         return items
 
@@ -301,23 +291,6 @@ class JobRepository:
             if items:
                 self._move_queue_items_to_job(conn, job_id, items)
 
-            conn.commit()
-            return self._get_job_summary(conn, job_id)
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def assign_queue_items_to_job(self, wo_id: str,
-                                  job_id: int,
-                                  queue_ids) -> dict:
-        conn = self._get_conn()
-        try:
-            items = self._validate_job_assignment(
-                conn, wo_id, queue_ids, job_id=job_id
-            )
-            self._move_queue_items_to_job(conn, job_id, items)
             conn.commit()
             return self._get_job_summary(conn, job_id)
         except Exception:

@@ -27,7 +27,7 @@ class AssignmentService:
     """Encapsulates assignment business rules extracted from route handlers."""
 
     def __init__(self, assignment_repository, inventory_repository,
-                 printer_name_resolver=None):
+                 printer_name_resolver=None, tool_count_resolver=None):
         """
         Args:
             assignment_repository: FilamentAssignmentDB instance.
@@ -35,10 +35,14 @@ class AssignmentService:
                 existence checks and dried-date updates).
             printer_name_resolver: Optional callable(printer_id) -> str
                 returning a human-readable label for conflict messages.
+            tool_count_resolver: Optional callable(printer_id) -> int
+                returning the number of tool heads for the printer.
+                Defaults to 1 (single-tool).
         """
         self.assignment_repo = assignment_repository
         self.inventory_repo = inventory_repository
         self._resolve_printer_name = printer_name_resolver or (lambda pid: pid)
+        self._resolve_tool_count = tool_count_resolver or (lambda pid: 1)
 
     # ------------------------------------------------------------------
     # Reads
@@ -78,8 +82,13 @@ class AssignmentService:
 
         was_dried = _coerce_optional_bool(data.get("was_dried"), "was_dried")
 
-        # TODO: validate tool_index against printer tool count
         tool_index = int(data.get("tool_index", 0))
+        tool_count = self._resolve_tool_count(printer_id)
+        if tool_index < 0 or tool_index >= tool_count:
+            raise ValueError(
+                f"tool_index {tool_index} out of range for printer "
+                f"{printer_id} (max {tool_count - 1})"
+            )
 
         # Check for conflicts — spool already assigned elsewhere
         existing_assignments = self.assignment_repo.get_spool_assignments(

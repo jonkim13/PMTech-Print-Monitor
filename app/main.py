@@ -12,6 +12,7 @@ from work_order_routes import register_work_order_routes
 from .config.container import AppContainer, build_container
 from .config.settings import AppSettings, load_settings
 from .domains.reports.routes import register_reports_routes
+from .shared.migrations.runner import MigrationRunner
 
 _runtime_lock = threading.Lock()
 _runtime_container = None
@@ -27,6 +28,9 @@ def _get_runtime_container(settings: AppSettings = None) -> AppContainer:
             active_settings = settings or load_settings()
             active_settings.ensure_runtime_dirs()
             cleanup_old_gcode_uploads(active_settings.gcode_uploads_dir)
+            MigrationRunner(
+                active_settings.work_order_db_path
+            ).ensure_schema_version_table()
             _runtime_container = build_container(active_settings)
         return _runtime_container
 

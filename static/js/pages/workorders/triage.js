@@ -108,6 +108,9 @@ function renderLane(lane) {
     if (countEl) countEl.textContent = lane.count || 0;
     if (!bodyEl) return;
 
+    // Preserve operator scroll position across the 2.5s poll re-render.
+    var prevScrollTop = bodyEl.scrollTop;
+
     if (!lane.items || lane.items.length === 0) {
         var msg = bodyEl.dataset.laneEmptyMessage || 'Nothing here yet';
         bodyEl.innerHTML = '<div class="lane-empty">' + escapeHtml(msg) + '</div>';
@@ -117,6 +120,7 @@ function renderLane(lane) {
     bodyEl.innerHTML = lane.items.map(function (item) {
         return renderLaneCard(item, lane.kind);
     }).join('');
+    bodyEl.scrollTop = prevScrollTop;
 }
 
 function renderLaneCard(item, laneKind) {
@@ -258,7 +262,10 @@ function renderActiveParts(parts) {
         body.innerHTML = '<div class="active-parts-empty">No active parts</div>';
         return;
     }
+    // Preserve scroll position across poll re-renders.
+    var prevScrollTop = body.scrollTop;
     body.innerHTML = parts.map(renderActivePartsRow).join('');
+    body.scrollTop = prevScrollTop;
 }
 
 function renderActivePartsRow(p) {

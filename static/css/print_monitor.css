@@ -681,6 +681,19 @@ h1, h2, h3, h4 { margin: 0; }
   display: flex; flex-direction: column;
   min-height: 220px;
   min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+/* Soft fade at the lane bottom signals "more below" when the body scrolls.
+   Stays visible even on short lanes — accepted tradeoff in 2.5b. */
+:where(#page-workorders-triage) .lane::after {
+  content: "";
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 24px;
+  background: linear-gradient(to top, var(--card-2), transparent);
+  pointer-events: none;
+  border-radius: 0 0 12px 12px;
 }
 :where(#page-workorders-triage) .lane-head {
   padding: 12px 14px;
@@ -708,10 +721,22 @@ h1, h2, h3, h4 { margin: 0; }
 :where(#page-workorders-triage) .lane.lane-external_spool .lane-count{ background: rgba(251,191,36,.16); color: var(--warn); }
 
 :where(#page-workorders-triage) .lane-body {
-  padding: 10px;
+  padding: 10px 4px 10px 10px;
   display: flex; flex-direction: column; gap: 8px;
   flex: 1;
   min-width: 0;
+  /* Cap height so one long lane (54 stopped-and-failed items on the Pi)
+     doesn't push everything below the fold. Each lane scrolls internally. */
+  max-height: min(520px, calc(100vh - 360px));
+  overflow-y: auto;
+}
+:where(#page-workorders-triage) .lane-body::-webkit-scrollbar { width: 6px; }
+:where(#page-workorders-triage) .lane-body::-webkit-scrollbar-track { background: transparent; }
+:where(#page-workorders-triage) .lane-body::-webkit-scrollbar-thumb {
+  background: var(--border-2); border-radius: 3px;
+}
+:where(#page-workorders-triage) .lane-body::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-4);
 }
 :where(#page-workorders-triage) .lane-empty {
   color: var(--fg-3);
@@ -770,6 +795,18 @@ h1, h2, h3, h4 { margin: 0; }
 }
 :where(#page-workorders-triage) .active-parts-card {
   overflow: hidden;
+}
+:where(#page-workorders-triage) #activePartsBody {
+  max-height: 360px;
+  overflow-y: auto;
+}
+:where(#page-workorders-triage) #activePartsBody::-webkit-scrollbar { width: 6px; }
+:where(#page-workorders-triage) #activePartsBody::-webkit-scrollbar-track { background: transparent; }
+:where(#page-workorders-triage) #activePartsBody::-webkit-scrollbar-thumb {
+  background: var(--border-2); border-radius: 3px;
+}
+:where(#page-workorders-triage) #activePartsBody::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-4);
 }
 :where(#page-workorders-triage) .active-parts-grid {
   display: grid;

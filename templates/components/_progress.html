@@ -1,0 +1,11 @@
+{# Progress bar with percent + optional ETA. percent ∈ 0.0–1.0. #}
+{% macro progress(percent, eta=None, large=False) -%}
+{%- set _p = ((percent * 100)|round(0, 'floor'))|int if percent else 0 -%}
+<div>
+    <div class="bar{% if large %} lg{% endif %}"><i style="width:{{ _p }}%;"></i></div>
+    <div class="progress-meta">
+        <span class="progress-pct">{{ _p }}%</span>
+        {% if eta %}<span class="progress-eta">{{ eta }}</span>{% endif %}
+    </div>
+</div>
+{%- endmacro %}

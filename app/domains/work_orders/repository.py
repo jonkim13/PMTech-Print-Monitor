@@ -49,7 +49,8 @@ class WorkOrderRepository:
                 customer_name TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
-                completed_at TEXT
+                completed_at TEXT,
+                due_date TEXT
             );
 
             CREATE TABLE IF NOT EXISTS line_items (
@@ -65,6 +66,10 @@ class WorkOrderRepository:
             CREATE INDEX IF NOT EXISTS idx_wo_status
                 ON work_orders(status);
         """)
+        # Migration 003 mirror: add due_date if running against a DB that
+        # predates the migration. Keeps fresh installs and legacy installs
+        # converged without requiring the operator to run 003 first.
+        self._add_column_if_missing(conn, "work_orders", "due_date", "TEXT")
         conn.commit()
         conn.close()
 
@@ -108,16 +113,18 @@ class WorkOrderRepository:
     # ------------------------------------------------------------------
 
     def create_work_order(self, customer_name: str,
-                          line_items: List[dict]) -> dict:
+                          line_items: List[dict],
+                          due_date: Optional[str] = None) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
 
         wo_id = self._next_wo_id(conn)
 
         conn.execute("""
-            INSERT INTO work_orders (wo_id, customer_name, created_at, status)
-            VALUES (?, ?, ?, 'open')
-        """, (wo_id, customer_name, now))
+            INSERT INTO work_orders
+                (wo_id, customer_name, created_at, status, due_date)
+            VALUES (?, ?, ?, 'open', ?)
+        """, (wo_id, customer_name, now, due_date))
 
         parts_created = 0
         for li in line_items:
@@ -150,6 +157,7 @@ class WorkOrderRepository:
             "customer_name": customer_name,
             "status": "open",
             "created_at": now,
+            "due_date": due_date,
             "parts_created": parts_created,
             "line_item_count": len(line_items),
         }
@@ -225,6 +233,26 @@ class WorkOrderRepository:
             (wo_id,)
         ).fetchone()
         return row is not None
+
+    def count_late_work_orders(self, today_iso: str) -> int:
+        """Count WOs past their due_date that are still open.
+
+        ``today_iso`` is an ISO date string (YYYY-MM-DD). A WO counts as
+        late when ``due_date`` is set, lexicographically less than
+        ``today_iso``, and its status is not a terminal one.
+        """
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM work_orders "
+                "WHERE due_date IS NOT NULL "
+                "AND due_date < ? "
+                "AND status NOT IN ('completed', 'cancelled')",
+                (today_iso,)
+            ).fetchone()
+            return int(row["n"] or 0)
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Job summary helpers (used by get_work_order)

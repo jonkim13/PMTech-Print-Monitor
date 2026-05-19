@@ -1,0 +1,13 @@
+{# One row of the Live activity panel.
+   event = { ts, color, what, who?, where? } #}
+{% macro event_row(event) -%}
+<div class="event">
+    <span class="ts">{{ event.ts }}</span>
+    <span class="pulse" style="background:var(--{{ event.color or 'neutral' }});"></span>
+    <span>
+        <span class="what">{{ event.what }}</span>
+        {% if event.who %}<span class="muted">&middot; by {{ event.who }}</span>{% endif %}
+    </span>
+    {% if event.where %}<span class="where">{{ event.where }}</span>{% endif %}
+</div>
+{%- endmacro %}

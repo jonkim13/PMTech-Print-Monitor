@@ -1,0 +1,16 @@
+<!-- ===== STOP PRINT CONFIRM MODAL ===== -->
+<div class="modal-overlay" id="stopPrintConfirmModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="stopPrintConfirmTitle">Stop print?</h3>
+            <button class="modal-close" onclick="hideModal('stopPrintConfirmModal')" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>This sends a stop command to the printer. The in-flight part will be cancelled. You'll be able to re-queue or cancel it from the part row.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn ghost" onclick="hideModal('stopPrintConfirmModal')">Cancel</button>
+            <button class="btn danger" id="stopPrintConfirmBtn">Stop print</button>
+        </div>
+    </div>
+</div>

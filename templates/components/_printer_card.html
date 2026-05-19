@@ -1,0 +1,91 @@
+{# Printer card. p is the projected printer dict per /api/dashboard.
+   Fields: id, name, status, model, part, wo, part_seq, progress,
+           eta_text, nozzle: {cur,tgt}, bed: {cur,tgt},
+           spools: [{slot, material, color, color_name, percent}],
+           attention, last_print_relative.
+   Status branches: printing | error | idle | offline | finished. #}
+{% from "components/_status_pill.html" import status_pill %}
+{% from "components/_spool_pill.html" import spool_pill %}
+{% from "components/_progress.html" import progress %}
+{% from "components/_temp.html" import temp %}
+{% macro printer_card(p) -%}
+{%- set _is_printing = p.status == 'printing' -%}
+{%- set _is_error = p.status == 'error' -%}
+{%- set _accent = 's-printing' if _is_printing else ('s-error' if _is_error else ('s-finished' if p.status == 'finished' else ('s-offline' if p.status == 'offline' else 's-idle'))) -%}
+<div class="card pc {{ _accent }}" data-printer-id="{{ p.id }}">
+    <div class="pc-accent"></div>
+
+    {# Header #}
+    <div class="pc-head">
+        <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <h3>{{ p.name }}</h3>
+                {{ status_pill(p.status) }}
+            </div>
+            {% if p.part %}
+            <div class="pc-job">
+                Printing <span class="pc-job-part">{{ p.part }}</span>
+                {% if p.part_seq %}<span class="muted">&middot; {{ p.part_seq }}</span>{% endif %}
+                {% if p.wo %}<span style="margin-left:8px;"><span class="tag info">{{ p.wo }}</span></span>{% endif %}
+            </div>
+            {% elif p.status == 'idle' %}
+            <div class="pc-job muted">Ready{% if p.last_print_relative %} &middot; last print {{ p.last_print_relative }} ago{% endif %}</div>
+            {% elif p.status == 'offline' %}
+            <div class="pc-job muted">Offline</div>
+            {% else %}
+            <div class="pc-job muted">No active print</div>
+            {% endif %}
+        </div>
+    </div>
+
+    {# Job context: progress / error banner #}
+    {% if _is_printing %}
+    <div class="pc-progress">{{ progress(p.progress or 0, p.eta_text, large=True) }}</div>
+    {% elif _is_error %}
+    <div class="pc-error-banner">
+        <div class="err-box">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M6 1l5.2 9H.8z"/></svg>
+            <div>
+                <div class="err-title">{{ p.error_title or 'Printer error' }}</div>
+                {% if p.error_sub %}<div class="err-sub">{{ p.error_sub }}</div>{% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Spools + temps #}
+    <div class="pc-spools-row">
+        <div class="pc-spools-list">
+            {% if p.spools %}
+                {% for s in p.spools %}
+                    {{ spool_pill(s.slot, s.material, color=s.color, color_name=s.color_name, percent=s.percent or 0) }}
+                {% endfor %}
+            {% else %}
+                <span class="muted" style="font-size:11px;">No spool assigned</span>
+            {% endif %}
+        </div>
+        <div class="pc-temps">
+            {{ temp('Noz', (p.nozzle.cur if p.nozzle else 0), (p.nozzle.tgt if p.nozzle else 0)) }}
+            {{ temp('Bed', (p.bed.cur if p.bed else 0), (p.bed.tgt if p.bed else 0)) }}
+        </div>
+    </div>
+
+    {# Actions #}
+    <div class="pc-actions">
+        <button class="btn" onclick="showFilesModal('{{ p.id }}', '{{ p.name|e }}')">Files</button>
+        <button class="btn" onclick="showAssignSpoolModal('{{ p.id }}', '{{ p.name|e }}')">Assign spool</button>
+        <div class="pc-spacer"></div>
+        {% if _is_printing %}
+        <button class="btn danger" onclick="stopPrint('{{ p.id }}', '{{ p.name|e }}')">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="6" height="6"/></svg>
+            Stop
+        </button>
+        {% else %}
+        <button class="btn ghost" disabled>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="6" height="6"/></svg>
+            Stop
+        </button>
+        {% endif %}
+    </div>
+</div>
+{%- endmacro %}

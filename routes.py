@@ -20,6 +20,7 @@ _assignment_db = None
 _event_service = None
 _inventory_service = None
 _assignment_service = None
+_dashboard_service = None
 _ui_config = {}
 _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 
@@ -27,11 +28,11 @@ _GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
 def register_routes(app, farm_manager, filament_db, history_db,
                     drone_controller, assignment_db=None, ui_config=None,
                     event_service=None, inventory_service=None,
-                    assignment_service=None):
+                    assignment_service=None, dashboard_service=None):
     """Wire up the blueprint with the application's shared objects."""
     global _farm_manager, _filament_db, _history_db, _drone_controller
     global _assignment_db, _event_service, _inventory_service
-    global _assignment_service, _ui_config
+    global _assignment_service, _dashboard_service, _ui_config
     _farm_manager = farm_manager
     _filament_db = filament_db
     _history_db = history_db
@@ -40,6 +41,7 @@ def register_routes(app, farm_manager, filament_db, history_db,
     _event_service = event_service
     _inventory_service = inventory_service
     _assignment_service = assignment_service
+    _dashboard_service = dashboard_service
     _ui_config = ui_config or {}
     app.register_blueprint(api)
 
@@ -51,8 +53,20 @@ def dashboard():
     return render_template(
         "dashboard.html",
         allowed_suppliers=_filament_db.ALLOWED_SUPPLIERS,
-        poll_interval_ms=int(_ui_config.get("poll_interval_ms", 3000)),
+        poll_interval_ms=int(_ui_config.get("poll_interval_ms", 5000)),
     )
+
+
+@api.route("/api/dashboard")
+def api_dashboard():
+    """Aggregated payload for the Phase 2.5a dashboard.
+
+    Composes printer state, fleet stats, attention items, and recent
+    events into the field shape the dashboard poll JS expects.
+    """
+    if _dashboard_service is None:
+        return jsonify({"error": "Dashboard service not configured"}), 500
+    return jsonify(_dashboard_service.get_dashboard_payload())
 
 
 # --- Printer API ---

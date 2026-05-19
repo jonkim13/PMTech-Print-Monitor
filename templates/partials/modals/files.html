@@ -1,12 +1,17 @@
 <!-- ===== FILES MODAL ===== -->
 <div class="modal-overlay" id="filesModal">
     <div class="modal">
-        <h2>Printer Files: <span id="filesModalTitle"></span></h2>
-        <div class="files-list" id="filesList">
-            <div class="events-empty">Loading files...</div>
+        <div class="modal-header">
+            <h3>Printer files: <span id="filesModalTitle"></span></h3>
+            <button class="modal-close" onclick="hideModal('filesModal')" aria-label="Close">&times;</button>
         </div>
-        <div class="modal-actions">
-            <button type="button" class="btn" onclick="hideModal('filesModal')">Close</button>
+        <div class="modal-body">
+            <div class="files-list" id="filesList">
+                <div class="muted" style="font-size: 12px; text-align: center; padding: 18px;">Loading files...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('filesModal')">Close</button>
         </div>
     </div>
 </div>

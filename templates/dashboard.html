@@ -6,18 +6,20 @@
 {% include "partials/sidebar.html" %}
 
     <!-- ===== MAIN ===== -->
-    <main class="main-content">
+    <main class="main">
 
 {% include "partials/topbar.html" %}
 
+        <div class="content">
+
 {% include "partials/pages/dashboard.html" %}
-{% include "partials/pages/drone.html" %}
 {% include "partials/pages/inventory.html" %}
 {% include "partials/pages/production.html" %}
 {% include "partials/pages/workorders.html" %}
 {% include "partials/pages/history.html" %}
 {% include "partials/pages/weekly_log.html" %}
 
+        </div>
     </main>
 </div>
 
@@ -30,4 +32,5 @@
 {% include "partials/modals/maintenance.html" %}
 {% include "partials/modals/queue_print.html" %}
 {% include "partials/modals/wo_qc.html" %}
+{% include "partials/modals/stop_print_confirm.html" %}
 {% endblock %}

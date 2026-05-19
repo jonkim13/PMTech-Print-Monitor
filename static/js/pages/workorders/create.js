@@ -96,11 +96,17 @@ async function submitCreateWorkOrder() {
         return;
     }
 
+    var dueDateEl = document.getElementById('woDueDate');
+    var dueDate = dueDateEl ? (dueDateEl.value || '').trim() : '';
+
+    var payload = {
+        customer_name: customer,
+        line_items: lineItems
+    };
+    if (dueDate) payload.due_date = dueDate;
+
     try {
-        var result = await apiPost('/api/workorders', {
-            customer_name: customer,
-            line_items: lineItems
-        });
+        var result = await apiPost('/api/workorders', payload);
 
         if (result.wo_id) {
             var partsCreated = result.parts_created;
@@ -115,6 +121,7 @@ async function submitCreateWorkOrder() {
             showToast(msg);
             // Reset form
             document.getElementById('woCustomerName').value = '';
+            if (dueDateEl) dueDateEl.value = '';
             document.getElementById('woLineItems').innerHTML = '';
             _woLineItemCounter = 0;
             addWoLineItem();

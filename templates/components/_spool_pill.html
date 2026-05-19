@@ -1,0 +1,17 @@
+{# Tool-slot pill: swatch + slot label + material + gauge + percent.
+   percent is 0.0–1.0. If material is empty/None, renders the empty variant. #}
+{% macro spool_pill(slot, material, color=None, color_name=None, percent=0, grams_left=None, dense=False) -%}
+{%- set _tone = 'empty' if percent <= 0.05 else ('low' if percent < 0.25 else 'ok') -%}
+{%- set _has_mat = material and material|string|length > 0 -%}
+<div class="tool{% if not _has_mat %} empty{% endif %}"{% if dense %} style="padding:2px 5px;"{% endif %}>
+    <span class="swatch"{% if color %} style="background:{{ color }};"{% endif %}></span>
+    <span style="font-weight:600;color:var(--fg-2);">{{ slot }}</span>
+    <span class="label">{% if _has_mat %}{{ material }}{% if color_name %} {{ color_name }}{% endif %}{% else %}empty{% endif %}</span>
+    {% if _has_mat and not dense %}
+    <span style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;">
+        <span class="gauge" style="width:28px;"><i class="{{ _tone }}" style="width:{{ ((percent * 100)|round(0, 'floor'))|int if percent > 0 else 0 }}%;"></i></span>
+        <span class="mono tab" style="font-size:9px;color:var(--fg-3);">{{ ((percent * 100)|round(0, 'floor'))|int }}%</span>
+    </span>
+    {% endif %}
+</div>
+{%- endmacro %}

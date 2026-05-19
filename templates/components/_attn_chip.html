@@ -1,0 +1,8 @@
+{# Compact attention chip used inside cards.
+   tone ∈ err | warn | info | ok | busy | neutral. #}
+{% macro attn_chip(label, tone='warn', icon=None) -%}
+<span class="st st-{{ {'err':'failed','warn':'queued','info':'printing','ok':'done','busy':'busy','neutral':'idle'}[tone] }}">
+    {% if icon %}<i class="sym sym-{{ icon }}"></i>{% endif %}
+    <span>{{ label }}</span>
+</span>
+{%- endmacro %}

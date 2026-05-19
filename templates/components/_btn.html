@@ -1,0 +1,6 @@
+{# Reusable button macro.
+   variant ∈ '' (default) | 'primary' | 'go' | 'warn' | 'danger' | 'ghost'.
+   size ∈ '' | 'sm'. #}
+{% macro btn(label, variant='', onclick='', disabled=False, size='', id=None, type='button', extra='') -%}
+<button type="{{ type }}" class="btn{% if variant %} {{ variant }}{% endif %}{% if size %} {{ size }}{% endif %}"{% if id %} id="{{ id }}"{% endif %}{% if onclick %} onclick="{{ onclick }}"{% endif %}{% if disabled %} disabled{% endif %}{% if extra %} {{ extra }}{% endif %}>{{ label }}</button>
+{%- endmacro %}

@@ -1,55 +1,60 @@
 <!-- ===== ADD FILAMENT MODAL ===== -->
 <div class="modal-overlay" id="addFilamentModal">
     <div class="modal">
-        <h2>Add Filament Spool</h2>
+        <div class="modal-header">
+            <h3>Add filament spool</h3>
+            <button class="modal-close" onclick="hideModal('addFilamentModal')" aria-label="Close">&times;</button>
+        </div>
         <form id="addFilamentForm" onsubmit="submitAddFilament(event)">
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Material</label>
-                    <select class="form-input" id="formMaterial" required></select>
+            <div class="modal-body">
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Material</label>
+                        <select class="form-input" id="formMaterial" required></select>
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Brand</label>
+                        <input type="text" class="form-input" id="formBrand" required placeholder="e.g. Prusament">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Brand</label>
-                    <input type="text" class="form-input" id="formBrand" required placeholder="e.g. Prusament">
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Color</label>
+                        <input type="text" class="form-input" id="formColor" required placeholder="e.g. Galaxy Black">
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Supplier</label>
+                        <select class="form-input" id="formSupplier" required>
+                            {% for supplier in allowed_suppliers %}
+                            <option value="{{ supplier }}">{{ supplier }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Weight (grams)</label>
+                        <input type="number" class="form-input" id="formGrams" required min="1" value="1000">
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Diameter (mm)</label>
+                        <input type="number" class="form-input" id="formDiameter" required step="0.05" value="1.75">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Batch / Lot</label>
+                        <input type="text" class="form-input" id="formBatch" placeholder="Optional">
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Operator</label>
+                        <input type="text" class="form-input" id="formOperator" required placeholder="Your name">
+                    </div>
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Color</label>
-                    <input type="text" class="form-input" id="formColor" required placeholder="e.g. Galaxy Black">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Supplier</label>
-                    <select class="form-input" id="formSupplier" required>
-                        {% for supplier in allowed_suppliers %}
-                        <option value="{{ supplier }}">{{ supplier }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Weight (grams)</label>
-                    <input type="number" class="form-input" id="formGrams" required min="1" value="1000">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Diameter (mm)</label>
-                    <input type="number" class="form-input" id="formDiameter" required step="0.05" value="1.75">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Batch / Lot</label>
-                    <input type="text" class="form-input" id="formBatch" placeholder="Optional">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Operator</label>
-                    <input type="text" class="form-input" id="formOperator" required placeholder="Your name">
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button type="button" class="btn" onclick="hideModal('addFilamentModal')">Cancel</button>
-                <button type="submit" class="btn btn-green">Add Spool</button>
+            <div class="modal-footer">
+                <button type="button" class="btn ghost" onclick="hideModal('addFilamentModal')">Cancel</button>
+                <button type="submit" class="btn go">Add spool</button>
             </div>
         </form>
     </div>

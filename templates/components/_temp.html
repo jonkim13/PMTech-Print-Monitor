@@ -1,0 +1,10 @@
+{# Temperature readout: NOZZLE / BED. Current temp turns warn when target > 0. #}
+{% macro temp(label, cur, tgt) -%}
+{%- set _hot = (tgt|float) > 0 -%}
+<div class="temp-readout">
+    <span class="k">{{ label }}</span>
+    <span class="temp-val mono tab">
+        <span class="temp-cur{% if _hot %} hot{% endif %}">{{ (cur|float)|round|int }}&deg;</span><span class="temp-tgt"> / {{ (tgt|float)|round|int }}&deg;</span>
+    </span>
+</div>
+{%- endmacro %}

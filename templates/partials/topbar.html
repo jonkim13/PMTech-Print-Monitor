@@ -1,12 +1,16 @@
         <!-- Top Bar -->
-        <div class="top-bar">
-            <div class="top-bar-left">
-                <button class="mobile-menu-btn" onclick="toggleSidebar()">&#9776;</button>
-                <span class="page-title" id="pageTitle">Dashboard</span>
-                <span class="status-badge" id="serverBadge">LIVE</span>
-            </div>
-            <div class="top-bar-right">
-                <button class="notif-bell" id="notifBell" onclick="toggleNotifications()" title="Toggle notifications">&#128276;</button>
-                <span id="clock"></span>
+        <div class="topbar">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+            <h1 id="pageTitle">Dashboard</h1>
+            <span class="live" id="topbarLivePill">LIVE</span>
+            <div class="topbar-right">
+                <button class="bell" id="notifBell" onclick="toggleNotifications()" title="Toggle notifications" aria-label="Notifications">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3.5 12h9l-1-1.5V7a3.5 3.5 0 0 0-7 0v3.5z"/>
+                        <path d="M6 13.5a2 2 0 0 0 4 0"/>
+                    </svg>
+                    <span class="bdot" id="topbarBellDot" style="display:none;"></span>
+                </button>
+                <span class="mono tab" id="clock"></span>
             </div>
         </div>

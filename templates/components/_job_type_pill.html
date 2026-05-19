@@ -1,0 +1,5 @@
+{# Job-type pill: internal | external | design.
+   Used by Phase 2.5b/c; staged here so the macro is available now. #}
+{% macro job_type_pill(type) -%}
+<span class="job-type {{ type }}">{{ type|upper }}</span>
+{%- endmacro %}

@@ -3,23 +3,40 @@
 // ============================================================
 
 function switchPage(page) {
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.querySelector(`[data-page="${page}"]`).classList.add('active');
+    document.querySelectorAll('.side-item').forEach(n => n.classList.remove('active'));
+    const navBtn = document.querySelector(`.side-item[data-page="${page}"]`);
+    if (navBtn) navBtn.classList.add('active');
 
     document.querySelectorAll('.section-page').forEach(p => p.classList.remove('active'));
-    document.getElementById(`page-${page}`).classList.add('active');
+    const section = document.getElementById(`page-${page}`);
+    if (section) section.classList.add('active');
 
-    const titles = { dashboard: 'Dashboard', drone: 'Drone', inventory: 'Inventory', production: 'Production Log', workorders: 'Work Orders', history: 'History', 'weekly-log': 'Weekly Log' };
-    document.getElementById('pageTitle').textContent = titles[page] || page;
+    const titles = {
+        dashboard: 'Dashboard',
+        workorders: 'Work Orders',
+        inventory: 'Inventory',
+        production: 'Production',
+        history: 'History',
+        'weekly-log': 'Weekly Log'
+    };
+    const titleEl = document.getElementById('pageTitle');
+    if (titleEl) titleEl.textContent = titles[page] || page;
+
+    const livePill = document.getElementById('topbarLivePill');
+    if (livePill) livePill.style.display = page === 'dashboard' ? '' : 'none';
+
+    if (page === 'dashboard') {
+        if (typeof startDashboardPoll === 'function') startDashboardPoll();
+    } else if (typeof stopDashboardPoll === 'function') {
+        stopDashboardPoll();
+    }
 
     if(page === 'inventory') loadInventory();
     if(page === 'history') loadHistory();
-    if(page === 'drone') loadDroneData();
     if(page === 'production') loadProductionData();
     if(page === 'workorders') loadWorkOrdersPage();
     if(page === 'weekly-log') loadWeeklyLog();
 
-    // Stop WO auto-refresh when navigating to any other page.
     if (page !== 'workorders') {
         if (typeof stopWoQueueAutoRefresh === 'function') {
             stopWoQueueAutoRefresh();
@@ -29,7 +46,22 @@ function switchPage(page) {
         }
     }
 
-    document.getElementById('sidebar').classList.remove('open');
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.remove('open');
+}
+
+function updateSidebarAttnBadge(count) {
+    const badge = document.getElementById('sidebarAttnBadge');
+    if (!badge) return;
+    const n = Number(count) || 0;
+    if (n > 0) {
+        badge.textContent = n;
+        badge.style.display = '';
+    } else {
+        badge.style.display = 'none';
+    }
+    const bdot = document.getElementById('topbarBellDot');
+    if (bdot) bdot.style.display = n > 0 ? '' : 'none';
 }
 
 function toggleSidebar() {

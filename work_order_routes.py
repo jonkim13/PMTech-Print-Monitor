@@ -247,7 +247,13 @@ def api_create_work_order():
                 "error": "Line item {} has invalid quantity".format(i + 1)
             }), 400
 
-    result = _work_order_service.create_work_order(customer, items)
+    due_date = data.get("due_date")
+    if due_date is not None:
+        due_date = str(due_date).strip() or None
+
+    result = _work_order_service.create_work_order(
+        customer, items, due_date=due_date
+    )
     return jsonify(result), 201
 
 

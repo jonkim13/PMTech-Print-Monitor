@@ -1,0 +1,23 @@
+{# Status pill — shape + color + uppercase mono label.
+   Kinds: printing, queued, idle, done, failed, cancel, attn, busy,
+          design, external, internal, offline, error, finished. #}
+{%- set _labels = {
+    'printing': 'PRINTING',
+    'queued': 'QUEUED',
+    'idle': 'IDLE',
+    'done': 'DONE',
+    'failed': 'FAILED',
+    'cancel': 'CANCELLED',
+    'attn': 'ATTENTION',
+    'busy': 'BUSY',
+    'design': 'DESIGN',
+    'external': 'EXTERNAL',
+    'internal': 'INTERNAL',
+    'offline': 'OFFLINE',
+    'error': 'ERROR',
+    'finished': 'FINISHED',
+    'unknown': 'UNKNOWN'
+} -%}
+{% macro status_pill(kind, label='') -%}
+<span class="st st-{{ kind }}"><i class="sym sym-{{ kind }}"></i><span>{{ label or _labels.get(kind, kind|upper) }}</span></span>
+{%- endmacro %}

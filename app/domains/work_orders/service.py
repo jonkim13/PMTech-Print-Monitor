@@ -20,9 +20,10 @@ class WorkOrderService:
     # Work Orders
     # ------------------------------------------------------------------
 
-    def create_work_order(self, customer_name: str, line_items: list) -> dict:
+    def create_work_order(self, customer_name: str, line_items: list,
+                          due_date: Optional[str] = None) -> dict:
         return self.work_order_repository.create_work_order(
-            customer_name, line_items
+            customer_name, line_items, due_date=due_date
         )
 
     def get_work_orders(self, status: Optional[str] = None,

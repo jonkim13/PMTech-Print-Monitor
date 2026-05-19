@@ -1,0 +1,11 @@
+{# Big-number stat tile. tone ∈ info | ok | warn | err | neutral. #}
+{% macro stat(label, value, secondary=None, tone='neutral', hint=None, id=None) -%}
+<div class="stat stat-tone-{{ tone }}"{% if id %} id="{{ id }}"{% endif %}>
+    <div class="k stat-label">{{ label }}</div>
+    <div class="stat-value-row">
+        <span class="stat-value mono tab" data-stat-value>{{ value }}</span>
+        {% if secondary is not none and secondary != '' %}<span class="stat-secondary mono tab" data-stat-secondary>{{ secondary }}</span>{% endif %}
+    </div>
+    {% if hint %}<div class="stat-hint" data-stat-hint>{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}

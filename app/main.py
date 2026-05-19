@@ -60,6 +60,7 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         event_service=container.event_service,
         inventory_service=container.inventory_service,
         assignment_service=container.assignment_service,
+        dashboard_service=container.dashboard_service,
     )
     register_production_routes(
         app,

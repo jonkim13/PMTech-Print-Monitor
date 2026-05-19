@@ -1,41 +1,48 @@
+{% from "components/_stat.html" import stat %}
         <!-- ==================== DASHBOARD PAGE ==================== -->
         <div class="section-page active" id="page-dashboard">
 
-            <!-- Stats Bar -->
-            <div class="stats-bar">
-                <div class="stat-item">
-                    <span class="stat-label">Total Printers</span>
-                    <span class="stat-value" id="statTotal">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Printing</span>
-                    <span class="stat-value blue" id="statPrinting">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Idle</span>
-                    <span class="stat-value green" id="statIdle">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Finished</span>
-                    <span class="stat-value orange" id="statFinished">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Errors</span>
-                    <span class="stat-value red" id="statErrors">0</span>
-                </div>
-            </div>
+            <div class="dash-grid">
+                <!-- Main column -->
+                <div>
+                    <!-- Stat row -->
+                    <div class="dash-stats" id="dashStats">
+                        {{ stat('Printers', '—', secondary='/ —', tone='info', hint='printing now', id='statPrinters') }}
+                        {{ stat("Today's output", '—', tone='ok', hint='parts completed', id='statDoneToday') }}
+                        {{ stat('Awaiting QC', '—', tone='warn', hint='across 0 WOs', id='statAwaitingQc') }}
+                        {{ stat('Late WOs', '—', tone='err', hint='past due date', id='statLateWos') }}
+                    </div>
 
-            <!-- Printer Cards -->
-            <div class="grid" id="printerGrid"></div>
+                    <!-- 2×2 printer grid -->
+                    <div class="dash-printer-grid" id="printerGrid">
+                        <div class="card card-pad muted" style="grid-column: 1 / -1; text-align:center; font-size:12px;">
+                            Loading printer status&hellip;
+                        </div>
+                    </div>
 
-            <!-- Event Log -->
-            <div>
-                <div class="section-header">
-                    Recent Events
-                    <span class="count-badge" id="eventCount">0</span>
+                    <!-- Live activity -->
+                    <div class="card activity-card dash-activity">
+                        <div class="activity-head">
+                            <h3>Live activity</h3>
+                            <span class="muted" style="font-size:12px;">last 30 min</span>
+                        </div>
+                        <div class="activity-body" id="eventsList">
+                            <div class="activity-empty">No events yet</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="events-list" id="eventsList">
-                    <div class="events-empty">No events yet</div>
-                </div>
+
+                <!-- Right rail -->
+                <aside class="dash-rail">
+                    <div class="card" style="overflow:visible;">
+                        <div class="rail-head">
+                            <h3>Needs your decision</h3>
+                            <span class="attn-badge" id="railAttnBadge" style="margin-left:auto;display:none;">0</span>
+                        </div>
+                        <div class="rail-body" id="attentionRail">
+                            <div class="rail-empty">No decisions waiting</div>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </div>

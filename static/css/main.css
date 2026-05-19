@@ -1,14 +1,18 @@
 /* ==========================================================================
    Main CSS — imports all split stylesheets in order
+
+   Note: pages/dashboard.css and pages/drone.css are intentionally NOT
+   imported here. Phase 2.5a redesigned the Dashboard tab via
+   print_monitor.css (loaded AFTER this file in base.html) and removed
+   the Drone tab entirely. Re-adding those imports would 404. The
+   remaining per-page CSS continues to skin the un-redesigned tabs.
    ========================================================================== */
 
 @import "base.css";
 @import "layout.css";
 @import "components.css";
-@import "pages/dashboard.css";
 @import "pages/inventory.css";
 @import "pages/production.css";
 @import "pages/workorders.css";
 @import "pages/history.css";
-@import "pages/drone.css";
 @import "pages/weekly-log.css";

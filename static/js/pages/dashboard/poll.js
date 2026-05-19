@@ -97,6 +97,7 @@ function renderPrinterGrid(printers) {
         return;
     }
     grid.innerHTML = printers.map(renderPrinterCard).join('');
+    refreshIcons(grid);
 }
 
 function renderPrinterCard(p) {
@@ -138,7 +139,7 @@ function renderPrinterCard(p) {
         const errTitle = escapeHtml(p.error_title || 'Printer error');
         const errSub = p.error_sub ? '<div class="err-sub">' + escapeHtml(p.error_sub) + '</div>' : '';
         body = '<div class="pc-error-banner"><div class="err-box">' +
-               '<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1l5.2 9H.8z"/></svg>' +
+               '<i data-lucide="alert-triangle" class="icon icon-sm"></i>' +
                '<div><div class="err-title">' + errTitle + '</div>' + errSub + '</div></div></div>';
     }
 
@@ -150,8 +151,8 @@ function renderPrinterCard(p) {
     const bed = p.bed || { cur: 0, tgt: 0 };
 
     const stopBtn = isPrinting
-        ? '<button class="btn danger" onclick="stopPrint(decodeURIComponent(\'' + idEnc + '\'), decodeURIComponent(\'' + nameEnc + '\'))"><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="2" y="2" width="6" height="6"/></svg> Stop</button>'
-        : '<button class="btn ghost" disabled><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="2" y="2" width="6" height="6"/></svg> Stop</button>';
+        ? '<button class="btn danger" onclick="stopPrint(decodeURIComponent(\'' + idEnc + '\'), decodeURIComponent(\'' + nameEnc + '\'))"><i data-lucide="square" class="icon icon-sm"></i> Stop</button>'
+        : '<button class="btn ghost" disabled><i data-lucide="square" class="icon icon-sm"></i> Stop</button>';
 
     return '<div class="card pc ' + accent + '" data-printer-id="' + escapeHtml(p.id) + '">' +
         '<div class="pc-accent"></div>' +

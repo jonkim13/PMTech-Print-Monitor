@@ -68,6 +68,15 @@ function showToast(message, type = 'success') {
     setTimeout(() => toast.remove(), 4000);
 }
 
+function refreshIcons(scope) {
+    if (!window.lucide || typeof lucide.createIcons !== 'function') return;
+    if (scope) {
+        lucide.createIcons({ nameAttr: 'data-lucide', attrs: {}, root: scope });
+    } else {
+        lucide.createIcons();
+    }
+}
+
 function showModal(id) {
     document.getElementById(id).classList.add('show');
 }
@@ -82,6 +91,13 @@ function updateClock() {
 }
 setInterval(updateClock, 1000);
 updateClock();
+
+// Upgrade every server-rendered <i data-lucide="..."> on the page.
+// Dynamic JS render sites must call refreshIcons(container) after
+// they assign innerHTML.
+document.addEventListener('DOMContentLoaded', function () {
+    refreshIcons();
+});
 
 // Modal close listeners
 document.querySelectorAll('.modal-overlay').forEach(overlay => {

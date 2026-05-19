@@ -1,14 +1,11 @@
         <!-- Top Bar -->
         <div class="topbar">
-            <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+            <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar"><i data-lucide="menu" class="icon icon-md"></i></button>
             <h1 id="pageTitle">Dashboard</h1>
             <span class="live" id="topbarLivePill">LIVE</span>
             <div class="topbar-right">
                 <button class="bell" id="notifBell" onclick="toggleNotifications()" title="Toggle notifications" aria-label="Notifications">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M3.5 12h9l-1-1.5V7a3.5 3.5 0 0 0-7 0v3.5z"/>
-                        <path d="M6 13.5a2 2 0 0 0 4 0"/>
-                    </svg>
+                    <i data-lucide="bell" class="icon icon-md"></i>
                     <span class="bdot" id="topbarBellDot" style="display:none;"></span>
                 </button>
                 <span class="mono tab" id="clock"></span>

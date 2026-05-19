@@ -32,10 +32,11 @@ function addWoLineItem() {
         '<input type="number" class="form-input wo-quantity" min="1" value="1" required>' +
         '</div>' +
         '<div class="form-group" style="flex:0 0 40px;display:flex;align-items:flex-end;">' +
-        '<button type="button" class="btn btn-danger" style="font-size:11px;padding:5px 8px;" onclick="removeWoLineItem(' + id + ')">X</button>' +
+        '<button type="button" class="btn btn-danger" style="font-size:11px;padding:5px 8px;" onclick="removeWoLineItem(' + id + ')"><i data-lucide="x" class="icon icon-sm"></i></button>' +
         '</div>' +
         '</div>';
     container.appendChild(div);
+    refreshIcons(div);
 
     // Populate material dropdown
     loadMaterialsForLineItem(div.querySelector('.wo-material'));

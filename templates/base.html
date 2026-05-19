@@ -30,6 +30,9 @@ window.APP_CONFIG = {
 </script>
 
 <!-- ===== SCRIPTS (order matters: utils first, then features) ===== -->
+<!-- Lucide icon library — must load before core modules so refreshIcons()
+     can see window.lucide when DOMContentLoaded fires. -->
+<script src="{{ url_for('static', filename='js/vendor/lucide.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/core/state.js') }}"></script>
 <script src="{{ url_for('static', filename='js/core/dom.js') }}"></script>
 <script src="{{ url_for('static', filename='js/core/nav.js') }}"></script>

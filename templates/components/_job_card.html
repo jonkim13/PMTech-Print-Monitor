@@ -8,7 +8,7 @@
 {% macro _job_header(job, expanded, active=False) -%}
 {%- set job_type = job.type or 'internal' -%}
 <div class="job-card-head" onclick="WoDetail.toggleJob({{ job.job_id }})">
-    <span class="job-card-caret">{{ '&#9662;' if expanded else '&#9656;' }}</span>
+    <span class="job-card-caret"><i data-lucide="{{ 'chevron-down' if expanded else 'chevron-right' }}" class="icon icon-sm"></i></span>
     <span class="job-type {{ job_type }}">{{ job_type|upper }}</span>
     <span class="mono muted job-card-id">#{{ job.job_id }}</span>
     {% if active %}<span class="job-card-active-pill">&bull; ACTIVE</span>{% endif %}
@@ -44,7 +44,7 @@
 
         <div class="job-card-actions">
             {% if job.queued_parts and job.queued_parts > 0 %}
-            <button class="btn sm go" onclick="WoDetail.printJob({{ job.job_id }})">&#9654; Print job</button>
+            <button class="btn sm go" onclick="WoDetail.printJob({{ job.job_id }})"><i data-lucide="play" class="icon icon-sm"></i> Print job</button>
             {% endif %}
             {% if job.failed_parts and job.failed_parts > 0 %}
             <button class="btn sm warn" onclick="WoDetail.retryJob('{{ job.wo_id|e }}', {{ job.job_id }}, {{ job.failed_parts }})">Retry {{ job.failed_parts }} failed</button>

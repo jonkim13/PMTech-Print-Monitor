@@ -267,6 +267,7 @@
             groupsHtml = '<div class="part-group-empty">No parts assigned to this job yet.</div>';
         }
         groupsHost.innerHTML = groupsHtml;
+        refreshIcons(groupsHost);
 
         // Restore selection checkbox state
         restoreSelectionCheckboxes();
@@ -317,14 +318,14 @@
         } else if (isPrintable) {
             actions = '<button class="btn sm go" onclick="WoDetail.printPart(' +
                 part.queue_id + (part.job_id ? ', ' + part.job_id : '') +
-                ')">&#9654; Print</button>' +
+                ')"><i data-lucide="play" class="icon icon-sm"></i> Print</button>' +
                 '<button class="btn sm ghost" onclick="WoDetail.cancelPart(' +
                 part.queue_id + ", '" + escapeHtml(part.part_name) +
-                "')\">&times;</button>";
+                "')\"><i data-lucide=\"x\" class=\"icon icon-sm\"></i></button>";
         } else if (isDone && qcOutcome !== 'pass' && qcOutcome !== 'fail') {
             actions = '<button class="btn sm primary" onclick="WoDetail.setQC(' +
                 (part.print_job_id || 'null') + ', ' + part.queue_id +
-                ')">Inspect &rsaquo;</button>';
+                ')">Inspect <i data-lucide="chevron-right" class="icon icon-sm"></i></button>';
         } else if (status === 'upload_failed' || status === 'start_failed') {
             actions = '<button class="btn sm warn" onclick="WoDetail.retryPart(' +
                 part.queue_id + ')">Retry ' +
@@ -402,7 +403,7 @@
                 '</div>' +
                 '<button class="btn sm primary" onclick="WoDetail.setQC(' +
                 (awaitingQc[0].print_job_id || 'null') + ', ' +
-                awaitingQc[0].queue_id + ')">Open Inspection &rsaquo;</button>' +
+                awaitingQc[0].queue_id + ')">Open Inspection <i data-lucide="chevron-right" class="icon icon-sm"></i></button>' +
                 '</div>'
             );
         }
@@ -422,6 +423,7 @@
             );
         }
         host.innerHTML = blocks.join('');
+        refreshIcons(host);
     }
 
     function renderActivity(wo) {
@@ -513,7 +515,12 @@
         var willExpand = !card.classList.contains('job-card-expanded');
         card.classList.toggle('job-card-expanded', willExpand);
         if (body) body.style.display = willExpand ? '' : 'none';
-        if (head) head.innerHTML = willExpand ? '&#9662;' : '&#9656;';
+        if (head) {
+            head.innerHTML = '<i data-lucide="' +
+                (willExpand ? 'chevron-down' : 'chevron-right') +
+                '" class="icon icon-sm"></i>';
+            refreshIcons(head);
+        }
         if (willExpand) {
             expandedJobs[jobId] = true;
             delete collapsedJobs[jobId];

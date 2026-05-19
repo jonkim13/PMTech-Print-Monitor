@@ -44,7 +44,7 @@
     {% elif _is_error %}
     <div class="pc-error-banner">
         <div class="err-box">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M6 1l5.2 9H.8z"/></svg>
+            <i data-lucide="alert-triangle" class="icon icon-sm"></i>
             <div>
                 <div class="err-title">{{ p.error_title or 'Printer error' }}</div>
                 {% if p.error_sub %}<div class="err-sub">{{ p.error_sub }}</div>{% endif %}
@@ -77,12 +77,12 @@
         <div class="pc-spacer"></div>
         {% if _is_printing %}
         <button class="btn danger" onclick="stopPrint('{{ p.id }}', '{{ p.name|e }}')">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="6" height="6"/></svg>
+            <i data-lucide="square" class="icon icon-sm"></i>
             Stop
         </button>
         {% else %}
         <button class="btn ghost" disabled>
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="6" height="6"/></svg>
+            <i data-lucide="square" class="icon icon-sm"></i>
             Stop
         </button>
         {% endif %}

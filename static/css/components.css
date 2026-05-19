@@ -3,6 +3,16 @@
    badges, status indicators, tabs, stats bar
    ========================================================================== */
 
+/* ========== LUCIDE ICONS ==========
+   Phase 3: every UI affordance icon is a Lucide SVG injected by
+   lucide.createIcons() into <i data-lucide="..." class="icon icon-XX">.
+   Stroke inherits from the surrounding text color so icons match
+   their button / pill tone automatically. */
+.icon { display: inline-block; vertical-align: middle; stroke: currentColor; flex-shrink: 0; }
+.icon-sm { width: 14px; height: 14px; stroke-width: 2; }
+.icon-md { width: 16px; height: 16px; stroke-width: 2; }
+.icon-lg { width: 20px; height: 20px; stroke-width: 1.75; }
+
 /* ========== STATS BAR ========== */
 .stats-bar {
     display: flex;

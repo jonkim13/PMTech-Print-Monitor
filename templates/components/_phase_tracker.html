@@ -19,7 +19,7 @@
                     <span class="job-type {{ job.type or 'internal' }}">{{ (job.type or 'internal')|upper }}</span>
                     <div style="flex:1;"></div>
                     {% if status == 'in_progress' %}<span class="phase-step-tag phase-step-tag-info">&bull; ACTIVE</span>{% endif %}
-                    {% if status == 'completed' %}<span class="phase-step-tag phase-step-tag-ok">&check; DONE</span>{% endif %}
+                    {% if status == 'completed' %}<span class="phase-step-tag phase-step-tag-ok"><i data-lucide="check" class="icon icon-sm"></i> DONE</span>{% endif %}
                 </div>
                 <div class="phase-step-name">Job #{{ job.job_id }}</div>
                 <div class="phase-step-meta">
@@ -27,7 +27,7 @@
                     {%- if job.inspection and job.inspection.passed %} &middot; {{ job.inspection.passed }} inspected{% endif %}
                 </div>
             </div>
-            <div class="phase-arrow">&rsaquo;</div>
+            <div class="phase-arrow"><i data-lucide="chevron-right" class="icon icon-sm"></i></div>
         {% endfor %}
 
         {# Synthetic terminal: WO Sign-off #}
@@ -43,7 +43,7 @@
                 {% if all_passed %}All jobs inspected · ready to sign off{% else %}Pending · all jobs must pass inspection first{% endif %}
             </div>
         </div>
-        <div class="phase-arrow">&rsaquo;</div>
+        <div class="phase-arrow"><i data-lucide="chevron-right" class="icon icon-sm"></i></div>
 
         {# Synthetic terminal: Ship #}
         <div class="phase-step phase-step-terminal">

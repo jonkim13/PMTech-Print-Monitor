@@ -11,9 +11,26 @@ Pattern
 3. ``--apply`` refuses to run while the print-farm service is up.
 4. The runner is consulted: if MIGRATION_ID is already recorded, the
    script exits 0 without touching the DB.
-5. A backup is created before any writes.
+5. A whole-fleet snapshot is taken into ``data/recovery/<ts>/`` AND a
+   per-DB ``.bak-<ts>`` is created before any writes. These are
+   additive layers, not alternatives — see "Two-layer backup" below.
 6. The actual changes and ``runner.record(...)`` live in a single
    transaction so registry + data commit (or roll back) together.
+
+Two-layer backup
+----------------
+``.bak-<ts>`` (created by ``create_backup`` below) captures the single
+DB this migration touches, sitting next to the live file. It is the
+fast, targeted restore path: ``cp data/foo.db.bak-<ts> data/foo.db``.
+
+``data/recovery/<ts>/`` (created by ``snapshot_all_dbs``) captures
+EVERY DB at the moment the migration starts, in its own folder. It is
+the cross-DB safety net for the case where a migration's writes have
+side effects beyond its primary target — or where an operator notices
+data loss only days later, after the per-DB ``.bak`` has been pruned.
+
+Do not drop one thinking the other is redundant. The 2026-05-19
+inventory incident is why both exist.
 
 Exit codes match migration 001 for operator-script consistency:
     0  Success (or dry-run completed cleanly, or already-applied).
@@ -42,7 +59,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from app.config.settings import load_settings  # noqa: E402
 from app.shared.migrations.runner import MigrationRunner  # noqa: E402
+from app.shared.snapshots.runner import snapshot_all_dbs  # noqa: E402
 
 
 # ----------------------------------------------------------------------
@@ -231,6 +250,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Stop the service first:", file=sys.stderr)
         print("  sudo systemctl stop print-farm-monitor", file=sys.stderr)
         return EXIT_SERVICE_RUNNING
+
+    # Step 0: whole-fleet defensive snapshot before any write.
+    # See "Two-layer backup" in the module docstring — this snapshot
+    # captures EVERY DB; ``create_backup`` below captures only this
+    # migration's primary target. Both layers are required.
+    settings = load_settings()
+    snap_result = snapshot_all_dbs(
+        settings, reason="pre-migration-{}".format(MIGRATION_ID)
+    )
+    print("[snapshot] {} DBs -> {}".format(
+        snap_result.db_count, snap_result.path))
 
     try:
         backup_path = create_backup(db_path)

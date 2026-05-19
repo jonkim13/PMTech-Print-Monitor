@@ -13,6 +13,7 @@ from .config.container import AppContainer, build_container
 from .config.settings import AppSettings, load_settings
 from .domains.reports.routes import register_reports_routes
 from .shared.migrations.runner import MigrationRunner
+from .shared.snapshots.runner import prune_snapshots, snapshot_all_dbs
 
 _runtime_lock = threading.Lock()
 _runtime_container = None
@@ -27,12 +28,30 @@ def _get_runtime_container(settings: AppSettings = None) -> AppContainer:
         if _runtime_container is None:
             active_settings = settings or load_settings()
             active_settings.ensure_runtime_dirs()
+            _snapshot_and_prune(active_settings)
             cleanup_old_gcode_uploads(active_settings.gcode_uploads_dir)
             MigrationRunner(
                 active_settings.work_order_db_path
             ).ensure_schema_version_table()
             _runtime_container = build_container(active_settings)
         return _runtime_container
+
+
+def _snapshot_and_prune(settings: AppSettings) -> None:
+    """Capture a startup snapshot and prune the recovery folder.
+
+    Both steps are best-effort: a broken snapshot layer must not block
+    the service from starting. A running app without a snapshot is
+    better than a dead app — the snapshot exists *for* the live app.
+    """
+    try:
+        snapshot_all_dbs(settings, reason="startup")
+    except Exception as exc:
+        print(f"[SNAPSHOT-FAILED] startup snapshot failed: {exc}")
+    try:
+        prune_snapshots(settings)
+    except Exception as exc:
+        print(f"[SNAPSHOT-FAILED] snapshot prune failed: {exc}")
 
 
 def _start_poller_once(farm_manager) -> bool:

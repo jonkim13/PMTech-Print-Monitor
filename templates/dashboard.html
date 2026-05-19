@@ -33,4 +33,28 @@
 {% include "partials/modals/queue_print.html" %}
 {% include "partials/modals/wo_qc.html" %}
 {% include "partials/modals/stop_print_confirm.html" %}
+{% include "partials/modals/cancel_confirm.html" %}
+
+<script>
+// Phase 2.5c: SPA tab bootstrap from query params.
+// Lets routes like /work-orders/<id> link back via /?tab=workorders.
+(function () {
+    function readTabFromUrl() {
+        var params = new URLSearchParams(window.location.search);
+        var tab = (params.get('tab') || '').trim();
+        var subtab = (params.get('subtab') || '').trim();
+        return { tab: tab, subtab: subtab };
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        var sel = readTabFromUrl();
+        if (sel.tab && typeof switchPage === 'function') {
+            switchPage(sel.tab);
+        }
+        if (sel.tab === 'workorders' && sel.subtab &&
+            typeof switchWoTab === 'function') {
+            switchWoTab(sel.subtab);
+        }
+    });
+})();
+</script>
 {% endblock %}

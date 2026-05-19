@@ -75,6 +75,7 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         execution_service=container.execution_service,
         work_order_service=container.work_order_service,
         queue_service=container.queue_service,
+        triage_service=container.triage_service,
     )
     register_reports_routes(app, container.weekly_report_service)
 

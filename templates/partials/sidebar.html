@@ -1,50 +1,49 @@
+{# When standalone_page=True (set by route templates that aren't the SPA),
+   nav items become real <a href> links that take the operator back to
+   the SPA shell on the right tab. Default (SPA dashboard.html) keeps
+   the in-page switchPage() handlers. #}
+{%- set _standalone = standalone_page | default(false) -%}
     <!-- ===== SIDEBAR ===== -->
     <aside class="side" id="sidebar">
         <div class="sidebar-brand">
-            <img
-                class="sidebar-brand-logo"
-                src="{{ url_for('static', filename='img/pm-technologies-logo-horizontal.png') }}"
-                alt="PM Technologies"
-            >
+            <a {% if _standalone %}href="/"{% else %}href="javascript:switchPage('dashboard')"{% endif %} aria-label="Home">
+                <img
+                    class="sidebar-brand-logo"
+                    src="{{ url_for('static', filename='img/pm-technologies-logo-horizontal.png') }}"
+                    alt="PM Technologies"
+                >
+            </a>
         </div>
         <nav class="side-nav">
-            <button class="side-item active" data-page="dashboard" onclick="switchPage('dashboard')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>
-                </span>
-                <span style="flex:1;">Dashboard</span>
-            </button>
-            <button class="side-item" data-page="workorders" onclick="switchPage('workorders')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3"/><path d="M5 8h6M5 11h4"/></svg>
-                </span>
-                <span style="flex:1;">Work Orders</span>
-                <span class="attn-badge" id="sidebarAttnBadge" style="display:none;">0</span>
-            </button>
-            <button class="side-item" data-page="inventory" onclick="switchPage('inventory')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
-                </span>
-                <span style="flex:1;">Inventory</span>
-            </button>
-            <button class="side-item" data-page="production" onclick="switchPage('production')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 3h12M2 8h12M2 13h12"/></svg>
-                </span>
-                <span style="flex:1;">Production</span>
-            </button>
-            <button class="side-item" data-page="history" onclick="switchPage('history')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 8a6 6 0 1 1 2 4.5"/><path d="M2 5v3h3"/><path d="M8 5v3l2 1"/></svg>
-                </span>
-                <span style="flex:1;">History</span>
-            </button>
-            <button class="side-item" data-page="weekly-log" onclick="switchPage('weekly-log')">
-                <span class="ico">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="1"/><path d="M2 6h12M6 1v3M10 1v3"/></svg>
-                </span>
-                <span style="flex:1;">Weekly Log</span>
-            </button>
+            {%- macro _side_item(page_id, label, icon_svg, attn=False) %}
+                {%- set is_active = (active_sidebar_page | default('')) == page_id -%}
+                {% if _standalone %}
+                <a class="side-item{% if is_active %} active{% endif %}" data-page="{{ page_id }}" href="/?tab={{ page_id }}">
+                    <span class="ico">{{ icon_svg | safe }}</span>
+                    <span style="flex:1;">{{ label }}</span>
+                    {% if attn %}<span class="attn-badge" id="sidebarAttnBadge" style="display:none;">0</span>{% endif %}
+                </a>
+                {% else %}
+                <button class="side-item{% if is_active %} active{% endif %}" data-page="{{ page_id }}" onclick="switchPage('{{ page_id }}')">
+                    <span class="ico">{{ icon_svg | safe }}</span>
+                    <span style="flex:1;">{{ label }}</span>
+                    {% if attn %}<span class="attn-badge" id="sidebarAttnBadge" style="display:none;">0</span>{% endif %}
+                </button>
+                {% endif %}
+            {%- endmacro -%}
+            {{ _side_item('dashboard', 'Dashboard',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>') }}
+            {{ _side_item('workorders', 'Work Orders',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3"/><path d="M5 8h6M5 11h4"/></svg>',
+                attn=true) }}
+            {{ _side_item('inventory', 'Inventory',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>') }}
+            {{ _side_item('production', 'Production',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 3h12M2 8h12M2 13h12"/></svg>') }}
+            {{ _side_item('history', 'History',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 8a6 6 0 1 1 2 4.5"/><path d="M2 5v3h3"/><path d="M8 5v3l2 1"/></svg>') }}
+            {{ _side_item('weekly-log', 'Weekly Log',
+                '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="1"/><path d="M2 6h12M6 1v3M10 1v3"/></svg>') }}
         </nav>
         <div class="side-foot">
             <span style="opacity:.65;">v0.4.2</span>

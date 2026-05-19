@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="app-layout">
+
+{% include "partials/sidebar.html" %}
+
+    <main class="main">
+
+{% include "partials/topbar.html" %}
+
+        <div class="content">
+            <section id="page-wo-detail" class="wo-detail-page">
+                <div class="wo-breadcrumb">
+                    <a href="/?tab=workorders" class="btn sm ghost">&larr; Back to Work Orders</a>
+                </div>
+                <div class="card card-pad" style="margin-top: 18px; text-align: center;">
+                    <h2 style="margin-bottom: 10px;">Work order not found</h2>
+                    <div class="muted">
+                        <span class="mono">{{ wo_id }}</span> does not exist or has been deleted.
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+{% endblock %}

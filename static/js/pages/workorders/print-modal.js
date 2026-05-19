@@ -15,14 +15,15 @@ async function showQueuePrintModal(queueId, jobId) {
         : 'Print Queue Item';
     document.getElementById('queuePrintInfo').innerHTML = '';
 
-    // Load queue item info
+    // Load queue item info. /api/queue GET was retired in 2.5b; we now
+    // rely on the in-memory cache populated by either WO Detail
+    // (_woDetailQueueItems) or Triage (openPrintModalFromTriage
+    // pre-stuffs _woDetailQueueItems before opening the modal). If
+    // neither is populated, render with no preview.
     try {
-        var items;
-        if (_woDetailQueueItems && _woDetailQueueItems.length) {
-            items = _woDetailQueueItems.slice();
-        } else {
-            items = await apiGet('/api/queue');
-        }
+        var items = (_woDetailQueueItems && _woDetailQueueItems.length)
+            ? _woDetailQueueItems.slice()
+            : [];
         var selected = [];
 
         if (isJobExecution) {
@@ -174,19 +175,14 @@ async function submitQueuePrint() {
             );
         }
         hideModal('queuePrintModal');
-        clearWoSelection();
-        if (_woDetailId) {
-            var detailPanel = document.getElementById('woPanel-detail');
-            if (detailPanel && detailPanel.classList.contains('active')) {
-                viewWorkOrder(_woDetailId);
-            }
+        // Phase 2.5c: WO Detail has its own page and its own poll loop —
+        // it picks the change up within 2.5s automatically. From the
+        // SPA shell, refresh Triage + All Orders.
+        if (window.WoDetail && typeof window.WoDetail.poll === 'function') {
+            window.WoDetail.poll();
         }
-        loadQueue();
-        loadQueueStats();
-        // Always refresh the WO list — the parent WO status rolls up
-        // from queue item transitions and the orders tab can be viewed
-        // without switching away from the detail view first.
-        loadWorkOrders();
+        if (typeof loadTriage === 'function') loadTriage();
+        if (typeof loadWorkOrders === 'function') loadWorkOrders();
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
     } finally {

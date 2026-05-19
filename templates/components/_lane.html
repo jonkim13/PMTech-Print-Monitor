@@ -1,0 +1,15 @@
+{# Triage lane — header (swatch + label + count badge) + body slot.
+   The body is filled by triage.js per poll tick; the server-side render
+   just lays down the shell so the page has structure on initial load. #}
+{% macro lane(kind, label, tone, count=0, empty_message='Nothing here yet') -%}
+<div class="lane lane-{{ kind }}" data-lane-kind="{{ kind }}">
+    <div class="lane-head">
+        <span class="lane-swatch" style="background:var(--{{ tone }});"></span>
+        <span class="lane-label">{{ label|upper }}</span>
+        <span class="lane-count" id="lane-{{ kind }}-count">{{ count }}</span>
+    </div>
+    <div class="lane-body" id="lane-{{ kind }}-body" data-lane-empty-message="{{ empty_message }}">
+        <div class="lane-empty">{{ empty_message }}</div>
+    </div>
+</div>
+{%- endmacro %}

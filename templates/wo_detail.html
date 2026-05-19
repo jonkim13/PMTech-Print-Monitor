@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% from "components/_status_pill.html" import status_pill %}
+{% from "components/_wo_counts.html" import wo_counts %}
+{% from "components/_phase_tracker.html" import phase_tracker %}
+{% from "components/_job_card.html" import job_card_internal, job_card_external, job_card_design %}
+
+{% block content %}
+<div class="app-layout">
+
+{% include "partials/sidebar.html" %}
+
+    <main class="main">
+
+{% include "partials/topbar.html" %}
+
+        <div class="content">
+            <section id="page-wo-detail" class="wo-detail-page" data-wo-id="{{ wo.wo_id }}">
+
+                <!-- Breadcrumb row -->
+                <div class="wo-breadcrumb">
+                    <a href="{{ back_url }}" class="btn sm ghost">&larr; Back to {{ back_label }}</a>
+                    <span class="muted breadcrumb-sep">/</span>
+                    <span class="mono breadcrumb-wo">{{ wo.wo_id }}</span>
+                    <span class="muted">&middot;</span>
+                    <span class="muted">{{ wo.customer_name }}</span>
+                    {% if focus %}
+                    <span class="deep-link-pill">&bull; DEEP-LINKED &middot; {{ focus|upper }}</span>
+                    {% endif %}
+                </div>
+
+                <!-- Main column (1fr) + right rail (320px) -->
+                <div class="wo-detail-grid">
+                    <div class="wo-detail-main">
+
+                        <!-- WO header -->
+                        <div class="wo-header">
+                            <div class="wo-header-top">
+                                <span class="wo-header-id mono">{{ wo.wo_id }}</span>
+                                <span class="wo-header-sep">&middot;</span>
+                                <span class="wo-header-customer">{{ wo.customer_name }}</span>
+                                {{ status_pill('printing' if wo.status == 'in_progress' else ('attn' if wo.status == 'attention' else ('done' if wo.status == 'completed' else ('cancel' if wo.status == 'cancelled' else 'idle'))), label=wo.status|upper|replace('_', ' ')) }}
+                                <div style="flex:1;"></div>
+                                <button class="btn sm danger" onclick="WoDetail.cancelWO('{{ wo.wo_id|e }}')">Cancel WO</button>
+                                <button class="btn sm warn" onclick="WoDetail.retryWO('{{ wo.wo_id|e }}')">Re-queue</button>
+                                <button class="btn sm primary" id="wo-create-job-btn" disabled onclick="WoDetail.createJobFromSelected('{{ wo.wo_id|e }}')">Create job from selected</button>
+                            </div>
+                            <div class="wo-header-meta muted mono">
+                                {% if wo.po %}PO {{ wo.po }} &middot; {% endif %}
+                                Created {{ wo.created_at[:10] if wo.created_at else '—' }}
+                                {% if wo.due_date %} &middot; Due {{ wo.due_date }}{% endif %}
+                                &middot; {{ wo.total_parts or 0 }} part{{ '' if (wo.total_parts or 0) == 1 else 's' }}
+                                across {{ wo.job_count or (wo.jobs|length) }} job{{ '' if (wo.job_count or (wo.jobs|length)) == 1 else 's' }}
+                            </div>
+                        </div>
+
+                        <!-- Counts + stacked progress -->
+                        {{ wo_counts(wo.counts) }}
+
+                        <!-- Phase tracker -->
+                        {{ phase_tracker(wo, active_job_id=focus_job_id) }}
+
+                        <!-- Job cards -->
+                        <div id="wo-jobs">
+                            {% set _ns = namespace(first_internal_rendered=False) %}
+                            {% for job in wo.jobs %}
+                                {%- set is_focused = focus_job_id and (focus_job_id == 'JOB-' ~ job.job_id|string or focus_job_id|string == job.job_id|string) -%}
+                                {%- set expand = is_focused -%}
+                                {%- set job_type = job.type or 'internal' -%}
+                                {%- if job_type == 'internal' and not _ns.first_internal_rendered and not focus_job_id -%}
+                                    {%- set expand = True -%}
+                                    {%- set _ns.first_internal_rendered = True -%}
+                                {%- endif -%}
+                                {% if job_type == 'external' %}
+                                    {{ job_card_external(job, expanded=expand) }}
+                                {% elif job_type == 'design' %}
+                                    {{ job_card_design(job, expanded=expand) }}
+                                {% else %}
+                                    {{ job_card_internal(job, wo.queue_items, expanded=expand, focus_part_id=focus) }}
+                                {% endif %}
+                            {% endfor %}
+
+                            {% if not wo.jobs %}
+                            <div class="card card-pad muted" style="text-align:center;">
+                                No jobs created yet for this work order.
+                                {% if wo.queue_items %}
+                                    {{ wo.queue_items|length }} part{{ '' if wo.queue_items|length == 1 else 's' }} are queued. Select parts and create a job to start a print.
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Sticky selection toolbar (hidden until parts are checked) -->
+                        <div id="wo-selection-toolbar" class="wo-selection-toolbar" style="display:none;">
+                            <span class="selection-count" id="wo-selection-count">0 parts selected</span>
+                            <div style="flex:1;"></div>
+                            <button class="btn sm primary" id="wo-print-selected-btn" onclick="WoDetail.printSelected()">Print selected</button>
+                            <button class="btn sm" id="wo-group-into-job-btn" onclick="WoDetail.groupIntoNewJob('{{ wo.wo_id|e }}')">Group into new job</button>
+                            <button class="btn sm ghost" onclick="WoDetail.clearSelection()">Clear</button>
+                        </div>
+                    </div>
+
+                    <aside class="wo-right-rail">
+                        <!-- Needs you — surfaces this WO's awaiting-QC + failed parts -->
+                        <div class="card needs-you-card">
+                            <div class="card-pad">
+                                <div class="k needs-you-label">Needs you</div>
+                                <div id="wo-needs-you-body" class="needs-you-body">
+                                    <!-- populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Activity timeline -->
+                        <div class="card activity-rail-card">
+                            <div class="card-pad">
+                                <div class="k activity-rail-label">Activity</div>
+                                <div id="wo-activity-body" class="activity-rail-body">
+                                    <!-- populated by JS from initial wo.activity -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick actions -->
+                        <div class="card quick-actions-card">
+                            <div class="card-pad">
+                                <div class="k">Quick actions</div>
+                                <div class="quick-actions-body">
+                                    {# Phase B: + Add design job, + Add external job. Hidden until backend lands. #}
+                                    <button class="btn sm ghost" onclick="alert('Packing slip print — Phase D')" disabled>Print packing slip</button>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+
+{# Modal includes — same set the Dashboard uses; the WO Detail page needs them for Print / Assign Spool / Files / QC / Stop Print confirm flows. #}
+{% include "partials/modals/queue_print.html" %}
+{% include "partials/modals/wo_qc.html" %}
+{% include "partials/modals/files.html" %}
+{% include "partials/modals/assign_spool.html" %}
+{% include "partials/modals/add_filament.html" %}
+{% include "partials/modals/new_spool_id.html" %}
+{% include "partials/modals/update_weight.html" %}
+{% include "partials/modals/job_detail.html" %}
+{% include "partials/modals/maintenance.html" %}
+{% include "partials/modals/stop_print_confirm.html" %}
+{% include "partials/modals/cancel_confirm.html" %}
+
+<script>
+window.WO_DETAIL_INITIAL = {{ wo|tojson }};
+window.WO_DETAIL_FOCUS = {{ (focus or '')|tojson }};
+window.WO_DETAIL_FOCUS_JOB_ID = {{ (focus_job_id or '')|tojson }};
+</script>
+{% endblock %}

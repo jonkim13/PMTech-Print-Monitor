@@ -1,0 +1,130 @@
+{# Job card — three dispatch macros by job.type. Phase 2.5b only renders
+   the Internal variant from live data; External + Design are visual
+   scaffolding for Phase B and remain unreached. #}
+{% from "components/_inspection_chip.html" import inspection_chip %}
+{% from "components/_part_row.html" import part_row %}
+
+{# Collapsed-header partial used by every job-card variant #}
+{% macro _job_header(job, expanded, active=False) -%}
+{%- set job_type = job.type or 'internal' -%}
+<div class="job-card-head" onclick="WoDetail.toggleJob({{ job.job_id }})">
+    <span class="job-card-caret">{{ '&#9662;' if expanded else '&#9656;' }}</span>
+    <span class="job-type {{ job_type }}">{{ job_type|upper }}</span>
+    <span class="mono muted job-card-id">#{{ job.job_id }}</span>
+    {% if active %}<span class="job-card-active-pill">&bull; ACTIVE</span>{% endif %}
+    <div class="job-card-name">
+        <span class="job-card-title">Job #{{ job.job_id }}</span>
+        {{ inspection_chip(job) }}
+    </div>
+    <div class="job-card-meta muted">
+        {{ job.completed_parts or 0 }}/{{ job.part_count or 0 }} parts done
+        {%- if job.printing_parts %} &middot; {{ job.printing_parts }} printing{% endif %}
+        {%- if job.queued_parts %} &middot; {{ job.queued_parts }} queued{% endif %}
+        {%- if job.failed_parts %} &middot; {{ job.failed_parts }} failed{% endif %}
+    </div>
+</div>
+{%- endmacro %}
+
+{% macro job_card_internal(job, queue_items, expanded=False, focus_part_id=None) -%}
+{%- set members = queue_items|selectattr("job_id", "equalto", job.job_id)|list -%}
+{%- set printing_parts = members|selectattr("status", "equalto", "printing")|list -%}
+{%- set queued_parts = members|selectattr("status", "equalto", "queued")|list -%}
+{%- set done_parts = members|selectattr("status", "equalto", "completed")|list -%}
+{%- set failed_parts = members|selectattr("status", "in", ["failed", "upload_failed", "start_failed", "cancelled"])|list -%}
+<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="internal">
+    {{ _job_header(job, expanded, active=expanded) }}
+    <div class="job-card-body" {% if not expanded %}style="display:none;"{% endif %}>
+        <div class="job-counts">
+            <div class="job-count-cell"><span class="k">Total</span><span class="job-count-val">{{ job.part_count or 0 }}</span></div>
+            <div class="job-count-cell"><span class="k">Done</span><span class="job-count-val tone-ok">{{ job.completed_parts or 0 }}</span></div>
+            <div class="job-count-cell"><span class="k">Printing</span><span class="job-count-val tone-info">{{ job.printing_parts or 0 }}</span></div>
+            <div class="job-count-cell"><span class="k">Queued</span><span class="job-count-val tone-warn">{{ job.queued_parts or 0 }}</span></div>
+            <div class="job-count-cell"><span class="k">QC pending</span><span class="job-count-val tone-warn">{{ (job.inspection.pending if job.inspection else 0) or 0 }}</span></div>
+        </div>
+
+        <div class="job-card-actions">
+            {% if job.queued_parts and job.queued_parts > 0 %}
+            <button class="btn sm go" onclick="WoDetail.printJob({{ job.job_id }})">&#9654; Print job</button>
+            {% endif %}
+            {% if job.failed_parts and job.failed_parts > 0 %}
+            <button class="btn sm warn" onclick="WoDetail.retryJob('{{ job.wo_id|e }}', {{ job.job_id }}, {{ job.failed_parts }})">Retry {{ job.failed_parts }} failed</button>
+            {% endif %}
+            <button class="btn sm danger" onclick="WoDetail.cancelJob('{{ job.wo_id|e }}', {{ job.job_id }})">Cancel job</button>
+        </div>
+
+        {% if printing_parts %}
+        <div class="part-group">
+            <div class="part-group-head">
+                <span class="part-group-swatch" style="background:var(--info);"></span>
+                <span class="k tone-info">Printing now</span>
+                <span class="mono tab muted">{{ printing_parts|length }} part{{ '' if printing_parts|length == 1 else 's' }}</span>
+            </div>
+            {% for part in printing_parts %}{{ part_row(part) }}{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if queued_parts %}
+        <div class="part-group">
+            <div class="part-group-head">
+                <span class="part-group-swatch" style="background:var(--warn);"></span>
+                <span class="k tone-warn">Queued</span>
+                <span class="mono tab muted">{{ queued_parts|length }} part{{ '' if queued_parts|length == 1 else 's' }}</span>
+            </div>
+            {% for part in queued_parts %}{{ part_row(part) }}{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if done_parts %}
+        <div class="part-group">
+            <div class="part-group-head">
+                <span class="part-group-swatch" style="background:var(--ok);"></span>
+                <span class="k tone-ok">Done</span>
+                <span class="mono tab muted">{{ done_parts|length }} part{{ '' if done_parts|length == 1 else 's' }}</span>
+            </div>
+            {% for part in done_parts %}{{ part_row(part) }}{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if failed_parts %}
+        <div class="part-group">
+            <div class="part-group-head">
+                <span class="part-group-swatch" style="background:var(--err);"></span>
+                <span class="k tone-err">Failed / cancelled</span>
+                <span class="mono tab muted">{{ failed_parts|length }} part{{ '' if failed_parts|length == 1 else 's' }}</span>
+            </div>
+            {% for part in failed_parts %}{{ part_row(part) }}{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if not members %}
+        <div class="part-group-empty">No parts assigned to this job yet.</div>
+        {% endif %}
+    </div>
+</article>
+{%- endmacro %}
+
+{# ============================================================
+   Phase B job type — visual scaffolding only. Current data model
+   has no External jobs; this macro exists so when Phase B lands
+   the renderer is already in place. #}
+{% macro job_card_external(job, expanded=False) -%}
+<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="external">
+    {{ _job_header(job, expanded) }}
+    <div class="job-card-body" {% if not expanded %}style="display:none;"{% endif %}>
+        <div class="muted" style="padding:18px;">External job rendering — populated by Phase B.</div>
+    </div>
+</article>
+{%- endmacro %}
+
+{# ============================================================
+   Phase B job type — visual scaffolding only. Design jobs go
+   through customer revision rounds; data model + endpoints come
+   in Phase B. #}
+{% macro job_card_design(job, expanded=False) -%}
+<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="design">
+    {{ _job_header(job, expanded) }}
+    <div class="job-card-body" {% if not expanded %}style="display:none;"{% endif %}>
+        <div class="muted" style="padding:18px;">Design job rendering — populated by Phase B.</div>
+    </div>
+</article>
+{%- endmacro %}

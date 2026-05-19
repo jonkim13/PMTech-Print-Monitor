@@ -1,66 +1,62 @@
 // ============================================================
-// Work Orders - Page initialization, tab switching, state
+// Work Orders - SPA sub-tab routing (Triage / All Orders / Create)
+// WO Detail is its own Flask route as of Phase 2.5c — no detail
+// sub-tab here.
 // ============================================================
 
 var _woLineItemCounter = 0;
+// Kept for the Print modal's pre-stuffing protocol (Triage and WO
+// Detail page both populate these before opening the modal).
 var _woDetailId = null;
 var _woDetailQueueItems = [];
 var _woDetailJobs = [];
 var _woSelectedQueueIds = {};
-var _woQueueRefreshTimer = null;
-var _woDetailRefreshTimer = null;
-
-function _woRefreshIntervalMs() {
-    var cfg = (typeof window !== 'undefined' && window.APP_CONFIG)
-        ? window.APP_CONFIG : {};
-    var base = cfg.pollIntervalMs;
-    if (typeof base !== 'number' || base <= 0) {
-        return 10000;
-    }
-    // Use 2x the dashboard poll cadence for WO views so we don't
-    // over-fetch from a user parking on the page.
-    return Math.max(5000, base * 2);
-}
-
-function startWoQueueAutoRefresh() {
-    stopWoQueueAutoRefresh();
-    _woQueueRefreshTimer = setInterval(function() {
-        loadQueue();
-        loadQueueStats();
-    }, _woRefreshIntervalMs());
-}
-
-function stopWoQueueAutoRefresh() {
-    if (_woQueueRefreshTimer !== null) {
-        clearInterval(_woQueueRefreshTimer);
-        _woQueueRefreshTimer = null;
-    }
-}
-
-function startWoDetailAutoRefresh() {
-    stopWoDetailAutoRefresh();
-    _woDetailRefreshTimer = setInterval(function() {
-        if (_woDetailId) {
-            viewWorkOrder(_woDetailId);
-        } else {
-            stopWoDetailAutoRefresh();
-        }
-    }, _woRefreshIntervalMs());
-}
-
-function stopWoDetailAutoRefresh() {
-    if (_woDetailRefreshTimer !== null) {
-        clearInterval(_woDetailRefreshTimer);
-        _woDetailRefreshTimer = null;
-    }
-}
 
 function loadWorkOrdersPage() {
-    loadQueue();
-    loadQueueStats();
-    startWoQueueAutoRefresh();
+    // Default sub-tab on entering Work Orders is Triage.
+    if (typeof startTriagePoll === 'function') startTriagePoll();
 }
 
+// ============================================================
+// Sub-tab switching — Triage / Orders / Create
+// ============================================================
+function switchWoTab(tab) {
+    document.querySelectorAll('[data-wotab]').forEach(function (b) {
+        b.classList.remove('active');
+    });
+    var btn = document.querySelector('[data-wotab="' + tab + '"]');
+    if (btn) btn.classList.add('active');
+
+    var panels = ['triage', 'orders', 'create'];
+    panels.forEach(function (p) {
+        var el = document.getElementById('woPanel-' + p);
+        if (el) {
+            el.classList.remove('active');
+        }
+    });
+
+    var panel = document.getElementById('woPanel-' + tab);
+    if (panel) panel.classList.add('active');
+
+    if (tab === 'triage') {
+        if (typeof startTriagePoll === 'function') startTriagePoll();
+    } else {
+        if (typeof stopTriagePoll === 'function') stopTriagePoll();
+    }
+    if (tab === 'orders' && typeof loadWorkOrders === 'function') {
+        loadWorkOrders();
+    }
+    if (tab === 'create' && typeof initCreateForm === 'function') {
+        initCreateForm();
+    }
+}
+
+// ============================================================
+// Queue-status helpers — used by the Print modal and Triage row
+// dispatch. (The bridge shims to the deleted queue.js functions
+// from 2.5b are gone in 2.5c — the WO Detail page is its own
+// surface and doesn't need them.)
+// ============================================================
 function isQueueActiveStatus(status) {
     return ['uploading', 'uploaded', 'starting', 'printing'].indexOf(status) !== -1;
 }
@@ -70,10 +66,7 @@ function isQueueFailureStatus(status) {
 }
 
 function isQueuePrintableStatus(status) {
-    // 'cancelled' is printable — the UX contract is "cancel, fix the
-    // issue, hit Print again" without an intermediate Re-queue step.
-    return status === 'queued' || status === 'failed' ||
-        status === 'cancelled';
+    return status === 'queued' || status === 'failed' || status === 'cancelled';
 }
 
 function isQueueRetrySessionStatus(status) {
@@ -86,53 +79,5 @@ function isQueueCancellableStatus(status) {
 }
 
 function isQueueRetryableStatus(status) {
-    // Cancelled and failed items can be re-queued.
     return status === 'cancelled' || isQueueFailureStatus(status);
-}
-
-// ============================================================
-// Sub-tab switching
-// ============================================================
-function switchWoTab(tab) {
-    document.querySelectorAll('[data-wotab]').forEach(function(b) {
-        b.classList.remove('active');
-    });
-    var btn = document.querySelector('[data-wotab="' + tab + '"]');
-    if (btn) btn.classList.add('active');
-
-    // Hide all panels
-    var panels = ['queue', 'orders', 'create', 'detail'];
-    panels.forEach(function(p) {
-        var el = document.getElementById('woPanel-' + p);
-        if (el) {
-            el.classList.remove('active');
-            el.style.display = '';
-        }
-    });
-
-    // Show selected panel
-    var panel = document.getElementById('woPanel-' + tab);
-    if (panel) {
-        panel.classList.add('active');
-        if (tab === 'detail') panel.style.display = '';
-    }
-
-    if (tab !== 'detail') {
-        _woDetailId = null;
-        _woDetailQueueItems = [];
-        _woDetailJobs = [];
-        _woSelectedQueueIds = {};
-        stopWoDetailAutoRefresh();
-        updateWoSelectionToolbar();
-    }
-
-    if (tab === 'queue') {
-        loadQueue();
-        loadQueueStats();
-        startWoQueueAutoRefresh();
-    } else {
-        stopWoQueueAutoRefresh();
-    }
-    if (tab === 'orders') loadWorkOrders();
-    if (tab === 'create') initCreateForm();
 }

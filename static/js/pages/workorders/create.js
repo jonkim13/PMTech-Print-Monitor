@@ -125,11 +125,12 @@ async function submitCreateWorkOrder() {
             document.getElementById('woLineItems').innerHTML = '';
             _woLineItemCounter = 0;
             addWoLineItem();
-            // Jump straight into the new work order's detail view so
-            // the user can see exactly what was created.
-            switchWoTab('orders');
-            await loadWorkOrders();
-            viewWorkOrder(result.wo_id);
+            // Jump straight into the new work order's detail page so
+            // the user can see exactly what was created. WO Detail is
+            // a real route as of Phase 2.5c.
+            window.location.href = '/work-orders/' +
+                encodeURIComponent(result.wo_id) + '?from=all';
+            return;
         } else {
             showToast('Error: ' + (result.error || 'Unknown'), 'error');
         }

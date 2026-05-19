@@ -36,7 +36,201 @@ class WorkOrderService:
         wo = self.work_order_repository.get_work_order(wo_id)
         if wo is not None:
             self._attach_production_outcome(wo)
+            self._attach_inspection_summaries(wo)
+            self._attach_normalized_counts(wo)
+            self._attach_activity_timeline(wo)
         return wo
+
+    # ------------------------------------------------------------------
+    # Phase 2.5c enrichment helpers
+    # ------------------------------------------------------------------
+
+    def _attach_inspection_summaries(self, wo: dict) -> None:
+        """Aggregate per-job inspection counts onto each job in wo['jobs'].
+
+        For Internal jobs, each member queue_item carries a
+        ``production_outcome`` populated by _attach_production_outcome.
+        We aggregate per job_id and emit:
+            inspection: {passed, failed, pending, total, inspector, state}
+        """
+        queue_items = wo.get("queue_items") or []
+        by_job: dict = {}
+        for qi in queue_items:
+            jid = qi.get("job_id")
+            if jid is None:
+                continue
+            bucket = by_job.setdefault(jid, {
+                "passed": 0, "failed": 0, "pending": 0, "total": 0,
+                "operators": {},
+            })
+            if qi.get("status") != "completed":
+                continue
+            bucket["total"] += 1
+            outcome = qi.get("production_outcome")
+            if outcome == "pass":
+                bucket["passed"] += 1
+            elif outcome == "fail":
+                bucket["failed"] += 1
+            else:
+                bucket["pending"] += 1
+            op = qi.get("production_operator") or qi.get(
+                "queue_job_operator_initials"
+            )
+            if op:
+                bucket["operators"][op] = bucket["operators"].get(op, 0) + 1
+
+        for job in wo.get("jobs") or []:
+            bucket = by_job.get(job.get("job_id"), {
+                "passed": 0, "failed": 0, "pending": 0, "total": 0,
+                "operators": {},
+            })
+            inspector = None
+            if bucket["operators"]:
+                inspector = max(
+                    bucket["operators"].items(), key=lambda x: x[1]
+                )[0]
+            if bucket["failed"] > 0:
+                state = "failed"
+            elif bucket["total"] > 0 and bucket["passed"] == bucket["total"]:
+                state = "passed"
+            elif bucket["total"] > 0:
+                state = "in-progress"
+            else:
+                state = "pending"
+            job["inspection"] = {
+                "passed": bucket["passed"],
+                "failed": bucket["failed"],
+                "pending": bucket["pending"],
+                "total": bucket["total"],
+                "inspector": inspector,
+                "state": state,
+            }
+            # 2.5c-bound default — every current job is Internal until
+            # Phase B adds the External/Design types.
+            job.setdefault("type", "internal")
+
+    def _attach_normalized_counts(self, wo: dict) -> None:
+        """Emit the design's `counts` block for the stacked progress bar.
+
+        Keys: total, done, printing, queued, failed, pending, in_transit.
+        Sourced from queue_items statuses + production_outcome.
+        """
+        queue_items = wo.get("queue_items") or []
+        counts = {
+            "total": len(queue_items),
+            "done": 0,
+            "printing": 0,
+            "queued": 0,
+            "failed": 0,
+            "pending": 0,    # completed but outcome=unknown (awaiting QC)
+            "in_transit": 0,  # Phase B (External jobs)
+        }
+        for qi in queue_items:
+            status = qi.get("status")
+            if status == "completed":
+                counts["done"] += 1
+                if (qi.get("production_outcome") or "unknown") == "unknown":
+                    counts["pending"] += 1
+            elif status in ("printing", "starting", "uploading", "uploaded"):
+                counts["printing"] += 1
+            elif status == "queued":
+                counts["queued"] += 1
+            elif status in ("failed", "upload_failed", "start_failed",
+                            "cancelled"):
+                counts["failed"] += 1
+        wo["counts"] = counts
+
+    def _attach_activity_timeline(self, wo: dict, limit: int = 12) -> None:
+        """Synthesize activity events from queue_items timestamps.
+
+        PrintHistoryDB doesn't tag events by wo_id, so we derive
+        per-WO activity from the queue_items' own timestamps. Each
+        item contributes up to four synthetic events: queued, started,
+        completed, qc-pass/fail. Sorted newest-first, capped to `limit`.
+        """
+        queue_items = wo.get("queue_items") or []
+        events: list = []
+        for qi in queue_items:
+            part_label = "{} {}/{}".format(
+                qi.get("part_name") or "part",
+                qi.get("sequence_number") or "?",
+                qi.get("total_quantity") or "?",
+            )
+            printer = qi.get("assigned_printer_name") or ""
+            if qi.get("started_at"):
+                events.append({
+                    "ts": qi["started_at"],
+                    "kind": "started",
+                    "tone": "info",
+                    "text": "Started {}".format(part_label),
+                    "where": printer,
+                })
+            if qi.get("completed_at"):
+                status = qi.get("status")
+                if status == "completed":
+                    events.append({
+                        "ts": qi["completed_at"],
+                        "kind": "completed",
+                        "tone": "ok",
+                        "text": "Completed {}".format(part_label),
+                        "where": printer,
+                    })
+                    outcome = qi.get("production_outcome")
+                    if outcome == "pass":
+                        events.append({
+                            "ts": qi["completed_at"],
+                            "kind": "qc-pass",
+                            "tone": "ok",
+                            "text": "Inspection passed · {}".format(
+                                part_label),
+                            "where": qi.get("production_operator") or "",
+                        })
+                    elif outcome == "fail":
+                        events.append({
+                            "ts": qi["completed_at"],
+                            "kind": "qc-fail",
+                            "tone": "err",
+                            "text": "Inspection failed · {}".format(
+                                part_label),
+                            "where": qi.get("production_operator") or "",
+                        })
+                elif status in ("failed", "upload_failed", "start_failed"):
+                    events.append({
+                        "ts": qi["completed_at"],
+                        "kind": "failed",
+                        "tone": "err",
+                        "text": "Failed {}".format(part_label),
+                        "where": printer,
+                    })
+                elif status == "cancelled":
+                    events.append({
+                        "ts": qi["completed_at"],
+                        "kind": "cancelled",
+                        "tone": "warn",
+                        "text": "Cancelled {}".format(part_label),
+                        "where": printer,
+                    })
+        # WO-level transitions
+        if wo.get("created_at"):
+            events.append({
+                "ts": wo["created_at"],
+                "kind": "wo-created",
+                "tone": "neutral",
+                "text": "{} created".format(wo.get("wo_id") or "WO"),
+                "where": wo.get("customer_name") or "",
+            })
+        if wo.get("completed_at"):
+            events.append({
+                "ts": wo["completed_at"],
+                "kind": "wo-completed",
+                "tone": "ok",
+                "text": "{} marked {}".format(
+                    wo.get("wo_id") or "WO", wo.get("status") or "completed"
+                ),
+                "where": "",
+            })
+        events.sort(key=lambda e: e.get("ts") or "", reverse=True)
+        wo["activity"] = events[:limit]
 
     def cancel_work_order(self, wo_id: str) -> dict:
         """Cancel every non-terminal queue item in a WO.

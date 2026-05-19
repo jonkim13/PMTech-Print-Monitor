@@ -20,15 +20,6 @@ class QueueService:
     # Query
     # ------------------------------------------------------------------
 
-    def get_queue(self, status: Optional[str] = None,
-                  limit: int = 200, offset: int = 0) -> list:
-        return self.queue_repository.get_queue(
-            status=status, limit=limit, offset=offset
-        )
-
-    def get_queue_stats(self) -> dict:
-        return self.queue_repository.get_queue_stats()
-
     def get_queue_item(self, queue_id: int) -> Optional[dict]:
         return self.queue_repository.get_queue_item(queue_id)
 

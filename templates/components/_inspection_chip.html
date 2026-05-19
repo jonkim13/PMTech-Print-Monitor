@@ -1,0 +1,44 @@
+{# Per-job inspection chip — variants per README §4 inspection chip table.
+   Internal: on completion / X/N passed N pending / all passed / K failed
+   External: pending arrival / in progress / passed   (Phase B)
+   Design:   draft / awaiting customer / revision requested / approved (Phase B) #}
+{% macro inspection_chip(job) -%}
+{%- set job_type = job.type or 'internal' -%}
+{%- if job_type == 'design' -%}
+    {# Phase B — visual scaffolding only #}
+    {%- set status = job.status or 'draft' -%}
+    {%- if status == 'approved' -%}
+        <span class="inspection-chip tone-ok">CUSTOMER APPROVED{% if job.approvedBy %} &middot; {{ job.approvedBy|upper }}{% endif %}</span>
+    {%- elif status == 'revision-requested' -%}
+        <span class="inspection-chip tone-warn">REVISION REQUESTED &middot; ROUND {{ job.rounds or 1 }}</span>
+    {%- elif status == 'awaiting-customer' -%}
+        <span class="inspection-chip tone-busy">AWAITING CUSTOMER &middot; ROUND {{ job.rounds or 1 }}</span>
+    {%- else -%}
+        <span class="inspection-chip tone-neutral">DRAFT</span>
+    {%- endif -%}
+{%- elif job_type == 'external' -%}
+    {# Phase B — visual scaffolding only #}
+    {%- set i = job.inspection or {} -%}
+    {%- set inspector = (i.inspector or '—')|upper -%}
+    {%- if i.state == 'passed' -%}
+        <span class="inspection-chip tone-ok">INCOMING INSPECTION &middot; PASSED &middot; {{ inspector }}</span>
+    {%- elif i.state == 'in-progress' -%}
+        <span class="inspection-chip tone-info">INCOMING INSPECTION &middot; IN PROGRESS &middot; {{ inspector }}</span>
+    {%- else -%}
+        <span class="inspection-chip tone-busy">INCOMING INSPECTION &middot; ON ARRIVAL &middot; {{ inspector }}</span>
+    {%- endif -%}
+{%- else -%}
+    {# Internal — populated from production_outcome aggregation #}
+    {%- set i = job.inspection or {'passed': 0, 'failed': 0, 'pending': 0, 'total': 0, 'inspector': None, 'state': 'pending'} -%}
+    {%- set inspector = (i.inspector or '—')|upper -%}
+    {%- if i.failed and i.failed > 0 -%}
+        <span class="inspection-chip tone-err">INSPECTION &middot; {{ i.failed }} FAILED &middot; {{ inspector }}</span>
+    {%- elif i.pending and i.pending > 0 -%}
+        <span class="inspection-chip tone-warn">INSPECTION &middot; {{ i.passed }}/{{ i.total }} PASSED &middot; {{ i.pending }} PENDING</span>
+    {%- elif i.total and i.total > 0 and i.passed == i.total -%}
+        <span class="inspection-chip tone-ok">ALL {{ i.total }} PARTS PASSED &middot; {{ inspector }}</span>
+    {%- else -%}
+        <span class="inspection-chip tone-neutral">INSPECTION &middot; ON COMPLETION &middot; {{ inspector }}</span>
+    {%- endif -%}
+{%- endif -%}
+{%- endmacro %}

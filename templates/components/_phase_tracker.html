@@ -1,0 +1,61 @@
+{# Data-driven phase tracker — only renders phases that exist on this WO,
+   plus the synthetic terminals (Sign-off, Ship).
+   Per README §4: most current WOs are pure-Internal → 3 steps.
+   Phase B (Design/External) adds steps automatically. #}
+{% macro phase_tracker(wo, active_job_id=None) -%}
+{%- set jobs = wo.jobs or [] -%}
+{# Determine WO-Sign-off readiness: every job's inspection state is `passed`. #}
+{%- set all_passed = jobs|length > 0 and jobs|selectattr("inspection.state", "equalto", "passed")|list|length == jobs|length -%}
+<div class="phase-tracker">
+    <div class="k phase-tracker-label">Process · {{ (jobs|length) + 2 }} step{{ '' if ((jobs|length) + 2) == 1 else 's' }}</div>
+    <div class="phase-tracker-row">
+        {% for job in jobs %}
+            {%- set is_active = (job.job_id|string) == (active_job_id|string) -%}
+            {%- set status = job.status or 'open' -%}
+            {%- set tone = 'info' if status in ('in_progress','open','attention') else ('ok' if status == 'completed' else ('neutral' if status == 'cancelled' else 'neutral')) -%}
+            <div class="phase-step{% if is_active %} phase-active{% endif %}" data-job-id="{{ job.job_id }}">
+                <div class="phase-step-head">
+                    <span class="k phase-step-idx">STEP {{ loop.index }}</span>
+                    <span class="job-type {{ job.type or 'internal' }}">{{ (job.type or 'internal')|upper }}</span>
+                    <div style="flex:1;"></div>
+                    {% if status == 'in_progress' %}<span class="phase-step-tag phase-step-tag-info">&bull; ACTIVE</span>{% endif %}
+                    {% if status == 'completed' %}<span class="phase-step-tag phase-step-tag-ok">&check; DONE</span>{% endif %}
+                </div>
+                <div class="phase-step-name">Job #{{ job.job_id }}</div>
+                <div class="phase-step-meta">
+                    {{ job.completed_parts or 0 }}/{{ job.part_count or 0 }}
+                    {%- if job.inspection and job.inspection.passed %} &middot; {{ job.inspection.passed }} inspected{% endif %}
+                </div>
+            </div>
+            <div class="phase-arrow">&rsaquo;</div>
+        {% endfor %}
+
+        {# Synthetic terminal: WO Sign-off #}
+        <div class="phase-step phase-step-terminal{% if all_passed %} phase-step-ready{% endif %}">
+            <div class="phase-step-head">
+                <span class="k phase-step-idx">STEP {{ jobs|length + 1 }}</span>
+                <span class="phase-step-marker">SIGN-OFF</span>
+                <div style="flex:1;"></div>
+                {% if all_passed %}<span class="phase-step-tag phase-step-tag-info">&bull; READY</span>{% endif %}
+            </div>
+            <div class="phase-step-name">WO sign-off</div>
+            <div class="phase-step-meta">
+                {% if all_passed %}All jobs inspected · ready to sign off{% else %}Pending · all jobs must pass inspection first{% endif %}
+            </div>
+        </div>
+        <div class="phase-arrow">&rsaquo;</div>
+
+        {# Synthetic terminal: Ship #}
+        <div class="phase-step phase-step-terminal">
+            <div class="phase-step-head">
+                <span class="k phase-step-idx">STEP {{ jobs|length + 2 }}</span>
+                <span class="phase-step-marker">SHIP</span>
+            </div>
+            <div class="phase-step-name">Deliver</div>
+            <div class="phase-step-meta">
+                {% if wo.due_date %}Due {{ wo.due_date }}{% else %}No due date{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{%- endmacro %}

@@ -1,0 +1,50 @@
+{# One row inside the parts-grouped-by-status table of an expanded Internal job.
+   `part` is a queue_item dict. #}
+{% from "components/_progress.html" import progress %}
+{% from "components/_status_pill.html" import status_pill %}
+{% macro part_row(part) -%}
+{%- set status = part.status or 'queued' -%}
+{%- set is_printable = status in ('queued', 'cancelled', 'failed') -%}
+{%- set is_printing = status == 'printing' -%}
+{%- set is_done = status == 'completed' -%}
+<div class="part-row" data-queue-id="{{ part.queue_id }}" data-status="{{ status }}" data-printable="{{ '1' if is_printable else '0' }}">
+    <span class="part-row-checkbox">
+        {% if is_printable %}
+        <input type="checkbox" class="wo-part-select" data-queue-id="{{ part.queue_id }}" onchange="WoDetail.togglePartSelection({{ part.queue_id }}, this.checked)">
+        {% endif %}
+    </span>
+    <div class="part-row-main">
+        <div class="part-row-title">
+            <span class="part-row-name">{{ part.part_name }}</span>
+            <span class="mono tab muted part-row-seq">{{ part.sequence_number }}/{{ part.total_quantity }}</span>
+            <span class="mono muted part-row-qid">Q-{{ part.queue_id }}</span>
+        </div>
+        <div class="part-row-meta">
+            <span>{{ part.material }}</span>
+            {% if part.assigned_printer_name %}<span class="muted">&middot; {{ part.assigned_printer_name }}</span>{% endif %}
+            {% if is_done and part.production_outcome == 'pass' %}
+                <span class="part-row-qc tone-ok">Inspection passed{% if part.production_operator %} by {{ part.production_operator }}{% endif %}</span>
+            {% elif is_done and part.production_outcome == 'fail' %}
+                <span class="part-row-qc tone-err">Inspection failed{% if part.production_operator %} by {{ part.production_operator }}{% endif %}</span>
+            {% elif is_done %}
+                <span class="part-row-qc tone-warn">Awaiting per-job inspection</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="part-row-actions">
+        {% if is_printing %}
+            <button class="btn sm danger" onclick="WoDetail.cancelPart({{ part.queue_id }}, '{{ part.part_name|e }}')">Cancel</button>
+        {% elif is_printable %}
+            <button class="btn sm go" onclick="WoDetail.printPart({{ part.queue_id }}{% if part.job_id %}, {{ part.job_id }}{% endif %})">&#9654; Print</button>
+            <button class="btn sm ghost" onclick="WoDetail.cancelPart({{ part.queue_id }}, '{{ part.part_name|e }}')">&times;</button>
+        {% elif is_done and part.production_outcome not in ('pass', 'fail') %}
+            <button class="btn sm primary" onclick="WoDetail.setQC({{ part.print_job_id or 'null' }}, {{ part.queue_id }})">Inspect &rsaquo;</button>
+        {% elif is_done and part.production_outcome == 'pass' %}
+            {{ status_pill('done', label='Done') }}
+        {% elif status in ('upload_failed', 'start_failed') %}
+            <button class="btn sm warn" onclick="WoDetail.retryPart({{ part.queue_id }})">Retry {% if status == 'start_failed' %}Start{% else %}Upload{% endif %}</button>
+            <button class="btn sm ghost" onclick="WoDetail.cancelPart({{ part.queue_id }}, '{{ part.part_name|e }}')">&times;</button>
+        {% endif %}
+    </div>
+</div>
+{%- endmacro %}

@@ -27,6 +27,7 @@ from ..domains.production.machine_repository import MachineLogRepository
 from ..domains.production.material_repository import MaterialUsageRepository
 from ..domains.production.service import ProductionService
 from ..domains.dashboard.service import DashboardService
+from ..domains.triage.service import TriageService
 from ..domains.reports.weekly_service import WeeklyReportService
 
 from .settings import AppSettings, load_settings
@@ -61,6 +62,7 @@ class AppContainer:
     assignment_service: AssignmentService
     weekly_report_service: WeeklyReportService
     dashboard_service: DashboardService
+    triage_service: TriageService
 
     @property
     def upload_session_db(self) -> UploadSessionRepository:
@@ -198,6 +200,14 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         production_job_repository=job_repository,
         work_order_db_path=settings.work_order_db_path,
     )
+    triage_service = TriageService(
+        queue_repository=queue_repository,
+        work_order_repository=work_order_repository,
+        print_job_repository=job_repository,
+        inventory_repository=filament_db,
+        farm_manager=farm_manager,
+        work_order_db_path=settings.work_order_db_path,
+    )
 
     return AppContainer(
         settings=settings,
@@ -225,4 +235,5 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         assignment_service=assignment_service,
         weekly_report_service=weekly_report_service,
         dashboard_service=dashboard_service,
+        triage_service=triage_service,
     )

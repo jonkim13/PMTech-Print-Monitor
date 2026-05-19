@@ -7,13 +7,14 @@ and integrated print-from-queue functionality.
 
 import os
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 work_order_api = Blueprint("work_order_api", __name__)
 
 _work_order_service = None
 _queue_service = None
+_triage_service = None
 _farm_manager = None
 _gcode_uploads_dir = None
 _execution_service = None
@@ -25,12 +26,14 @@ def register_work_order_routes(app, farm_manager,
                                upload_workflow=None,
                                execution_service=None,
                                work_order_service=None,
-                               queue_service=None):
+                               queue_service=None,
+                               triage_service=None):
     """Wire up the work order blueprint."""
-    global _work_order_service, _queue_service
+    global _work_order_service, _queue_service, _triage_service
     global _farm_manager, _gcode_uploads_dir, _execution_service
     _work_order_service = work_order_service
     _queue_service = queue_service
+    _triage_service = triage_service
     _farm_manager = farm_manager
     _gcode_uploads_dir = gcode_uploads_dir
     _execution_service = execution_service or upload_workflow
@@ -271,11 +274,74 @@ def api_list_work_orders():
 
 @work_order_api.route("/api/workorders/<wo_id>")
 def api_get_work_order(wo_id):
-    """Get work order detail with line items and queue items."""
+    """Get work order detail with line items and queue items.
+
+    Phase 2.5c extended the payload to include per-job inspection
+    summaries, a normalized counts block (for the stacked progress
+    bar), and a synthesized activity timeline. See WorkOrderService
+    `_attach_*` helpers.
+    """
     wo = _work_order_service.get_work_order(wo_id)
     if not wo:
         return jsonify({"error": "Work order not found"}), 404
     return jsonify(wo)
+
+
+# Phase 2.5c — hyphenated alias matching the new HTML route convention.
+# Kept alongside the legacy `/api/workorders/<wo_id>` endpoint so existing
+# callers don't break. New JS modules should prefer this hyphenated name.
+@work_order_api.route("/api/work-orders/<wo_id>")
+def api_get_work_order_hyphenated(wo_id):
+    return api_get_work_order(wo_id)
+
+
+# ------------------------------------------------------------------
+# Phase 2.5c — WO Detail HTML route.
+# Server-renders the full WO Detail page; client-side JS polls
+# /api/work-orders/<wo_id> every 2.5s for partial updates.
+# ------------------------------------------------------------------
+_BACK_TARGETS = {
+    "triage": ("/?tab=workorders", "Triage"),
+    "all": ("/?tab=workorders&subtab=orders", "All Orders"),
+    "dashboard": ("/?tab=dashboard", "Dashboard"),
+}
+
+
+@work_order_api.route("/work-orders/<wo_id>")
+def page_work_order_detail(wo_id):
+    """Render the WO Detail page.
+
+    Query params:
+        ?from=triage|all|dashboard  — drives the breadcrumb back link.
+        ?focus=JOB-x or P-xx        — pre-expands that job + adds the
+                                       'DEEP-LINKED' pill.
+    """
+    wo = _work_order_service.get_work_order(wo_id)
+    if not wo:
+        return render_template(
+            "wo_detail_404.html",
+            wo_id=wo_id,
+            poll_interval_ms=2500,
+        ), 404
+
+    from_key = (request.args.get("from") or "all").strip().lower()
+    back_url, back_label = _BACK_TARGETS.get(
+        from_key, _BACK_TARGETS["all"]
+    )
+    focus = (request.args.get("focus") or "").strip() or None
+    focus_job_id = focus if focus and focus.startswith("JOB-") else None
+
+    return render_template(
+        "wo_detail.html",
+        wo=wo,
+        back_url=back_url,
+        back_label=back_label,
+        focus=focus,
+        focus_job_id=focus_job_id,
+        standalone_page=True,
+        active_sidebar_page="workorders",
+        poll_interval_ms=2500,
+    )
 
 
 @work_order_api.route("/api/workorders/<wo_id>/jobs")
@@ -384,23 +450,29 @@ def api_retry_work_order_job(wo_id, job_id):
 
 
 # ------------------------------------------------------------------
-# Production Queue
+# Triage (Phase 2.5b — replaces the legacy Queue list / stats endpoints)
 # ------------------------------------------------------------------
 
-@work_order_api.route("/api/queue")
-def api_queue():
-    """Get the production queue, FIFO ordered."""
-    status = request.args.get("status")
-    limit = request.args.get("limit", 200, type=int)
-    items = _queue_service.get_queue(status=status, limit=limit)
-    return jsonify(items)
+@work_order_api.route("/api/triage")
+def api_triage():
+    """Aggregated 5-lane triage payload + active-parts table.
+
+    Composes from queue_items, print_jobs, and printer runtime state
+    in Python — see app/domains/triage/service.py.
+    """
+    if _triage_service is None:
+        return jsonify({"error": "Triage service not configured"}), 500
+    return jsonify(_triage_service.get_triage_payload())
 
 
-@work_order_api.route("/api/queue/stats")
-def api_queue_stats():
-    """Get queue summary counts."""
-    return jsonify(_queue_service.get_queue_stats())
-
+# ------------------------------------------------------------------
+# Production Queue — action endpoints only.
+# The legacy GET /api/queue and GET /api/queue/stats were retired in
+# Phase 2.5b along with the Queue sub-tab; Triage is the read surface.
+# Print / cancel / retry endpoints remain because the Print modal,
+# Triage actions, WO Detail, and the polling completion handler all
+# depend on them.
+# ------------------------------------------------------------------
 
 @work_order_api.route("/api/queue/<int:queue_id>", methods=["PATCH"])
 def api_update_queue_item(queue_id):

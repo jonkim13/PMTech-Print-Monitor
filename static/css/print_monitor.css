@@ -240,7 +240,7 @@ h1, h2, h3, h4 { margin: 0; }
    (.btn-primary, .btn-green, .btn-orange, .btn-danger) since
    print_monitor.css loads after main.css. :where() keeps specificity
    at (0,1,0) so other Dashboard atom rules cascade normally. */
-:where(#page-dashboard, .modal-overlay) .btn {
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: var(--sans); font-size: 12px; font-weight: 600;
   padding: 6px 10px; border-radius: 5px;
@@ -248,18 +248,18 @@ h1, h2, h3, h4 { margin: 0; }
   border: 1px solid var(--border-2);
   cursor: pointer; line-height: 1;
 }
-:where(#page-dashboard, .modal-overlay) .btn:hover { color: var(--fg); border-color: var(--fg-3); }
-:where(#page-dashboard, .modal-overlay) .btn.primary { background: var(--info); color: #061018; border-color: transparent; }
-:where(#page-dashboard, .modal-overlay) .btn.primary:hover { color: #061018; filter: brightness(1.08); }
-:where(#page-dashboard, .modal-overlay) .btn.go { background: rgba(52,211,153,.12); color: var(--ok); border: 1px solid rgba(52,211,153,.30); }
-:where(#page-dashboard, .modal-overlay) .btn.warn { background: rgba(251,191,36,.10); color: var(--warn); border: 1px solid rgba(251,191,36,.30); }
-:where(#page-dashboard, .modal-overlay) .btn.danger { background: rgba(251,113,133,.10); color: var(--err); border: 1px solid rgba(251,113,133,.30); }
-:where(#page-dashboard, .modal-overlay) .btn.danger:hover { color: var(--err); }
-:where(#page-dashboard, .modal-overlay) .btn.ghost { background: transparent; }
-:where(#page-dashboard, .modal-overlay) .btn.sm { padding: 4px 8px; font-size: 11px; }
-:where(#page-dashboard, .modal-overlay) .btn:disabled,
-:where(#page-dashboard, .modal-overlay) .btn[disabled] { opacity: 0.3; cursor: default; }
-:where(#page-dashboard, .modal-overlay) .btn:disabled:hover { color: var(--fg-2); border-color: var(--border-2); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn:hover { color: var(--fg); border-color: var(--fg-3); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.primary { background: var(--info); color: #061018; border-color: transparent; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.primary:hover { color: #061018; filter: brightness(1.08); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.go { background: rgba(52,211,153,.12); color: var(--ok); border: 1px solid rgba(52,211,153,.30); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.warn { background: rgba(251,191,36,.10); color: var(--warn); border: 1px solid rgba(251,191,36,.30); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.danger { background: rgba(251,113,133,.10); color: var(--err); border: 1px solid rgba(251,113,133,.30); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.danger:hover { color: var(--err); }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.ghost { background: transparent; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn.sm { padding: 4px 8px; font-size: 11px; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn:disabled,
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn[disabled] { opacity: 0.3; cursor: default; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .btn:disabled:hover { color: var(--fg-2); border-color: var(--border-2); }
 
 /* tool slot pill */
 .tool {
@@ -575,8 +575,8 @@ h1, h2, h3, h4 { margin: 0; }
    inline-flex behavior on toolbars (Inventory filter row, Production
    toolbar, etc.). Without scoping, width:100% here forced those
    inputs to stack vertically. */
-:where(#page-dashboard, .modal-overlay) .form-group { margin-bottom: 12px; }
-:where(#page-dashboard, .modal-overlay) .form-label {
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-group { margin-bottom: 12px; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-label {
   display: block;
   font-family: var(--mono);
   font-size: 10px; letter-spacing: 1.2px;
@@ -584,9 +584,9 @@ h1, h2, h3, h4 { margin: 0; }
   font-weight: 500;
   margin-bottom: 4px;
 }
-:where(#page-dashboard, .modal-overlay) .form-input,
-:where(#page-dashboard, .modal-overlay) .input-field,
-:where(#page-dashboard, .modal-overlay) .form-input select {
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-input,
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .input-field,
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-input select {
   width: 100%;
   background: var(--bg-2);
   border: 1px solid var(--border-2);
@@ -597,12 +597,12 @@ h1, h2, h3, h4 { margin: 0; }
   border-radius: 5px;
   line-height: 1.4;
 }
-:where(#page-dashboard, .modal-overlay) .form-input:focus,
-:where(#page-dashboard, .modal-overlay) .input-field:focus {
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-input:focus,
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .input-field:focus {
   outline: none;
   border-color: var(--info);
 }
-:where(#page-dashboard, .modal-overlay) .form-row { display: flex; gap: 10px; align-items: flex-end; }
+:where(#page-dashboard, #page-workorders-triage, #page-wo-detail, .modal-overlay) .form-row { display: flex; gap: 10px; align-items: flex-end; }
 
 /* NOTE: rules for .prod-tabs / .prod-tab / .prod-panel / .wo-tab /
    .wo-panel / .stats-bar / .stat-item / .data-table / .table-container /
@@ -639,5 +639,537 @@ h1, h2, h3, h4 { margin: 0; }
   margin: 6px 0; padding: 6px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+
+/* ============================================================
+ * Triage (Phase 2.5b) — all rules scoped to #page-workorders-triage
+ * so they don't bleed into the All Orders / Create / Detail subtabs
+ * (which keep their pre-2.5b legacy styling).
+ * ============================================================ */
+
+:where(#page-workorders-triage) .triage-head {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 14px;
+}
+:where(#page-workorders-triage) .triage-title {
+  font-size: 20px; font-weight: 700; margin: 0;
+  letter-spacing: -0.3px;
+}
+
+/* 5-lane grid. Below ~1100px the lanes wrap to two columns
+   (and to one column under 700px) per the design brief. */
+:where(#page-workorders-triage) .lanes-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1100px) {
+  :where(#page-workorders-triage) .lanes-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  :where(#page-workorders-triage) .lanes-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+:where(#page-workorders-triage) .lane {
+  background: linear-gradient(180deg, var(--card) 0%, var(--card-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  min-height: 220px;
+  min-width: 0;
+}
+:where(#page-workorders-triage) .lane-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+:where(#page-workorders-triage) .lane-swatch {
+  width: 8px; height: 8px; border-radius: 2px;
+}
+:where(#page-workorders-triage) .lane-label {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.5px; color: var(--fg);
+}
+:where(#page-workorders-triage) .lane-count {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 8px;
+  background: var(--card-2); color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+:where(#page-workorders-triage) .lane.lane-failed .lane-count        { background: rgba(251,113,133,.16); color: var(--err); }
+:where(#page-workorders-triage) .lane.lane-qc .lane-count            { background: rgba(125,211,252,.16); color: var(--info); }
+:where(#page-workorders-triage) .lane.lane-ready_ship .lane-count    { background: rgba(52,211,153,.16); color: var(--ok); }
+:where(#page-workorders-triage) .lane.lane-design_await .lane-count  { background: rgba(167,139,250,.16); color: var(--busy); }
+:where(#page-workorders-triage) .lane.lane-external_spool .lane-count{ background: rgba(251,191,36,.16); color: var(--warn); }
+
+:where(#page-workorders-triage) .lane-body {
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+:where(#page-workorders-triage) .lane-empty {
+  color: var(--fg-3);
+  font-size: 11.5px;
+  text-align: center;
+  padding: 18px 8px;
+  font-style: italic;
+}
+
+/* Lane card — reuses .attn-card visual (already scope-extended above) */
+:where(#page-workorders-triage) .lane-card {
+  padding: 10px 12px;
+  cursor: default;
+  min-width: 0;
+}
+:where(#page-workorders-triage) .lane-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+:where(#page-workorders-triage) .lane-card-meta {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+:where(#page-workorders-triage) .lane-card-customer { font-size: 11.5px; }
+:where(#page-workorders-triage) .lane-card-ts { font-size: 10px; }
+:where(#page-workorders-triage) .spool-pct {
+  font-size: 11px; color: var(--warn); font-weight: 600;
+}
+:where(#page-workorders-triage) .lane-card-sub {
+  margin-top: 4px;
+  color: var(--fg-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+:where(#page-workorders-triage) .lane-card-actions {
+  display: flex; gap: 6px;
+  margin-top: 8px;
+}
+
+/* Active parts table — situational awareness below the lanes */
+:where(#page-workorders-triage) .active-parts-section {
+  margin-top: 24px;
+}
+:where(#page-workorders-triage) .active-parts-head {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 10px;
+}
+:where(#page-workorders-triage) .active-parts-head h3 {
+  font-size: 15px; font-weight: 700; margin: 0;
+}
+:where(#page-workorders-triage) .active-parts-card {
+  overflow: hidden;
+}
+:where(#page-workorders-triage) .active-parts-grid {
+  display: grid;
+  grid-template-columns: 60px 90px 1fr 90px 110px 110px 110px 90px;
+  gap: 10px;
+  padding: 10px 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+:where(#page-workorders-triage) .active-parts-grid-head {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-3);
+  letter-spacing: 1px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+:where(#page-workorders-triage) .active-parts-row:hover {
+  background: rgba(255,255,255,.02);
+}
+:where(#page-workorders-triage) .active-parts-row:last-child {
+  border-bottom: 0;
+}
+:where(#page-workorders-triage) .active-parts-part {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+:where(#page-workorders-triage) .active-parts-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+:where(#page-workorders-triage) .active-parts-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  :where(#page-workorders-triage) .active-parts-grid {
+    grid-template-columns: 50px 80px 1fr 80px 100px 90px 90px 80px;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+  }
+}
+
+/* ============================================================
+ * WO Detail (Phase 2.5c) — all rules scoped to #page-wo-detail.
+ * Standalone Flask route /work-orders/<wo_id>; the SPA shell wraps
+ * this section but no other SPA panels are visible.
+ * ============================================================ */
+
+:where(#page-wo-detail).wo-detail-page {
+  padding: 0;
+}
+
+:where(#page-wo-detail) .wo-breadcrumb {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+:where(#page-wo-detail) .breadcrumb-sep { color: var(--fg-4); }
+:where(#page-wo-detail) .breadcrumb-wo {
+  color: var(--info); font-weight: 600; font-size: 13px;
+}
+:where(#page-wo-detail) .deep-link-pill {
+  margin-left: 8px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+  padding: 3px 8px; border-radius: 3px;
+  background: rgba(125,211,252,.10);
+  border: 1px solid rgba(125,211,252,.25);
+  color: var(--info);
+}
+
+/* Main + right rail grid */
+:where(#page-wo-detail) .wo-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 18px;
+}
+@media (max-width: 1100px) {
+  :where(#page-wo-detail) .wo-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* WO header */
+:where(#page-wo-detail) .wo-header { margin-bottom: 16px; }
+:where(#page-wo-detail) .wo-header-top {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 6px; flex-wrap: wrap;
+}
+:where(#page-wo-detail) .wo-header-id {
+  font-size: 22px; font-weight: 700;
+  color: var(--info);
+  letter-spacing: -0.4px;
+}
+:where(#page-wo-detail) .wo-header-sep { font-size: 22px; font-weight: 700; }
+:where(#page-wo-detail) .wo-header-customer { font-size: 20px; font-weight: 600; }
+:where(#page-wo-detail) .wo-header-meta {
+  font-size: 12px;
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+/* Counts block + stacked progress */
+:where(#page-wo-detail) .wo-counts-block {
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+:where(#page-wo-detail) .wo-counts-row {
+  display: flex; justify-content: space-between;
+  margin-bottom: 8px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+}
+:where(#page-wo-detail) .wo-count-done       { color: var(--ok); }
+:where(#page-wo-detail) .wo-count-printing   { color: var(--info); }
+:where(#page-wo-detail) .wo-count-queued     { color: var(--warn); }
+:where(#page-wo-detail) .wo-count-in-transit { color: var(--busy); }
+:where(#page-wo-detail) .wo-count-failed     { color: var(--err); }
+:where(#page-wo-detail) .wo-stacked-progress {
+  display: flex; height: 8px;
+  border-radius: 4px; overflow: hidden;
+  gap: 1px;
+  background: var(--bg-2);
+}
+:where(#page-wo-detail) .wo-stack-seg { transition: width .25s ease; }
+:where(#page-wo-detail) .wo-stack-seg.ok    { background: var(--ok); }
+:where(#page-wo-detail) .wo-stack-seg.info  { background: var(--info); }
+:where(#page-wo-detail) .wo-stack-seg.warn  { background: var(--warn); }
+:where(#page-wo-detail) .wo-stack-seg.busy  { background: var(--busy); }
+:where(#page-wo-detail) .wo-stack-seg.err   { background: var(--err); }
+
+/* Phase tracker */
+:where(#page-wo-detail) .phase-tracker { margin-bottom: 18px; }
+:where(#page-wo-detail) .phase-tracker-label { margin-bottom: 10px; }
+:where(#page-wo-detail) .phase-tracker-row {
+  display: flex; gap: 6px; align-items: stretch;
+  flex-wrap: wrap;
+}
+:where(#page-wo-detail) .phase-step {
+  flex: 1; min-width: 0; min-width: 180px;
+  padding: 14px 16px;
+  background: var(--card);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--info);
+  cursor: pointer;
+  transition: background .15s;
+}
+:where(#page-wo-detail) .phase-step:hover { background: var(--card-2); }
+:where(#page-wo-detail) .phase-step.phase-active { background: var(--card-2); }
+:where(#page-wo-detail) .phase-step-terminal {
+  border: 1px dashed var(--border-2);
+  border-top: 3px solid var(--neutral);
+  opacity: .7;
+}
+:where(#page-wo-detail) .phase-step-ready {
+  opacity: 1; border: 1px solid var(--border);
+  border-top: 3px solid var(--info);
+}
+:where(#page-wo-detail) .phase-step-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+}
+:where(#page-wo-detail) .phase-step-idx {
+  font-family: var(--mono); font-size: 10px;
+  letter-spacing: 1px; color: var(--fg-3);
+}
+:where(#page-wo-detail) .phase-step-marker {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+  color: var(--fg-3);
+  padding: 2px 6px; border: 1px solid var(--border-2);
+  border-radius: 3px; letter-spacing: 1px;
+}
+:where(#page-wo-detail) .phase-step-tag {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+}
+:where(#page-wo-detail) .phase-step-tag-info { color: var(--info); }
+:where(#page-wo-detail) .phase-step-tag-ok   { color: var(--ok); }
+:where(#page-wo-detail) .phase-step-name {
+  font-size: 13.5px; font-weight: 600; line-height: 1.3;
+  margin-bottom: 4px;
+}
+:where(#page-wo-detail) .phase-step-meta {
+  color: var(--fg-3); font-size: 11.5px; line-height: 1.45;
+}
+:where(#page-wo-detail) .phase-arrow {
+  align-self: center; color: var(--fg-4); padding: 0 2px;
+  font-size: 18px;
+}
+
+/* Inspection chip */
+:where(#page-wo-detail) .inspection-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.8px;
+  padding: 3px 7px; border-radius: 3px;
+  line-height: 1.1;
+}
+:where(#page-wo-detail) .inspection-chip.tone-ok      { color: var(--ok);  background: rgba(52,211,153,.10); border: 1px solid rgba(52,211,153,.28); }
+:where(#page-wo-detail) .inspection-chip.tone-info    { color: var(--info); background: rgba(125,211,252,.10); border: 1px solid rgba(125,211,252,.28); }
+:where(#page-wo-detail) .inspection-chip.tone-warn    { color: var(--warn); background: rgba(251,191,36,.10); border: 1px solid rgba(251,191,36,.28); }
+:where(#page-wo-detail) .inspection-chip.tone-err     { color: var(--err);  background: rgba(251,113,133,.10); border: 1px solid rgba(251,113,133,.28); }
+:where(#page-wo-detail) .inspection-chip.tone-busy    { color: var(--busy); background: rgba(167,139,250,.10); border: 1px solid rgba(167,139,250,.28); }
+:where(#page-wo-detail) .inspection-chip.tone-neutral { color: var(--neutral); background: rgba(129,139,156,.10); border: 1px solid rgba(129,139,156,.28); }
+
+/* Job cards */
+:where(#page-wo-detail) .job-card {
+  margin-bottom: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+:where(#page-wo-detail) .job-card-expanded { border-left: 3px solid var(--info); }
+:where(#page-wo-detail) .job-card-head {
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: auto auto auto auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+:where(#page-wo-detail) .job-card-caret { color: var(--fg-3); font-size: 11px; }
+:where(#page-wo-detail) .job-card-id { font-size: 12px; }
+:where(#page-wo-detail) .job-card-active-pill {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 1px; color: var(--info);
+  padding: 2px 6px; border: 1px solid var(--info); border-radius: 3px;
+}
+:where(#page-wo-detail) .job-card-name {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  min-width: 0;
+}
+:where(#page-wo-detail) .job-card-title { font-size: 15px; font-weight: 700; }
+:where(#page-wo-detail) .job-card-meta {
+  font-size: 12px; margin-top: 4px;
+  grid-column: 5 / -1;
+}
+
+:where(#page-wo-detail) .job-card-body { padding: 0; }
+:where(#page-wo-detail) .job-counts {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;
+}
+:where(#page-wo-detail) .job-count-cell {
+  display: flex; flex-direction: column; gap: 2px;
+}
+:where(#page-wo-detail) .job-count-val {
+  font-family: var(--mono); font-size: 22px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+:where(#page-wo-detail) .job-count-val.tone-ok   { color: var(--ok); }
+:where(#page-wo-detail) .job-count-val.tone-info { color: var(--info); }
+:where(#page-wo-detail) .job-count-val.tone-warn { color: var(--warn); }
+:where(#page-wo-detail) .job-count-val.tone-err  { color: var(--err); }
+
+:where(#page-wo-detail) .job-card-actions {
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,.10);
+  display: flex; gap: 8px;
+}
+
+/* Parts grouped by status */
+:where(#page-wo-detail) .part-group {}
+:where(#page-wo-detail) .part-group-head {
+  padding: 10px 18px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+:where(#page-wo-detail) .part-group-head .k.tone-info { color: var(--info); }
+:where(#page-wo-detail) .part-group-head .k.tone-warn { color: var(--warn); }
+:where(#page-wo-detail) .part-group-head .k.tone-ok   { color: var(--ok); }
+:where(#page-wo-detail) .part-group-head .k.tone-err  { color: var(--err); }
+:where(#page-wo-detail) .part-group-swatch {
+  width: 6px; height: 6px; border-radius: 3px;
+}
+:where(#page-wo-detail) .part-group-empty {
+  padding: 24px 18px;
+  color: var(--fg-3); font-size: 12px; text-align: center;
+}
+
+:where(#page-wo-detail) .part-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 14px;
+  padding: 12px 18px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+:where(#page-wo-detail) .part-row:last-child { border-bottom: 0; }
+:where(#page-wo-detail) .part-row-checkbox input { cursor: pointer; }
+:where(#page-wo-detail) .part-row-main { min-width: 0; }
+:where(#page-wo-detail) .part-row-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 600;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+:where(#page-wo-detail) .part-row-name { overflow-wrap: anywhere; }
+:where(#page-wo-detail) .part-row-seq { font-size: 11px; }
+:where(#page-wo-detail) .part-row-qid { font-size: 11px; }
+:where(#page-wo-detail) .part-row-meta {
+  color: var(--fg-3); font-size: 12px;
+  margin-top: 3px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+  align-items: center;
+}
+:where(#page-wo-detail) .part-row-qc.tone-ok   { color: var(--ok); }
+:where(#page-wo-detail) .part-row-qc.tone-err  { color: var(--err); }
+:where(#page-wo-detail) .part-row-qc.tone-warn { color: var(--warn); }
+:where(#page-wo-detail) .part-row-actions {
+  display: flex; gap: 6px; align-items: center;
+}
+
+/* Sticky selection toolbar */
+:where(#page-wo-detail) .wo-selection-toolbar {
+  position: sticky; bottom: 12px;
+  margin-top: 12px;
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--info);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  z-index: 10;
+}
+:where(#page-wo-detail) .wo-selection-toolbar .selection-count {
+  font-weight: 600; color: var(--info);
+}
+
+/* Right rail */
+:where(#page-wo-detail) .wo-right-rail {
+  display: flex; flex-direction: column; gap: 12px;
+}
+:where(#page-wo-detail) .needs-you-card {
+  border-left: 3px solid var(--warn);
+}
+:where(#page-wo-detail) .needs-you-label { color: var(--warn); margin-bottom: 8px; }
+:where(#page-wo-detail) .needs-you-empty {
+  font-size: 12px;
+  padding: 6px 0;
+}
+:where(#page-wo-detail) .needs-you-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+:where(#page-wo-detail) .needs-you-item:last-child { border-bottom: 0; }
+:where(#page-wo-detail) .needs-you-item-title {
+  font-size: 13px; font-weight: 600; margin-bottom: 4px;
+}
+:where(#page-wo-detail) .needs-you-item-sub {
+  font-size: 11.5px; margin-bottom: 8px;
+}
+:where(#page-wo-detail) .needs-you-item.tone-warn .needs-you-item-title { color: var(--warn); }
+:where(#page-wo-detail) .needs-you-item.tone-err  .needs-you-item-title { color: var(--err); }
+
+:where(#page-wo-detail) .activity-rail-label { margin-bottom: 10px; }
+:where(#page-wo-detail) .activity-rail-body {
+  display: flex; flex-direction: column; gap: 10px;
+  font-size: 12px;
+}
+:where(#page-wo-detail) .activity-event {
+  display: grid; grid-template-columns: 52px 14px 1fr auto;
+  gap: 8px; align-items: center;
+}
+:where(#page-wo-detail) .activity-event-ts {
+  font-size: 10.5px; color: var(--fg-3);
+}
+:where(#page-wo-detail) .activity-event-dot {
+  width: 8px; height: 8px; border-radius: 4px;
+}
+:where(#page-wo-detail) .activity-event-text { color: var(--fg); }
+:where(#page-wo-detail) .activity-event-where {
+  font-family: var(--mono); font-size: 10.5px;
+  color: var(--fg-3);
+}
+:where(#page-wo-detail) .activity-empty {
+  font-size: 12px; padding: 6px 0;
+}
+
+:where(#page-wo-detail) .quick-actions-body {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
 }
 

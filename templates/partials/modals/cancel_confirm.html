@@ -1,0 +1,18 @@
+<!-- ===== GENERIC CANCEL CONFIRM MODAL =====
+     Used by WO Detail for Cancel WO / Cancel Job / Cancel Part flows.
+     The triggering JS populates title + body and binds the confirm button. -->
+<div class="modal-overlay" id="cancelConfirmModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="cancelConfirmTitle">Cancel?</h3>
+            <button class="modal-close" onclick="hideModal('cancelConfirmModal')" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="cancelConfirmBody">This cannot be undone.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn ghost" onclick="hideModal('cancelConfirmModal')">Keep</button>
+            <button class="btn danger" id="cancelConfirmBtn">Cancel anyway</button>
+        </div>
+    </div>
+</div>

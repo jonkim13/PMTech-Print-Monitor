@@ -1,74 +1,54 @@
+{% from "components/_lane.html" import lane %}
         <!-- ==================== WORK ORDERS PAGE ==================== -->
         <div class="section-page" id="page-workorders">
 
             <!-- Sub-tab navigation -->
             <div class="prod-tabs">
-                <button class="wo-tab active" data-wotab="queue" onclick="switchWoTab('queue')">Production Queue</button>
+                <button class="wo-tab active" data-wotab="triage" onclick="switchWoTab('triage')">Triage</button>
                 <button class="wo-tab" data-wotab="orders" onclick="switchWoTab('orders')">All Orders</button>
-                <button class="wo-tab" data-wotab="create" onclick="switchWoTab('create')">Create New</button>
+                <button class="wo-tab" data-wotab="create" onclick="switchWoTab('create')">+ New WO</button>
             </div>
 
-            <!-- ---- Queue Sub-Tab ---- -->
-            <div class="wo-panel active" id="woPanel-queue">
-                <!-- Queue Stats -->
-                <div class="stats-bar" style="margin-bottom: 16px;">
-                    <div class="stat-item">
-                        <span class="stat-label">Queued</span>
-                        <span class="stat-value orange" id="queueStatQueued">0</span>
+            <!-- ---- Triage Sub-Tab (Phase 2.5b) ---- -->
+            <div class="wo-panel active" id="woPanel-triage">
+                <div id="page-workorders-triage">
+                    <!-- Header strip -->
+                    <div class="triage-head">
+                        <h2 class="triage-title">Triage</h2>
+                        <span class="muted" id="triageSubtitle">Decisions waiting</span>
                     </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Printing</span>
-                        <span class="stat-value blue" id="queueStatPrinting">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">In Upload</span>
-                        <span class="stat-value" id="queueStatInUpload" style="color: var(--accent-blue); opacity: 0.7;">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Completed</span>
-                        <span class="stat-value green" id="queueStatCompleted">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Failed</span>
-                        <span class="stat-value red" id="queueStatFailed">0</span>
-                    </div>
-                </div>
 
-                <div class="prod-toolbar">
-                    <select class="input-field" id="queueFilterStatus">
-                        <option value="">All Active</option>
-                        <option value="queued">Queued</option>
-                        <option value="uploading">Uploading</option>
-                        <option value="uploaded">Uploaded</option>
-                        <option value="starting">Starting</option>
-                        <option value="printing">Printing</option>
-                        <option value="upload_failed">Upload Failed</option>
-                        <option value="start_failed">Start Failed</option>
-                        <option value="completed">Completed</option>
-                        <option value="failed">Failed</option>
-                    </select>
-                    <button class="btn btn-primary" onclick="loadQueue()">Filter</button>
-                </div>
+                    <!-- 5-lane grid -->
+                    <div class="lanes-grid" id="trigageLanesGrid">
+                        {{ lane('failed', 'Stopped & Failed', 'err') }}
+                        {{ lane('qc', 'Per-Job Inspection', 'info') }}
+                        {{ lane('ready_ship', 'Ready to Ship', 'ok', empty_message='Phase B') }}
+                        {{ lane('design_await', 'Design · Awaiting Customer', 'busy', empty_message='Phase B') }}
+                        {{ lane('external_spool', 'External & Spools', 'warn') }}
+                    </div>
 
-                <div class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>WO#</th>
-                                <th>Customer</th>
-                                <th>Part</th>
-                                <th>Material</th>
-                                <th>Seq</th>
-                                <th>Status</th>
-                                <th>Printer</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="queueBody">
-                            <tr><td colspan="9" class="table-empty">Loading queue...</td></tr>
-                        </tbody>
-                    </table>
+                    <!-- Active parts table -->
+                    <div class="active-parts-section">
+                        <div class="active-parts-head">
+                            <h3>All active parts</h3>
+                            <span class="muted" id="activePartsSubtitle"></span>
+                        </div>
+                        <div class="card active-parts-card">
+                            <div class="active-parts-grid active-parts-grid-head">
+                                <span>SEQ</span>
+                                <span>WO</span>
+                                <span>PART</span>
+                                <span>JOB</span>
+                                <span>MATERIAL</span>
+                                <span>STATUS</span>
+                                <span>PRINTER</span>
+                                <span>ETA</span>
+                            </div>
+                            <div id="activePartsBody">
+                                <div class="active-parts-empty">No active parts</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -134,22 +114,4 @@
                 </div>
             </div>
 
-            <!-- ---- Work Order Detail (inline) ---- -->
-            <div class="wo-panel" id="woPanel-detail" style="display: none;">
-                <div style="margin-bottom: 12px;">
-                    <button class="btn" onclick="switchWoTab('orders')" style="font-size: 11px;">&larr; Back to Orders</button>
-                </div>
-                <div id="woDetailHeader"></div>
-                <div class="prod-toolbar" id="woDetailSelectionBar" style="margin-top: 16px; display: none;">
-                    <label style="display:flex; align-items:center; gap:8px; color: var(--text-secondary); font-size: 12px;">
-                        <input type="checkbox" id="woSelectAllParts" onclick="toggleAllWoQueueSelections(this.checked)" disabled>
-                        Select all printable
-                    </label>
-                    <span id="woDetailSelectionText" style="color: var(--text-secondary); font-size: 12px;">0 selected</span>
-                    <button class="btn btn-primary" id="woCreateJobBtn" onclick="createWoJobFromSelected()" disabled>Create Job From Selected</button>
-                    <button class="btn btn-green" id="woPrintSelectedBtn" onclick="printSelectedWoParts()" disabled>Print Selected</button>
-                    <button class="btn" id="woClearSelectedBtn" onclick="clearWoSelection()" disabled>Clear</button>
-                </div>
-                <div id="woJobsContainer" style="margin-top: 16px;"></div>
-            </div>
         </div>

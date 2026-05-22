@@ -108,6 +108,39 @@ class InventoryService:
             raise KeyError("Spool not found")
         return True
 
+    def update_details(self, spool_id, data):
+        """Validate and update spool brand/color/supplier/batch.
+
+        Returns True on success.
+        Raises ValueError on validation failure, KeyError if spool not found.
+        """
+        if not data:
+            raise ValueError("No data provided")
+
+        brand = str(data.get("brand") or "").strip()
+        if not brand:
+            raise ValueError("brand is required")
+
+        color = str(data.get("color") or "").strip()
+        if not color:
+            raise ValueError("color is required")
+
+        supplier = str(data.get("supplier") or "").strip()
+        if supplier not in self.repository.ALLOWED_SUPPLIERS:
+            allowed = ", ".join(self.repository.ALLOWED_SUPPLIERS)
+            raise ValueError(
+                f"Invalid supplier '{supplier}'. Allowed suppliers: {allowed}"
+            )
+
+        batch = str(data.get("batch") or "").strip()
+
+        success = self.repository.update_details(
+            spool_id, brand, color, supplier, batch
+        )
+        if not success:
+            raise KeyError("Spool not found")
+        return True
+
     def delete_spool(self, spool_id):
         """Delete a spool. Returns True on success.
 

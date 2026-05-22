@@ -41,13 +41,15 @@ async function loadInventory() {
                 <td>${Number.isFinite(diameter) ? diameter : "--"}mm</td>
                 <td>${escapeHtml(s.operator || "")}</td>
                 <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${escapeHtml(s.date_ins || "")}</td>
-                <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${escapeHtml(formatDateTime(s.last_dried_at) || "--")}</td>
+                <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${s.last_dried_at ? escapeHtml(formatDateTime(s.last_dried_at)) : "Never"}</td>
                 <td>
                     <button class="btn" onclick="showUpdateWeight(decodeURIComponent('${spoolIdEnc}'), ${grams})" style="padding: 3px 6px; font-size: 9px;">Edit Weight</button>
+                    <button class="btn" onclick="showEditFilamentDetails(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;"><i data-lucide="pencil" class="icon icon-sm"></i> Edit</button>
                     <button class="btn btn-danger" onclick="deleteSpool(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;">Delete</button>
                 </td>
             </tr>`;
         }).join('');
+        refreshIcons(body);
     } catch (e) {
         showToast(`Inventory error: ${e.message}`, 'error');
     }
@@ -178,6 +180,56 @@ async function submitUpdateWeight() {
             showToast(`Updated weight for ${spoolId}`);
             hideModal('updateWeightModal');
             loadInventory();
+        } else {
+            showToast(`Error: ${result.error}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function showEditFilamentDetails(spoolId) {
+    try {
+        const resp = await fetch(`/api/inventory/${encodeURIComponent(spoolId)}`);
+        const spool = await resp.json();
+        if(!resp.ok || spool.error) {
+            showToast(`Error: ${spool.error || 'Failed to load spool'}`, 'error');
+            return;
+        }
+        document.getElementById('editDetailsSpoolId').textContent = spoolId;
+        document.getElementById('editDetailsBrand').value = spool.brand || '';
+        document.getElementById('editDetailsColor').value = spool.color || '';
+        document.getElementById('editDetailsSupplier').value = spool.supplier || '';
+        document.getElementById('editDetailsBatch').value = spool.batch || '';
+        document.getElementById('editFilamentDetailsModal').dataset.spoolId = spoolId;
+        showModal('editFilamentDetailsModal');
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function submitEditFilamentDetails() {
+    const spoolId = document.getElementById('editFilamentDetailsModal').dataset.spoolId;
+    const data = {
+        brand: document.getElementById('editDetailsBrand').value,
+        color: document.getElementById('editDetailsColor').value,
+        supplier: document.getElementById('editDetailsSupplier').value,
+        batch: document.getElementById('editDetailsBatch').value,
+    };
+
+    try {
+        const resp = await fetch(`/api/inventory/${encodeURIComponent(spoolId)}/details`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await resp.json();
+
+        if(result.success) {
+            showToast(`Updated ${spoolId}`);
+            hideModal('editFilamentDetailsModal');
+            loadInventory();
+            await loadInventoryOptions();
         } else {
             showToast(`Error: ${result.error}`, 'error');
         }

@@ -226,6 +226,18 @@ def api_inventory_update_weight(spool_id):
         return jsonify({"error": "Spool not found"}), 404
 
 
+@api.route("/api/inventory/<spool_id>/details", methods=["PUT"])
+def api_inventory_update_details(spool_id):
+    """Update brand/color/supplier/batch of a filament spool."""
+    try:
+        _inventory_service.update_details(spool_id, request.get_json())
+        return jsonify({"success": True})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except KeyError:
+        return jsonify({"error": "Spool not found"}), 404
+
+
 @api.route("/api/inventory/<spool_id>", methods=["DELETE"])
 def api_inventory_delete(spool_id):
     """Delete a filament spool."""

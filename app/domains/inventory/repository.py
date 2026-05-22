@@ -137,6 +137,19 @@ class FilamentInventoryDB:
         conn.close()
         return changed
 
+    def update_details(self, spool_id: str, brand: str, color: str,
+                       supplier: str, batch: str) -> bool:
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "UPDATE Filament SET brand = ?, color = ?, supplier = ?, "
+            "batch = ? WHERE id = ?",
+            (brand, color, supplier, batch, spool_id)
+        )
+        conn.commit()
+        changed = cursor.rowcount > 0
+        conn.close()
+        return changed
+
     def delete_spool(self, spool_id: str) -> bool:
         conn = self._get_conn()
         cursor = conn.execute(

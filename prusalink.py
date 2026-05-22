@@ -868,8 +868,18 @@ class PrusaLinkClient:
                 "temperature_per_tool": meta.get(
                     "temperature per tool", []),
             }
+            print(
+                f"[FILAMENT][API_OK] {self.printer_id} "
+                f"file_present={'yes' if file_info else 'no'} "
+                f"meta_present={'yes' if meta else 'no'} "
+                f"meta_keys={len(meta)} "
+                f"g={filament_g!r} mm={filament_mm!r} "
+                f"per_tool_g={'yes' if result['filament_used_g_per_tool'] else 'no'} "
+                f"per_tool_mm={'yes' if result['filament_used_mm_per_tool'] else 'no'}"
+            )
             return result
         except Exception as e:
+            print(f"[FILAMENT][API_FAIL] {self.printer_id} get_job_details: {type(e).__name__}: {e}")
             return {"error": str(e)}
 
     def get_camera_snapshot(self):

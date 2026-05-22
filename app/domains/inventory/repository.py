@@ -139,6 +139,12 @@ class FilamentInventoryDB:
 
     def update_details(self, spool_id: str, brand: str, color: str,
                        supplier: str, batch: str) -> bool:
+        if supplier not in self.ALLOWED_SUPPLIERS:
+            allowed = ", ".join(self.ALLOWED_SUPPLIERS)
+            raise ValueError(
+                f"Invalid supplier '{supplier}'. Allowed suppliers: {allowed}"
+            )
+
         conn = self._get_conn()
         cursor = conn.execute(
             "UPDATE Filament SET brand = ?, color = ?, supplier = ?, "

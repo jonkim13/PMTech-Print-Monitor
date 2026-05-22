@@ -12,6 +12,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.shared.sqlite_migrations import add_column_if_missing
+
 
 class UploadSessionRepository:
     """Durable upload-session tracking for upload/verify/start workflows."""
@@ -38,21 +40,6 @@ class UploadSessionRepository:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    @staticmethod
-    def _has_column(conn, table: str, column: str) -> bool:
-        rows = conn.execute("PRAGMA table_info({})".format(table)).fetchall()
-        return any(row[1] == column for row in rows)
-
-    @classmethod
-    def _add_column_if_missing(cls, conn, table: str,
-                               column: str, col_def: str) -> None:
-        if cls._has_column(conn, table, column):
-            return
-        conn.execute(
-            "ALTER TABLE {} ADD COLUMN {} {}".format(table, column, col_def)
-        )
-        conn.commit()
-
     def _init_db(self):
         conn = self._get_conn()
         conn.execute("""
@@ -76,26 +63,26 @@ class UploadSessionRepository:
                 last_error TEXT
             )
         """)
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "queue_job_id", "INTEGER"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "work_order_job_id", "INTEGER"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "operator_initials", "TEXT"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "parsed_grams", "REAL"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "parsed_grams_source",
             "TEXT DEFAULT 'none'"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "completed_at", "TEXT"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "upload_sessions", "last_error", "TEXT"
         )
         conn.execute("""

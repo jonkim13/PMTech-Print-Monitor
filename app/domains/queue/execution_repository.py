@@ -6,6 +6,7 @@ from typing import Optional, List
 
 from app.domains.queue.execution_lifecycle import QueueExecutionLifecycleMixin
 from app.domains.work_orders import status_sync
+from app.shared.sqlite_migrations import add_column_if_missing, has_column
 
 
 class QueueExecutionRepository(QueueExecutionLifecycleMixin):
@@ -30,22 +31,6 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _has_column(conn, table: str, column: str) -> bool:
-        cursor = conn.execute("PRAGMA table_info({})".format(table))
-        columns = [row[1] for row in cursor.fetchall()]
-        return column in columns
-
-    @staticmethod
-    def _add_column_if_missing(conn, table: str,
-                               column: str, col_def: str) -> None:
-        if not QueueExecutionRepository._has_column(conn, table, column):
-            conn.execute(
-                "ALTER TABLE {} ADD COLUMN {} {}".format(
-                    table, column, col_def)
-            )
-            conn.commit()
 
     def _init_tables(self):
         conn = self._get_conn()
@@ -73,14 +58,14 @@ class QueueExecutionRepository(QueueExecutionLifecycleMixin):
             CREATE INDEX IF NOT EXISTS idx_queue_jobs_printer
                 ON queue_jobs(assigned_printer_id);
         """)
-        self._add_column_if_missing(conn, "queue_jobs", "job_id", "INTEGER")
-        self._add_column_if_missing(
+        add_column_if_missing(conn, "queue_jobs", "job_id", "INTEGER")
+        add_column_if_missing(
             conn, "queue_jobs", "operator_initials", "TEXT"
         )
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "queue_jobs", "upload_session_id", "TEXT"
         )
-        if self._has_column(conn, "queue_jobs", "job_id"):
+        if has_column(conn, "queue_jobs", "job_id"):
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_queue_jobs_job
                 ON queue_jobs(job_id)

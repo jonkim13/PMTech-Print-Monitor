@@ -169,20 +169,10 @@ async function submitUpdateWeight() {
     const newGrams = parseInt(document.getElementById('weightInput').value);
 
     try {
-        const resp = await fetch(`/api/inventory/${spoolId}/weight`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ grams: newGrams })
-        });
-        const result = await resp.json();
-
-        if(result.success) {
-            showToast(`Updated weight for ${spoolId}`);
-            hideModal('updateWeightModal');
-            loadInventory();
-        } else {
-            showToast(`Error: ${result.error}`, 'error');
-        }
+        await apiPut(`/api/inventory/${spoolId}/weight`, { grams: newGrams });
+        showToast(`Updated weight for ${spoolId}`);
+        hideModal('updateWeightModal');
+        loadInventory();
     } catch (e) {
         showToast(`Error: ${e.message}`, 'error');
     }
@@ -218,21 +208,11 @@ async function submitEditFilamentDetails() {
     };
 
     try {
-        const resp = await fetch(`/api/inventory/${encodeURIComponent(spoolId)}/details`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        const result = await resp.json();
-
-        if(result.success) {
-            showToast(`Updated ${spoolId}`);
-            hideModal('editFilamentDetailsModal');
-            loadInventory();
-            await loadInventoryOptions();
-        } else {
-            showToast(`Error: ${result.error}`, 'error');
-        }
+        await apiPut(`/api/inventory/${encodeURIComponent(spoolId)}/details`, data);
+        showToast(`Updated ${spoolId}`);
+        hideModal('editFilamentDetailsModal');
+        loadInventory();
+        await loadInventoryOptions();
     } catch (e) {
         showToast(`Error: ${e.message}`, 'error');
     }

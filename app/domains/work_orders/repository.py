@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 from app.domains.work_orders import status_sync
+from app.shared.sqlite_migrations import add_column_if_missing
 
 
 class WorkOrderRepository:
@@ -24,22 +25,6 @@ class WorkOrderRepository:
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _has_column(conn, table: str, column: str) -> bool:
-        cursor = conn.execute("PRAGMA table_info({})".format(table))
-        columns = [row[1] for row in cursor.fetchall()]
-        return column in columns
-
-    @staticmethod
-    def _add_column_if_missing(conn, table: str,
-                               column: str, col_def: str) -> None:
-        if not WorkOrderRepository._has_column(conn, table, column):
-            conn.execute(
-                "ALTER TABLE {} ADD COLUMN {} {}".format(
-                    table, column, col_def)
-            )
-            conn.commit()
 
     def _init_tables(self):
         conn = self._get_conn()
@@ -69,7 +54,7 @@ class WorkOrderRepository:
         # Migration 003 mirror: add due_date if running against a DB that
         # predates the migration. Keeps fresh installs and legacy installs
         # converged without requiring the operator to run 003 first.
-        self._add_column_if_missing(conn, "work_orders", "due_date", "TEXT")
+        add_column_if_missing(conn, "work_orders", "due_date", "TEXT")
         conn.commit()
         conn.close()
 

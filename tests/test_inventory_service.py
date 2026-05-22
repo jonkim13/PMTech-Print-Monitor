@@ -74,6 +74,20 @@ class UpdateDetailsServiceTests(unittest.TestCase):
                     "batch": "",
                 })
 
+    def test_update_details_repo_layer_rejects_invalid_supplier(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, repo = _make_service(tmpdir)
+            spool_id = _seed_spool(service)
+
+            with self.assertRaises(ValueError):
+                repo.update_details(
+                    spool_id,
+                    brand="Brand X",
+                    color="Red",
+                    supplier="Bogus Vendor",
+                    batch="",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

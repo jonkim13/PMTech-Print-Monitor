@@ -28,22 +28,6 @@ class JobRepository:
     # Schema
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _has_column(conn, table: str, column: str) -> bool:
-        cursor = conn.execute("PRAGMA table_info({})".format(table))
-        columns = [row[1] for row in cursor.fetchall()]
-        return column in columns
-
-    @staticmethod
-    def _add_column_if_missing(conn, table: str,
-                               column: str, col_def: str) -> None:
-        if not JobRepository._has_column(conn, table, column):
-            conn.execute(
-                "ALTER TABLE {} ADD COLUMN {} {}".format(
-                    table, column, col_def)
-            )
-            conn.commit()
-
     def _init_tables(self):
         conn = self._get_conn()
         conn.executescript("""

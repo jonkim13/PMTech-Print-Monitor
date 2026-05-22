@@ -41,6 +41,14 @@ async function apiPatch(url, body) {
     });
 }
 
+async function apiPut(url, body) {
+    return apiFetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+    });
+}
+
 async function apiPostForm(url, formData) {
     return apiFetch(url, { method: 'POST', body: formData });
 }

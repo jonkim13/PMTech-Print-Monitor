@@ -9,6 +9,8 @@ import json as _json
 import sqlite3
 from datetime import datetime, timezone
 
+from app.shared.sqlite_migrations import add_column_if_missing
+
 
 class PrintJobRepository:
     """Read/write access to production print_jobs table."""
@@ -63,27 +65,17 @@ class PrintJobRepository:
         conn.commit()
 
         # Migrate: add tool_spools column to print_jobs if missing
-        self._add_column_if_missing(conn, "print_jobs", "tool_spools",
-                                    "TEXT DEFAULT '{}'")
+        add_column_if_missing(conn, "print_jobs", "tool_spools",
+                              "TEXT DEFAULT '{}'")
         # Migrate: add operator_initials column to print_jobs if missing
-        self._add_column_if_missing(conn, "print_jobs", "operator_initials",
-                                    "TEXT")
+        add_column_if_missing(conn, "print_jobs", "operator_initials",
+                              "TEXT")
         # Migrate: add filament_used_source to print_jobs if missing
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "print_jobs", "filament_used_source",
             "TEXT DEFAULT 'none'"
         )
         conn.close()
-
-    @staticmethod
-    def _add_column_if_missing(conn, table, column, col_def):
-        """Add a column to a table if it doesn't already exist."""
-        cursor = conn.execute(f"PRAGMA table_info({table})")
-        columns = [row[1] for row in cursor.fetchall()]
-        if column not in columns:
-            conn.execute(
-                f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
-            conn.commit()
 
     # ------------------------------------------------------------------
     # Print Jobs

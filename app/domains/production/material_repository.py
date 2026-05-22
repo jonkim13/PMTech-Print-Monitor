@@ -8,6 +8,8 @@ Extracted from production_db.py — behavior preserved exactly.
 import sqlite3
 from datetime import datetime, timezone
 
+from app.shared.sqlite_migrations import add_column_if_missing
+
 
 class MaterialUsageRepository:
     """Read/write access to production material_usage table."""
@@ -43,24 +45,14 @@ class MaterialUsageRepository:
         conn.commit()
 
         # Migrate: add tool_index column to material_usage if missing
-        self._add_column_if_missing(conn, "material_usage", "tool_index",
-                                    "INTEGER DEFAULT 0")
+        add_column_if_missing(conn, "material_usage", "tool_index",
+                              "INTEGER DEFAULT 0")
         # Migrate: add usage_source column to material_usage if missing
-        self._add_column_if_missing(
+        add_column_if_missing(
             conn, "material_usage", "usage_source",
             "TEXT DEFAULT 'none'"
         )
         conn.close()
-
-    @staticmethod
-    def _add_column_if_missing(conn, table, column, col_def):
-        """Add a column to a table if it doesn't already exist."""
-        cursor = conn.execute(f"PRAGMA table_info({table})")
-        columns = [row[1] for row in cursor.fetchall()]
-        if column not in columns:
-            conn.execute(
-                f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
-            conn.commit()
 
     # ------------------------------------------------------------------
     # Material Usage

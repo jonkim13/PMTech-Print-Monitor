@@ -29,10 +29,14 @@ class QueueExecutionConflictError(QueueServiceError):
 class QueueService:
     """Orchestrates queue operations."""
 
-    def __init__(self, queue_repository, execution_repository,
+    def __init__(self, *,
+                 queue_repository,
+                 execution_repository,
                  queue_bulk_operations=None,
-                 work_order_repository=None, job_repository=None,
-                 farm_manager=None, production_job_repository=None,
+                 work_order_repository=None,
+                 job_repository=None,
+                 farm_manager=None,
+                 production_job_repository=None,
                  execution_service=None):
         self.queue_repository = queue_repository
         self.queue_bulk_operations = queue_bulk_operations

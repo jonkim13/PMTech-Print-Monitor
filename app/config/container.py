@@ -106,24 +106,6 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     queue_execution_repository = QueueExecutionRepository(
         settings.work_order_db_path
     )
-    # farm_manager is built below; pass a mutable closure cell so the
-    # service can resolve it after construction without rebuilding.
-    work_order_service = WorkOrderService(
-        work_order_repository=work_order_repository,
-        job_repository=wo_job_repository,
-        queue_repository=queue_repository,
-        queue_bulk_operations=queue_bulk_operations,
-        queue_execution_repository=queue_execution_repository,
-        production_job_repository=job_repository,
-    )
-    queue_service = QueueService(
-        queue_repository=queue_repository,
-        queue_bulk_operations=queue_bulk_operations,
-        execution_repository=queue_execution_repository,
-        work_order_repository=work_order_repository,
-        job_repository=wo_job_repository,
-        production_job_repository=job_repository,
-    )
     upload_session_repository = UploadSessionRepository(
         settings.upload_session_db_path
     )
@@ -164,10 +146,31 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         runtime_state=runtime_state,
         state_lock=state_lock,
     )
-    # Late-bind farm_manager now that it's constructed so the WO + queue
-    # services can issue stop_job calls on cancel.
-    work_order_service.farm_manager = farm_manager
-    queue_service.farm_manager = farm_manager
+    execution_service = ExecutionService(
+        settings.gcode_uploads_dir,
+        upload_session_repository,
+        farm_manager=farm_manager,
+        queue_execution_repository=queue_execution_repository,
+    )
+    work_order_service = WorkOrderService(
+        work_order_repository=work_order_repository,
+        job_repository=wo_job_repository,
+        queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
+        queue_execution_repository=queue_execution_repository,
+        farm_manager=farm_manager,
+        production_job_repository=job_repository,
+    )
+    queue_service = QueueService(
+        queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
+        execution_repository=queue_execution_repository,
+        work_order_repository=work_order_repository,
+        job_repository=wo_job_repository,
+        farm_manager=farm_manager,
+        production_job_repository=job_repository,
+        execution_service=execution_service,
+    )
     inventory_service = InventoryService(filament_db)
 
     def _resolve_printer_name(printer_id):
@@ -190,17 +193,6 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         tool_count_resolver=_resolve_tool_count,
     )
     drone_controller = DroneController()
-    execution_service = ExecutionService(
-        settings.gcode_uploads_dir,
-        upload_session_repository,
-        farm_manager=farm_manager,
-        queue_execution_repository=queue_execution_repository,
-    )
-    # Late-bind execution_service onto queue_service so
-    # QueueService.start_print_request can drive the upload workflow.
-    # Same late-binding shape as farm_manager above; the Phase 5h
-    # constructor-injection sweep can convert both at once.
-    queue_service.execution_service = execution_service
     weekly_report_service = WeeklyReportService(
         settings=settings, farm_manager=farm_manager,
     )

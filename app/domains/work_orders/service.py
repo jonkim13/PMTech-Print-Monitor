@@ -6,10 +6,14 @@ from typing import Optional
 class WorkOrderService:
     """Orchestrates work-order and job operations."""
 
-    def __init__(self, work_order_repository, job_repository,
-                 queue_repository=None, queue_bulk_operations=None,
+    def __init__(self, *,
+                 work_order_repository,
+                 job_repository,
+                 queue_repository=None,
+                 queue_bulk_operations=None,
                  queue_execution_repository=None,
-                 farm_manager=None, production_job_repository=None):
+                 farm_manager=None,
+                 production_job_repository=None):
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
         self.queue_repository = queue_repository

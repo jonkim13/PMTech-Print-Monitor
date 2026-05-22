@@ -49,7 +49,10 @@ class AssignmentService:
     # ------------------------------------------------------------------
 
     def get_all_assignments(self):
-        """Return all assignments (backward-compat flat + multi format)."""
+        """Return all assignments as {"primary": {...}, "by_printer": {...}}.
+
+        See ``FilamentAssignmentDB.get_all_assignments`` for the shape.
+        """
         return self.assignment_repo.get_all_assignments()
 
     def get_printer_assignments(self, printer_id):

@@ -20,6 +20,13 @@ from app.domains.inventory.repository import FilamentInventoryDB
 from app.shared.constants import PrinterStatus
 
 
+# Stop-pending markers older than this are dropped, both at load time
+# (in case the disk-persisted entry is stale across a long downtime) and
+# at observation time (in case a stop-then-completion took longer than
+# expected).
+STOP_PENDING_TTL_SEC = 120
+
+
 class PrintFarmManager:
     """
     Manages all printers, runs the polling loop,
@@ -173,21 +180,23 @@ class PrintFarmManager:
 
     def _state_file_path(self):
         """Path to the server state JSON file."""
-        if self.data_dir:
-            return os.path.join(self.data_dir, "server_state.json")
+        data_dir = getattr(self, "data_dir", None)
+        if data_dir:
+            return os.path.join(data_dir, "server_state.json")
         return None
 
     def _restore_previous_state(self):
         """
         Restore each printer's previous_status so the first poll
-        doesn't create false state-change events.
+        doesn't create false state-change events. Also restores any
+        recent stop-pending markers (those younger than the TTL) so a
+        cancel issued just before a process restart still routes the
+        next printing->idle transition through the cancel handler.
         Tries JSON state file first, falls back to database query.
         """
         restored = {}
         runtime_state = self._get_runtime_state()
 
-        # Stop-pending markers are in-memory only; starting fresh on boot
-        # avoids a stale entry suppressing a real completion detection.
         self._stop_pending = {}
 
         # Step 1: Try loading from state file
@@ -196,10 +205,33 @@ class PrintFarmManager:
             try:
                 with open(state_path, "r") as f:
                     saved = json.load(f)
+                # The current file shape nests printer status under
+                # "previous_status" and stop-pending under "stop_pending".
+                # Older files were a flat {pid: status} dict; treat them
+                # as previous_status with no stop_pending.
+                if isinstance(saved, dict) and "previous_status" in saved:
+                    prev = saved.get("previous_status") or {}
+                    pending = saved.get("stop_pending") or {}
+                else:
+                    prev = saved or {}
+                    pending = {}
                 for pid in self.printers:
-                    if pid in saved:
-                        self.printers[pid]["previous_status"] = saved[pid]
-                        restored[pid] = saved[pid]
+                    if pid in prev:
+                        self.printers[pid]["previous_status"] = prev[pid]
+                        restored[pid] = prev[pid]
+                now = time.time()
+                for pid, marker_ts in pending.items():
+                    try:
+                        ts = float(marker_ts)
+                    except (TypeError, ValueError):
+                        continue
+                    if pid in self.printers and (now - ts) < STOP_PENDING_TTL_SEC:
+                        self._stop_pending[pid] = ts
+                if self._stop_pending:
+                    print(
+                        "[STARTUP] Restored stop-pending markers: "
+                        f"{list(self._stop_pending.keys())}"
+                    )
                 print(f"[STARTUP] Restored printer states from state file")
             except Exception as e:
                 print(f"[STARTUP] Could not read state file: {e}")
@@ -258,17 +290,20 @@ class PrintFarmManager:
         return None
 
     def _save_state(self):
-        """Save current printer statuses to JSON for next startup."""
+        """Persist printer statuses and stop-pending markers for next startup."""
         state_path = self._state_file_path()
         if not state_path:
             return
         try:
-            states = {
-                pid: p["previous_status"]
-                for pid, p in self.printers.items()
+            payload = {
+                "previous_status": {
+                    pid: p["previous_status"]
+                    for pid, p in self.printers.items()
+                },
+                "stop_pending": dict(self._stop_pending),
             }
             with open(state_path, "w") as f:
-                json.dump(states, f)
+                json.dump(payload, f)
         except Exception as e:
             print(f"[STATE] Error saving state: {e}")
 
@@ -311,6 +346,7 @@ class PrintFarmManager:
             return
         with self._lock:
             self._stop_pending[printer_id] = time.time()
+            self._save_state()
         print(f"[CANCEL] mark_stop_pending set for {printer_id}")
 
     def get_active_job_id(self, printer_id: str):
@@ -369,8 +405,10 @@ class PrintFarmManager:
                 # can't mask a legitimate later completion.
                 stop_pending_at = self._stop_pending.get(printer_id)
                 if (stop_pending_at is not None
-                        and (time.time() - stop_pending_at) < 120):
+                        and (time.time() - stop_pending_at)
+                        < STOP_PENDING_TTL_SEC):
                     self._stop_pending.pop(printer_id, None)
+                    self._save_state()
                     print(
                         f"[CANCEL] poller observed printing->idle on "
                         f"{printer_id} with stop_pending set "
@@ -389,6 +427,7 @@ class PrintFarmManager:
                         f"(age={time.time() - stop_pending_at:.1f}s)"
                     )
                     self._stop_pending.pop(printer_id, None)
+                    self._save_state()
 
                 if self._consume_stopped_printer(printer_id):
                     self._get_transition_handler().handle_print_stopped(

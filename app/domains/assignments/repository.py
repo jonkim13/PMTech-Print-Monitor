@@ -144,10 +144,14 @@ class FilamentAssignmentDB:
         return [dict(r) for r in rows]
 
     def get_all_assignments(self) -> dict:
-        """Return {printer_id: spool_id} for tool 0 (backward compat).
+        """Return assignments in an explicit two-field shape.
 
-        Also includes a '_multi' key with full per-tool data:
-        {printer_id: [{tool_index, spool_id}, ...]}
+        Shape:
+            {
+              "primary":    {printer_id: spool_id, ...},   # tool 0 only
+              "by_printer": {printer_id: [{"tool_index": int,
+                                           "spool_id": str}, ...], ...},
+            }
         """
         conn = self._get_conn()
         rows = conn.execute(
@@ -155,19 +159,14 @@ class FilamentAssignmentDB:
             "FROM filament_assignments ORDER BY printer_id, tool_index"
         ).fetchall()
         conn.close()
-        # Backward-compatible flat dict (tool 0 only)
-        flat = {}
-        # Full multi-tool dict
-        multi = {}  # type: dict
+        primary = {}
+        by_printer = {}
         for r in rows:
             pid = r["printer_id"]
             if r["tool_index"] == 0:
-                flat[pid] = r["spool_id"]
-            if pid not in multi:
-                multi[pid] = []
-            multi[pid].append({
+                primary[pid] = r["spool_id"]
+            by_printer.setdefault(pid, []).append({
                 "tool_index": r["tool_index"],
                 "spool_id": r["spool_id"],
             })
-        flat["_multi"] = multi
-        return flat
+        return {"primary": primary, "by_printer": by_printer}

@@ -25,7 +25,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from farm_manager import PrintFarmManager
+from farm_manager import PrintFarmManager, STOP_PENDING_TTL_SEC
 from app.domains.monitoring.runtime_state import MonitoringRuntimeState
 from app.shared.constants import PrinterStatus
 
@@ -78,6 +78,7 @@ def build_manager(client, handler):
     m.history_db = None
     m._lock = threading.Lock()
     m.transition_handler = handler
+    m.data_dir = None
     return m
 
 
@@ -106,8 +107,8 @@ class StopRaceTests(unittest.TestCase):
 
     def test_stale_stop_pending_is_dropped_and_completion_runs(self):
         manager, handler, _ = self._poll_after_idle()
-        # Simulate a marker older than the 120s window.
-        manager._stop_pending["printer-1"] = time.time() - 121
+        # Simulate a marker older than the TTL window.
+        manager._stop_pending["printer-1"] = time.time() - (STOP_PENDING_TTL_SEC + 1)
         manager.poll_printer("printer-1")
         self.assertEqual(handler.calls, ["completed"])
         self.assertNotIn("printer-1", manager._stop_pending)

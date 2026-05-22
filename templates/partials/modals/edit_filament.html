@@ -1,40 +1,46 @@
-<!-- ===== EDIT FILAMENT DETAILS MODAL ===== -->
-<div class="modal-overlay" id="editFilamentDetailsModal">
+<!-- ===== EDIT FILAMENT MODAL ===== -->
+<div class="modal-overlay" id="editFilamentModal">
     <div class="modal">
         <div class="modal-header">
-            <h3>Edit spool details</h3>
-            <button class="modal-close" onclick="hideModal('editFilamentDetailsModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+            <h3>Edit spool</h3>
+            <button class="modal-close" onclick="hideModal('editFilamentModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
         </div>
         <div class="modal-body">
-            <p>Spool: <strong id="editDetailsSpoolId"></strong></p>
+            <p>Spool: <strong id="editFilamentSpoolId"></strong></p>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
                     <label class="form-label">Brand</label>
-                    <input type="text" class="form-input" id="editDetailsBrand" required placeholder="e.g. Prusament">
+                    <input type="text" class="form-input" id="editFilamentBrand" required placeholder="e.g. Prusament">
                 </div>
                 <div class="form-group" style="flex:1;">
                     <label class="form-label">Color</label>
-                    <input type="text" class="form-input" id="editDetailsColor" required placeholder="e.g. Galaxy Black">
+                    <input type="text" class="form-input" id="editFilamentColor" required placeholder="e.g. Galaxy Black">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
                     <label class="form-label">Supplier</label>
-                    <select class="form-input" id="editDetailsSupplier" required>
+                    <select class="form-input" id="editFilamentSupplier" required>
                         {% for supplier in allowed_suppliers %}
                         <option value="{{ supplier }}">{{ supplier }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-group" style="flex:1;">
+                    <label class="form-label">Weight (grams)</label>
+                    <input type="number" class="form-input" id="editFilamentGrams" required min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
                     <label class="form-label">Batch / Lot</label>
-                    <input type="text" class="form-input" id="editDetailsBatch" placeholder="Optional">
+                    <input type="text" class="form-input" id="editFilamentBatch" placeholder="Optional">
                 </div>
             </div>
         </div>
         <div class="modal-footer">
-            <button type="button" class="btn ghost" onclick="hideModal('editFilamentDetailsModal')">Cancel</button>
-            <button type="button" class="btn primary" onclick="submitEditFilamentDetails()">Save</button>
+            <button type="button" class="btn ghost" onclick="hideModal('editFilamentModal')">Cancel</button>
+            <button type="button" class="btn primary" onclick="submitEditFilament()">Save</button>
         </div>
     </div>
 </div>

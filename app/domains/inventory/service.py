@@ -86,36 +86,23 @@ class InventoryService:
         )
         return {"success": True, "id": spool_id, "spool_id": spool_id}
 
-    def update_weight(self, spool_id, data):
-        """Validate and update spool weight.
-
-        Returns True on success.
-        Raises ValueError on validation failure, KeyError if spool not found.
-        """
-        if not data or "grams" not in data:
-            raise ValueError("Missing 'grams' field")
-
-        try:
-            grams = int(data["grams"])
-        except (TypeError, ValueError):
-            raise ValueError("Invalid grams value")
-
-        if grams < 0:
-            raise ValueError("grams must be >= 0")
-
-        success = self.repository.update_weight(spool_id, grams)
-        if not success:
-            raise KeyError("Spool not found")
-        return True
-
-    def update_details(self, spool_id, data):
-        """Validate and update spool brand/color/supplier/batch.
+    def update_spool(self, spool_id, data):
+        """Validate and update spool weight/brand/color/supplier/batch.
 
         Returns True on success.
         Raises ValueError on validation failure, KeyError if spool not found.
         """
         if not data:
             raise ValueError("No data provided")
+
+        if "grams" not in data:
+            raise ValueError("Missing 'grams' field")
+        try:
+            grams = int(data["grams"])
+        except (TypeError, ValueError):
+            raise ValueError("Invalid grams value")
+        if grams < 0:
+            raise ValueError("grams must be >= 0")
 
         brand = str(data.get("brand") or "").strip()
         if not brand:
@@ -134,8 +121,8 @@ class InventoryService:
 
         batch = str(data.get("batch") or "").strip()
 
-        success = self.repository.update_details(
-            spool_id, brand, color, supplier, batch
+        success = self.repository.update_spool(
+            spool_id, grams, brand, color, supplier, batch
         )
         if not success:
             raise KeyError("Spool not found")

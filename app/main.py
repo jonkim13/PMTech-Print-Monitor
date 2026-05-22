@@ -1,23 +1,57 @@
 """Application shell and composition root."""
 
+import os
 import threading
+import time
 
-from flask import Flask
+from flask import Flask, jsonify, render_template
 from flask_cors import CORS
-
-from production_routes import register_production_routes
-from routes import cleanup_old_gcode_uploads, register_routes
-from work_order_routes import register_work_order_routes
 
 from .config.container import AppContainer, build_container
 from .config.settings import AppSettings, load_settings
+from .domains.assignments.routes import register_assignments_routes
+from .domains.dashboard.routes import register_dashboard_routes
+from .domains.drone.routes import register_drone_routes
+from .domains.inventory.routes import register_inventory_routes
+from .domains.monitoring.routes import register_monitoring_routes
+from .domains.printers.routes import register_printers_routes
+from .domains.production.routes import register_production_routes
 from .domains.reports.routes import register_reports_routes
+from .domains.work_orders.routes import register_work_order_routes
 from .shared.migrations.runner import MigrationRunner
 from .shared.snapshots.runner import prune_snapshots, snapshot_all_dbs
 
 _runtime_lock = threading.Lock()
 _runtime_container = None
 _poller_started = False
+
+_GCODE_MAX_AGE_SEC = 24 * 60 * 60  # 24 hours
+
+
+def cleanup_old_gcode_uploads(uploads_dir):
+    """Delete old staged upload trees from the uploads directory."""
+    if not uploads_dir or not os.path.isdir(uploads_dir):
+        return
+    cutoff = time.time() - _GCODE_MAX_AGE_SEC
+    count = 0
+    for root, dirs, files in os.walk(uploads_dir, topdown=False):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    count += 1
+            except OSError:
+                pass
+        for dname in dirs:
+            dpath = os.path.join(root, dname)
+            try:
+                if not os.listdir(dpath):
+                    os.rmdir(dpath)
+            except OSError:
+                pass
+    if count:
+        print("[CLEANUP] Removed {} old staged gcode file(s)".format(count))
 
 
 def _get_runtime_container(settings: AppSettings = None) -> AppContainer:
@@ -67,20 +101,20 @@ def _start_poller_once(farm_manager) -> bool:
 
 
 def _register_blueprints(app: Flask, container: AppContainer) -> None:
-    """Register the existing route modules with unchanged dependencies."""
-    register_routes(
+    """Register every domain blueprint with the application."""
+    register_dashboard_routes(app, container.dashboard_service)
+    register_printers_routes(app, container.farm_manager)
+    register_monitoring_routes(
         app,
+        container.event_service,
         container.farm_manager,
-        container.filament_db,
         container.history_db,
-        container.drone_controller,
-        assignment_db=container.assignment_db,
-        ui_config={"poll_interval_ms": container.settings.poll_interval_ms},
-        event_service=container.event_service,
-        inventory_service=container.inventory_service,
-        assignment_service=container.assignment_service,
-        dashboard_service=container.dashboard_service,
     )
+    register_inventory_routes(app, container.inventory_service)
+    register_assignments_routes(
+        app, container.assignment_service, container.farm_manager,
+    )
+    register_drone_routes(app, container.drone_controller)
     register_production_routes(
         app,
         container.production_service,
@@ -99,6 +133,29 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
     register_reports_routes(app, container.weekly_report_service)
 
 
+def _register_core_routes(app: Flask, container: AppContainer) -> None:
+    """Register framework-level routes that don't belong to any domain."""
+    filament_db = container.filament_db
+    farm_manager = container.farm_manager
+    poll_interval_ms = int(container.settings.poll_interval_ms)
+
+    @app.route("/")
+    def dashboard():
+        return render_template(
+            "dashboard.html",
+            allowed_suppliers=filament_db.ALLOWED_SUPPLIERS,
+            poll_interval_ms=poll_interval_ms,
+        )
+
+    @app.route("/api/health")
+    def api_health():
+        return jsonify({
+            "status": "ok",
+            "printers": len(farm_manager.printers),
+            "uptime": "running",
+        })
+
+
 def create_app(settings: AppSettings = None, start_poller: bool = True) -> Flask:
     """Create and configure the Flask application."""
     container = _get_runtime_container(settings)
@@ -113,6 +170,7 @@ def create_app(settings: AppSettings = None, start_poller: bool = True) -> Flask
     app.extensions["print_farm_container"] = container
 
     _register_blueprints(app, container)
+    _register_core_routes(app, container)
 
     if start_poller:
         _start_poller_once(container.farm_manager)

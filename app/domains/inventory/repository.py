@@ -126,19 +126,13 @@ class FilamentInventoryDB:
         conn.close()
         return spool_id
 
-    def update_weight(self, spool_id: str, new_grams: int) -> bool:
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "UPDATE Filament SET grams = ? WHERE id = ?",
-            (new_grams, spool_id)
-        )
-        conn.commit()
-        changed = cursor.rowcount > 0
-        conn.close()
-        return changed
+    def update_spool(self, spool_id: str, grams: int, brand: str,
+                     color: str, supplier: str, batch: str) -> bool:
+        """Update the editable fields of a filament spool.
 
-    def update_details(self, spool_id: str, brand: str, color: str,
-                       supplier: str, batch: str) -> bool:
+        Material, diameter, last_dried_at, operator, date_ins and id are
+        intentionally not editable through this surface.
+        """
         if supplier not in self.ALLOWED_SUPPLIERS:
             allowed = ", ".join(self.ALLOWED_SUPPLIERS)
             raise ValueError(
@@ -147,9 +141,9 @@ class FilamentInventoryDB:
 
         conn = self._get_conn()
         cursor = conn.execute(
-            "UPDATE Filament SET brand = ?, color = ?, supplier = ?, "
-            "batch = ? WHERE id = ?",
-            (brand, color, supplier, batch, spool_id)
+            "UPDATE Filament SET grams = ?, brand = ?, color = ?, "
+            "supplier = ?, batch = ? WHERE id = ?",
+            (grams, brand, color, supplier, batch, spool_id)
         )
         conn.commit()
         changed = cursor.rowcount > 0

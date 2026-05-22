@@ -30,13 +30,14 @@ def _seed_spool(service, supplier="Prusa Research", brand="Prusament",
     })["spool_id"]
 
 
-class UpdateDetailsServiceTests(unittest.TestCase):
-    def test_update_details_happy_path(self):
+class UpdateSpoolServiceTests(unittest.TestCase):
+    def test_update_spool_happy_path_updates_all_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service, repo = _make_service(tmpdir)
             spool_id = _seed_spool(service)
 
-            service.update_details(spool_id, {
+            service.update_spool(spool_id, {
+                "grams": 750,
                 "brand": "3DXTech Brand",
                 "color": "Carbon Black",
                 "supplier": "3DXTech",
@@ -44,44 +45,85 @@ class UpdateDetailsServiceTests(unittest.TestCase):
             })
 
             updated = repo.get_by_id(spool_id)
+            self.assertEqual(updated["grams"], 750)
             self.assertEqual(updated["brand"], "3DXTech Brand")
             self.assertEqual(updated["color"], "Carbon Black")
             self.assertEqual(updated["supplier"], "3DXTech")
             self.assertEqual(updated["batch"], "L99")
 
-    def test_update_details_rejects_invalid_supplier(self):
+    def test_update_spool_changing_only_weight_keeps_other_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, repo = _make_service(tmpdir)
+            spool_id = _seed_spool(service)
+            before = repo.get_by_id(spool_id)
+
+            service.update_spool(spool_id, {
+                "grams": 500,
+                "brand": before["brand"],
+                "color": before["color"],
+                "supplier": before["supplier"],
+                "batch": before["batch"],
+            })
+
+            after = repo.get_by_id(spool_id)
+            self.assertEqual(after["grams"], 500)
+            self.assertEqual(after["brand"], before["brand"])
+            self.assertEqual(after["color"], before["color"])
+            self.assertEqual(after["supplier"], before["supplier"])
+            self.assertEqual(after["batch"], before["batch"])
+
+    def test_update_spool_rejects_invalid_supplier(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service, _ = _make_service(tmpdir)
             spool_id = _seed_spool(service)
 
             with self.assertRaises(ValueError):
-                service.update_details(spool_id, {
+                service.update_spool(spool_id, {
+                    "grams": 500,
                     "brand": "Brand X",
                     "color": "Red",
                     "supplier": "Bogus Vendor",
                     "batch": "",
                 })
 
-    def test_update_details_unknown_spool_raises(self):
+    def test_update_spool_rejects_negative_weight(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service, _ = _make_service(tmpdir)
+            spool_id = _seed_spool(service)
 
-            with self.assertRaises(KeyError):
-                service.update_details("DOES_NOT_EXIST", {
+            with self.assertRaises(ValueError):
+                service.update_spool(spool_id, {
+                    "grams": -5,
                     "brand": "Prusament",
                     "color": "Black",
                     "supplier": "Prusa Research",
                     "batch": "",
                 })
 
-    def test_update_details_repo_layer_rejects_invalid_supplier(self):
+    def test_update_spool_unknown_spool_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, _ = _make_service(tmpdir)
+
+            with self.assertRaises(KeyError):
+                service.update_spool("DOES_NOT_EXIST", {
+                    "grams": 500,
+                    "brand": "Prusament",
+                    "color": "Black",
+                    "supplier": "Prusa Research",
+                    "batch": "",
+                })
+
+    def test_update_spool_repo_layer_rejects_invalid_supplier(self):
+        """Belt-and-braces: bypass the service layer and call the repo
+        directly. The supplier whitelist must still trip."""
         with tempfile.TemporaryDirectory() as tmpdir:
             service, repo = _make_service(tmpdir)
             spool_id = _seed_spool(service)
 
             with self.assertRaises(ValueError):
-                repo.update_details(
+                repo.update_spool(
                     spool_id,
+                    grams=500,
                     brand="Brand X",
                     color="Red",
                     supplier="Bogus Vendor",

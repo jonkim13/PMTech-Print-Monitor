@@ -12,7 +12,7 @@ if ROOT_DIR not in sys.path:
 from farm_manager import PrintFarmManager
 from app.domains.monitoring.runtime_state import MonitoringRuntimeState
 from app.shared.constants import PrinterStatus
-from routes import register_routes
+from app.domains.printers.routes import register_printers_routes
 
 
 class FakePollingClient:
@@ -124,7 +124,7 @@ class StopPrintTransitionTests(unittest.TestCase):
             FakeStopClient({"success": True, "message": "stopped"})
         )
         app = Flask(__name__)
-        register_routes(app, manager, None, None, None)
+        register_printers_routes(app, manager)
 
         response = app.test_client().post("/api/printers/printer-1/stop")
 

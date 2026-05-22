@@ -43,8 +43,7 @@ async function loadInventory() {
                 <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${escapeHtml(s.date_ins || "")}</td>
                 <td style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);">${s.last_dried_at ? escapeHtml(formatDateTime(s.last_dried_at)) : "Never"}</td>
                 <td>
-                    <button class="btn" onclick="showUpdateWeight(decodeURIComponent('${spoolIdEnc}'), ${grams})" style="padding: 3px 6px; font-size: 9px;">Edit Weight</button>
-                    <button class="btn" onclick="showEditFilamentDetails(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;"><i data-lucide="pencil" class="icon icon-sm"></i> Edit</button>
+                    <button class="btn" onclick="showEditFilament(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;"><i data-lucide="pencil" class="icon icon-sm"></i> Edit</button>
                     <button class="btn btn-danger" onclick="deleteSpool(decodeURIComponent('${spoolIdEnc}'))" style="padding: 3px 6px; font-size: 9px;">Delete</button>
                 </td>
             </tr>`;
@@ -157,28 +156,7 @@ async function submitAddFilament(e) {
     }
 }
 
-function showUpdateWeight(spoolId, currentGrams) {
-    document.getElementById('weightSpoolId').textContent = spoolId;
-    document.getElementById('weightInput').value = currentGrams;
-    document.getElementById('updateWeightModal').dataset.spoolId = spoolId;
-    showModal('updateWeightModal');
-}
-
-async function submitUpdateWeight() {
-    const spoolId = document.getElementById('updateWeightModal').dataset.spoolId;
-    const newGrams = parseInt(document.getElementById('weightInput').value);
-
-    try {
-        await apiPut(`/api/inventory/${spoolId}/weight`, { grams: newGrams });
-        showToast(`Updated weight for ${spoolId}`);
-        hideModal('updateWeightModal');
-        loadInventory();
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
-}
-
-async function showEditFilamentDetails(spoolId) {
+async function showEditFilament(spoolId) {
     try {
         const resp = await fetch(`/api/inventory/${encodeURIComponent(spoolId)}`);
         const spool = await resp.json();
@@ -186,31 +164,33 @@ async function showEditFilamentDetails(spoolId) {
             showToast(`Error: ${spool.error || 'Failed to load spool'}`, 'error');
             return;
         }
-        document.getElementById('editDetailsSpoolId').textContent = spoolId;
-        document.getElementById('editDetailsBrand').value = spool.brand || '';
-        document.getElementById('editDetailsColor').value = spool.color || '';
-        document.getElementById('editDetailsSupplier').value = spool.supplier || '';
-        document.getElementById('editDetailsBatch').value = spool.batch || '';
-        document.getElementById('editFilamentDetailsModal').dataset.spoolId = spoolId;
-        showModal('editFilamentDetailsModal');
+        document.getElementById('editFilamentSpoolId').textContent = spoolId;
+        document.getElementById('editFilamentBrand').value = spool.brand || '';
+        document.getElementById('editFilamentColor').value = spool.color || '';
+        document.getElementById('editFilamentSupplier').value = spool.supplier || '';
+        document.getElementById('editFilamentGrams').value = Number(spool.grams) || 0;
+        document.getElementById('editFilamentBatch').value = spool.batch || '';
+        document.getElementById('editFilamentModal').dataset.spoolId = spoolId;
+        showModal('editFilamentModal');
     } catch (e) {
         showToast(`Error: ${e.message}`, 'error');
     }
 }
 
-async function submitEditFilamentDetails() {
-    const spoolId = document.getElementById('editFilamentDetailsModal').dataset.spoolId;
+async function submitEditFilament() {
+    const spoolId = document.getElementById('editFilamentModal').dataset.spoolId;
     const data = {
-        brand: document.getElementById('editDetailsBrand').value,
-        color: document.getElementById('editDetailsColor').value,
-        supplier: document.getElementById('editDetailsSupplier').value,
-        batch: document.getElementById('editDetailsBatch').value,
+        grams: parseInt(document.getElementById('editFilamentGrams').value),
+        brand: document.getElementById('editFilamentBrand').value,
+        color: document.getElementById('editFilamentColor').value,
+        supplier: document.getElementById('editFilamentSupplier').value,
+        batch: document.getElementById('editFilamentBatch').value,
     };
 
     try {
-        await apiPut(`/api/inventory/${encodeURIComponent(spoolId)}/details`, data);
+        await apiPut(`/api/inventory/${encodeURIComponent(spoolId)}`, data);
         showToast(`Updated ${spoolId}`);
-        hideModal('editFilamentDetailsModal');
+        hideModal('editFilamentModal');
         loadInventory();
         await loadInventoryOptions();
     } catch (e) {

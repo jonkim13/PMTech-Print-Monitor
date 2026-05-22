@@ -75,6 +75,13 @@ class PrintJobRepository:
             conn, "print_jobs", "filament_used_source",
             "TEXT DEFAULT 'none'"
         )
+        # Phase 6 — link a production job back to the upload_session that
+        # carried the slicer-parsed metadata. Lets the completion path
+        # (which skips the post-FINISHED /api/v1/job blank-payload call)
+        # look up parsed per-tool data when writing material_usage rows.
+        add_column_if_missing(
+            conn, "print_jobs", "upload_session_id", "TEXT"
+        )
         conn.close()
 
     # ------------------------------------------------------------------
@@ -207,6 +214,64 @@ class PrintJobRepository:
             SET status = 'stopped', completed_at = ?, print_duration_sec = ?
             WHERE job_id = ?
         """, (now, duration_sec, job_id))
+        conn.commit()
+        conn.close()
+
+    def set_parsed_meta(self, job_id, upload_session_id=None, parsed=None):
+        """Stamp the slicer-parsed meta + upload_session linkage onto a job.
+
+        Called from ``ProductionHandler.start`` after ``create_job`` once
+        the upload_session has been looked up. ``parsed`` is the dict
+        shape from ``app.shared.gcode_metadata.parse_print_metadata`` —
+        when ``parsed_filament_used_g`` is non-null we treat that as the
+        authoritative source and stamp ``filament_used_source='parsed'``
+        so the completion path skips the doomed API re-read.
+
+        ``upload_session_id`` is always written when provided (it's the
+        completion-time linkage even for prints where parsing failed —
+        it lets us recover partial metadata or per-tool arrays later).
+        """
+        if not job_id:
+            return
+        fields = []
+        params = []
+        if upload_session_id is not None:
+            fields.append("upload_session_id = ?")
+            params.append(upload_session_id)
+        if parsed and parsed.get("parsed_filament_used_g") is not None:
+            grams = parsed.get("parsed_filament_used_g")
+            mm = parsed.get("parsed_filament_used_mm") or 0
+            fields.extend([
+                "filament_used_g = ?",
+                "filament_used_mm = ?",
+                "filament_type = COALESCE(?, filament_type)",
+                "layer_height = COALESCE(?, layer_height)",
+                "nozzle_diameter = COALESCE(?, nozzle_diameter)",
+                "fill_density = COALESCE(?, fill_density)",
+                "nozzle_temp = COALESCE(?, nozzle_temp)",
+                "bed_temp = COALESCE(?, bed_temp)",
+                "filament_used_source = 'parsed'",
+            ])
+            params.extend([
+                float(grams),
+                float(mm) if mm else 0.0,
+                parsed.get("parsed_filament_type"),
+                parsed.get("parsed_layer_height"),
+                parsed.get("parsed_nozzle_diameter"),
+                parsed.get("parsed_fill_density"),
+                parsed.get("parsed_nozzle_temp"),
+                parsed.get("parsed_bed_temp"),
+            ])
+        if not fields:
+            return
+        params.append(job_id)
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE print_jobs SET {} WHERE job_id = ?".format(
+                ", ".join(fields)
+            ),
+            params,
+        )
         conn.commit()
         conn.close()
 

@@ -1,5 +1,6 @@
 """Production lifecycle side effects for print transitions."""
 
+import json as _json
 import os
 from contextlib import nullcontext
 from datetime import datetime, timezone
@@ -54,6 +55,15 @@ class ProductionHandler:
             pending_start, upload_session_id, upload_session = (
                 self._start_context(printer_id, state)
             )
+            # Phase 6 — slicer-parsed meta from the upload_session is the
+            # authoritative source (set in ExecutionService.create_and_upload).
+            # Prefer it over the API at start; the API is also kept as a
+            # fallback for the per-tool spool routing in _primary_spool.
+            parsed_for_active_tool = self._parsed_details_for_active_tool(
+                upload_session
+            )
+            merged_for_active = dict(details or {})
+            merged_for_active.update(parsed_for_active_tool)
             file_name, display_name = self._job_names(
                 state, details, upload_session
             )
@@ -61,7 +71,7 @@ class ProductionHandler:
                 pending_start, upload_session
             )
             spool_id, spool_material, spool_brand = self._primary_spool(
-                printer_id, details
+                printer_id, merged_for_active
             )
             job_id = self.job_repository.create_job(
                 printer_id=printer_id, printer_name=state["name"],
@@ -80,6 +90,15 @@ class ProductionHandler:
                 operator_initials=operator_initials,
             )
             self._active_jobs()[printer_id] = job_id
+            # Phase 6 — stamp the parsed metadata + upload_session linkage
+            # onto print_jobs so completion can skip the post-FINISHED
+            # /api/v1/job blank-payload call.
+            if upload_session_id:
+                self.job_repository.set_parsed_meta(
+                    job_id,
+                    upload_session_id=upload_session_id,
+                    parsed=upload_session,
+                )
             self._mark_upload_session_printing(
                 upload_session_id, operator_initials
             )
@@ -111,8 +130,17 @@ class ProductionHandler:
         if not job_id:
             return
         try:
-            details = self._job_details(client)
+            # Phase 6 — do NOT call client.get_job_details() here. The
+            # PrusaLink /api/v1/job endpoint returns blank after the
+            # printer transitions to FINISHED (documented behavior — see
+            # prusa3d/Prusa-Firmware-Buddy#4744). The values that matter
+            # were stamped on the print_jobs row at start time, either
+            # from the slicer-parsed metadata or from a successful
+            # start-time API read. If we have an upload_session linked
+            # to this job, recover per-tool arrays from its parsed
+            # columns so the XL material_usage rows survive.
             job = self.job_repository.get_job(job_id)
+            details = self._completion_details_from_upload_session(job)
             filament_g, filament_mm, filament_source, material_rows = (
                 self.materials.resolve_completion_usage(
                     printer_id, client, state, details, job
@@ -328,6 +356,49 @@ class ProductionHandler:
     def _job_details(client):
         details = client.get_job_details()
         return {} if details.get("error") else details
+
+    @staticmethod
+    def _parsed_details_for_active_tool(upload_session):
+        """Project parsed-meta from upload_session into API-shaped details.
+
+        Returns a dict with the same keys ``_primary_spool`` /
+        ``_active_print_tool`` read out of an API response so the
+        slicer-parsed per-tool arrays can drive tool routing when the
+        start-time API call also returned blank. JSON-encoded list
+        columns are decoded back into Python lists.
+        """
+        if not upload_session:
+            return {}
+        out = {}
+        for src, dst in (
+            ("parsed_filament_used_g_per_tool", "filament_used_g_per_tool"),
+            ("parsed_filament_used_mm_per_tool", "filament_used_mm_per_tool"),
+        ):
+            raw = upload_session.get(src)
+            if not raw:
+                continue
+            try:
+                out[dst] = _json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _completion_details_from_upload_session(self, job):
+        """Recover per-tool meta from the linked upload_session at complete.
+
+        Mirrors the ``client.get_job_details()`` shape so
+        ``ProductionMaterialUsage._xl_usage`` (which reads
+        ``filament_used_g_per_tool`` / ``filament_used_mm_per_tool``)
+        can still produce per-tool ``material_usage`` rows even though
+        the post-FINISHED API call returns blank.
+        """
+        if not job or not self.upload_session_db:
+            return {}
+        upload_session_id = job.get("upload_session_id")
+        if not upload_session_id:
+            return {}
+        session = self.upload_session_db.get_session(upload_session_id)
+        return self._parsed_details_for_active_tool(session)
 
     @staticmethod
     def _job_names(state, details, upload_session):

@@ -85,6 +85,26 @@ class UploadSessionRepository:
         add_column_if_missing(
             conn, "upload_sessions", "last_error", "TEXT"
         )
+        # Phase 6 — parsed slicer metadata. The legacy ``parsed_grams`` +
+        # ``parsed_grams_source`` columns above were never populated by
+        # the upload path; they're kept for compatibility but the new
+        # ``parsed_filament_used_g`` is the canonical field. See
+        # app/shared/gcode_metadata.py for the parse contract.
+        for column, definition in (
+            ("parsed_filament_used_g", "REAL"),
+            ("parsed_filament_used_mm", "REAL"),
+            ("parsed_filament_used_g_per_tool", "TEXT"),
+            ("parsed_filament_used_mm_per_tool", "TEXT"),
+            ("parsed_filament_type", "TEXT"),
+            ("parsed_layer_height", "REAL"),
+            ("parsed_nozzle_diameter", "REAL"),
+            ("parsed_fill_density", "REAL"),
+            ("parsed_nozzle_temp", "REAL"),
+            ("parsed_bed_temp", "REAL"),
+            ("parsed_at", "TEXT"),
+            ("parse_error", "TEXT"),
+        ):
+            add_column_if_missing(conn, "upload_sessions", column, definition)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_upload_sessions_printer
             ON upload_sessions(printer_id)
@@ -196,6 +216,41 @@ class UploadSessionRepository:
         conn.commit()
         conn.close()
         return self.get_session(upload_session_id)
+
+    # Whitelist of parsed_* columns update_parsed_metadata accepts. Keys
+    # outside this set are silently ignored so callers can pass the full
+    # parse_print_metadata() output without filtering.
+    _PARSED_METADATA_COLUMNS = (
+        "parsed_filament_used_g",
+        "parsed_filament_used_mm",
+        "parsed_filament_used_g_per_tool",
+        "parsed_filament_used_mm_per_tool",
+        "parsed_filament_type",
+        "parsed_layer_height",
+        "parsed_nozzle_diameter",
+        "parsed_fill_density",
+        "parsed_nozzle_temp",
+        "parsed_bed_temp",
+        "parsed_at",
+        "parse_error",
+    )
+
+    def update_parsed_metadata(self, upload_session_id: str,
+                               metadata: dict) -> Optional[dict]:
+        """Persist parsed slicer metadata onto an upload_session row.
+
+        Accepts the dict shape returned by
+        ``app.shared.gcode_metadata.parse_print_metadata`` — extra keys
+        are ignored, missing keys leave the existing column untouched.
+        """
+        fields = {
+            key: metadata.get(key)
+            for key in self._PARSED_METADATA_COLUMNS
+            if key in metadata
+        }
+        if not fields:
+            return self.get_session(upload_session_id)
+        return self.update_session(upload_session_id, **fields)
 
     def set_status(self, upload_session_id: str, status: str,
                    last_error: str = None,

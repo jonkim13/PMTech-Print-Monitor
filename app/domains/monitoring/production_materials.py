@@ -7,6 +7,7 @@ from filament_usage import (
     FILAMENT_SOURCE_FILENAME,
     FILAMENT_SOURCE_MM_ESTIMATE,
     FILAMENT_SOURCE_NONE,
+    FILAMENT_SOURCE_PARSED,
     coerce_nonnegative_float,
     coerce_positive_float,
     estimate_grams_from_mm,
@@ -61,6 +62,12 @@ class ProductionMaterialUsage:
         rows = []
         per_tool_g = details.get("filament_used_g_per_tool", [])
         per_tool_mm = details.get("filament_used_mm_per_tool", [])
+        # When the per-tool arrays came from an upload_session's parsed
+        # metadata (Phase 6 path), label the resulting material_usage
+        # rows as 'parsed' so the resolution lineage is preserved.
+        per_tool_source = (FILAMENT_SOURCE_PARSED
+                           if total_source == FILAMENT_SOURCE_PARSED
+                           else FILAMENT_SOURCE_API)
         for tidx, g_val in enumerate(per_tool_g or []):
             grams = coerce_positive_float(g_val)
             if grams is None:
@@ -69,7 +76,7 @@ class ProductionMaterialUsage:
                        if tidx < len(per_tool_mm) else 0.0)
             rows.append(self._row(
                 self._assigned_spool(printer_id, tidx), grams, mm_used,
-                tidx, FILAMENT_SOURCE_API,
+                tidx, per_tool_source,
             ))
         if rows:
             return (
@@ -78,9 +85,10 @@ class ProductionMaterialUsage:
                 or self._sum_positive_values(per_tool_g),
                 coerce_positive_float(details.get("filament_used_mm"))
                 or self._sum_positive_values(per_tool_mm),
-                FILAMENT_SOURCE_API,
+                per_tool_source,
             )
-        if total_source in (FILAMENT_SOURCE_API, FILAMENT_SOURCE_FILENAME):
+        if total_source in (FILAMENT_SOURCE_PARSED, FILAMENT_SOURCE_API,
+                            FILAMENT_SOURCE_FILENAME):
             return [], 0.0, 0.0, total_source
         for tidx, mm_val in enumerate(per_tool_mm or []):
             mm_used = coerce_positive_float(mm_val)
@@ -145,15 +153,39 @@ class ProductionMaterialUsage:
 
     @staticmethod
     def _resolve_total_usage(state_job, details=None, production_job=None):
+        # Phase 6 — short-circuit for slicer-parsed source. The print_jobs
+        # row gets stamped with source='parsed' at start time when the
+        # upload_session carried parsed metadata. The post-FINISHED API
+        # re-read returns blank, so trust the parsed values stored on
+        # the row over anything in ``details`` here.
+        production_job = production_job or {}
+        job_source = production_job.get("filament_used_source")
+        job_g = coerce_positive_float(production_job.get("filament_used_g"))
+        job_mm = coerce_nonnegative_float(production_job.get("filament_used_mm"))
+        if job_source == FILAMENT_SOURCE_PARSED and job_g is not None:
+            return {
+                "grams": job_g,
+                "mm_used": job_mm,
+                "source": FILAMENT_SOURCE_PARSED,
+                "filename": None,
+            }
         merged = dict(state_job or {})
         merged.update(details or {})
+        # Prefer values stored at start time on the production job over
+        # whatever ``details`` contains — the completion-time API call
+        # is documented to return blank after FINISHED.
+        if job_g is not None and not coerce_positive_float(
+                merged.get("filament_used_g")):
+            merged["filament_used_g"] = job_g
+        if job_mm and not coerce_nonnegative_float(merged.get("filament_used_mm")):
+            merged["filament_used_mm"] = job_mm
         return resolve_total_filament_usage(
             filament_used_g=merged.get("filament_used_g"),
             filament_used_mm=merged.get("filament_used_mm"),
             filename_candidates=build_filename_candidates(
                 merged.get("file_display_name"), merged.get("file_name"),
-                (production_job or {}).get("file_display_name"),
-                (production_job or {}).get("file_name"),
+                production_job.get("file_display_name"),
+                production_job.get("file_name"),
                 (state_job or {}).get("filename"),
             ),
         )

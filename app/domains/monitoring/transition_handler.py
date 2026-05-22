@@ -48,6 +48,7 @@ class TransitionHandler:
             assignment_db=assignment_db,
             job_repository=job_repository,
             runtime_state=runtime_state,
+            upload_session_db=upload_session_db,
         )
 
     def _locked(self):

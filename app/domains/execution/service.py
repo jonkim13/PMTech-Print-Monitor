@@ -17,6 +17,8 @@ from filament_usage import (
 )
 from werkzeug.utils import secure_filename
 
+from app.shared.gcode_metadata import parse_print_metadata
+
 
 class ExecutionService:
     """Reusable upload/verify/start workflow shared by printer routes."""
@@ -689,6 +691,42 @@ class ExecutionService:
                 if parsed_grams is not None else FILAMENT_SOURCE_NONE
             ),
         )
+        # Phase 6 — parse slicer metadata out of the staged file and
+        # persist onto the upload_session row. ProductionHandler.start
+        # copies the result onto print_jobs at print start so the
+        # completion path doesn't need the post-FINISHED /api/v1/job
+        # call (which is documented to return blank).
+        try:
+            parsed_meta = parse_print_metadata(staged["staged_path"])
+            self.upload_session_db.update_parsed_metadata(
+                upload_session_id, parsed_meta
+            )
+            grams = parsed_meta.get("parsed_filament_used_g")
+            if grams is not None:
+                print("[PARSE][OK] {} upload_session_id={} grams={} "
+                      "type={} layer_h={}".format(
+                          printer_id, upload_session_id, grams,
+                          parsed_meta.get("parsed_filament_type"),
+                          parsed_meta.get("parsed_layer_height"),
+                      ))
+            else:
+                print("[PARSE][FAIL] {} upload_session_id={} reason={}"
+                      .format(printer_id, upload_session_id,
+                              parsed_meta.get("parse_error")))
+        except Exception as exc:
+            # parse_print_metadata is meant to be no-raise; if it does,
+            # don't block the upload. Record the error for diagnostics.
+            print("[PARSE][ERROR] {} upload_session_id={} {}: {}".format(
+                printer_id, upload_session_id, type(exc).__name__, exc))
+            try:
+                self.upload_session_db.update_parsed_metadata(
+                    upload_session_id,
+                    {"parse_error": "{}: {}".format(
+                        type(exc).__name__, exc)},
+                )
+            except Exception:
+                pass
+
         if session.get("queue_job_id"):
             self._sync_queue_job_status(
                 session["queue_job_id"],

@@ -1,9 +1,12 @@
 """Filament deduction side effects for print transitions."""
 
+import json as _json
+
 from filament_usage import (
     FILAMENT_SOURCE_API,
     FILAMENT_SOURCE_FILENAME,
     FILAMENT_SOURCE_MM_ESTIMATE,
+    FILAMENT_SOURCE_PARSED,
     coerce_positive_float,
     estimate_grams_from_mm,
     resolve_total_filament_usage,
@@ -16,23 +19,34 @@ class FilamentHandler:
     """Deduct consumed filament from assigned spools."""
 
     def __init__(self, filament_db=None, assignment_db=None,
-                 job_repository=None, runtime_state=None):
+                 job_repository=None, runtime_state=None,
+                 upload_session_db=None):
         self.filament_db = filament_db
         self.assignment_db = assignment_db
         self.job_repository = job_repository
         self.runtime_state = runtime_state
+        # Phase 6 — needed to recover parsed per-tool arrays at deduct
+        # time for prints that came through the upload flow.
+        self.upload_session_db = upload_session_db
 
     def auto_deduct_filament(self, printer_id: str, state: dict, client=None):
         """Deduct estimated filament usage from assigned spools."""
         if not self.assignment_db or not self.filament_db or not client:
             return
 
-        details = client.get_job_details()
-        if details.get("error"):
-            details = {}
+        production_job = self._get_active_production_job_record(printer_id)
+        # Phase 6 — the post-FINISHED /api/v1/job returns blank. Prefer
+        # parsed metadata from the linked upload_session (stamped onto
+        # the print_jobs row at start time) over a doomed API re-read.
+        details = self._completion_details_from_upload_session(
+            production_job
+        )
+        if not details:
+            api_details = client.get_job_details()
+            if not api_details.get("error"):
+                details = api_details
         job = dict(state.get("job", {}))
         job.update(details)
-        production_job = self._get_active_production_job_record(printer_id)
 
         if getattr(client, "model", "unknown") == "xl":
             if self._deduct_xl_usage(printer_id, state, job, production_job):
@@ -152,11 +166,71 @@ class FilamentHandler:
             return self.job_repository.get_job(job_id)
         return self.job_repository.get_active_job(printer_id)
 
+    def _completion_details_from_upload_session(self, production_job):
+        """Recover API-shaped details from a linked upload_session.
+
+        Returns a dict with the same keys ``auto_deduct_filament`` uses
+        (``filament_used_g``, ``filament_used_g_per_tool``, etc.) so
+        the post-FINISHED API blank can be bypassed. Empty dict when
+        the job has no upload_session linkage or the session lookup
+        fails — caller then falls back to the API call.
+        """
+        if not production_job or not self.upload_session_db:
+            return {}
+        upload_session_id = production_job.get("upload_session_id")
+        if not upload_session_id:
+            return {}
+        try:
+            session = self.upload_session_db.get_session(upload_session_id)
+        except Exception:
+            return {}
+        if not session:
+            return {}
+        out = {}
+        grams = session.get("parsed_filament_used_g")
+        mm = session.get("parsed_filament_used_mm")
+        if grams is not None:
+            out["filament_used_g"] = grams
+        if mm is not None:
+            out["filament_used_mm"] = mm
+        if session.get("parsed_filament_type"):
+            out["filament_type"] = session.get("parsed_filament_type")
+        for src, dst in (
+            ("parsed_filament_used_g_per_tool", "filament_used_g_per_tool"),
+            ("parsed_filament_used_mm_per_tool", "filament_used_mm_per_tool"),
+        ):
+            raw = session.get(src)
+            if not raw:
+                continue
+            try:
+                out[dst] = _json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+        return out
+
     @staticmethod
     def _resolve_total_job_filament_usage(state_job: dict,
                                           details: dict = None,
                                           production_job: dict = None,
                                           include_mm_estimate: bool = True):
+        # Phase 6 — short-circuit when the print_jobs row is already
+        # stamped with source='parsed' at start time. Trust those
+        # values; don't re-derive.
+        production_job = production_job or {}
+        if (production_job.get("filament_used_source")
+                == FILAMENT_SOURCE_PARSED):
+            grams = coerce_positive_float(
+                production_job.get("filament_used_g")
+            )
+            if grams is not None:
+                return {
+                    "grams": grams,
+                    "mm_used": coerce_positive_float(
+                        production_job.get("filament_used_mm")
+                    ) or 0.0,
+                    "source": FILAMENT_SOURCE_PARSED,
+                    "filename": None,
+                }
         merged = dict(state_job or {})
         merged.update(details or {})
         return resolve_total_filament_usage(
@@ -165,8 +239,8 @@ class FilamentHandler:
             filename_candidates=build_filename_candidates(
                 merged.get("file_display_name"),
                 merged.get("file_name"),
-                (production_job or {}).get("file_display_name"),
-                (production_job or {}).get("file_name"),
+                production_job.get("file_display_name"),
+                production_job.get("file_name"),
                 (state_job or {}).get("filename"),
             ),
             include_mm_estimate=include_mm_estimate,

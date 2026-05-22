@@ -9,6 +9,7 @@ from typing import Iterable, Optional
 
 MM_TO_GRAMS_FACTOR = 0.00298
 
+FILAMENT_SOURCE_PARSED = "parsed"
 FILAMENT_SOURCE_API = "api"
 FILAMENT_SOURCE_FILENAME = "filename"
 FILAMENT_SOURCE_MM_ESTIMATE = "mm_estimate"

@@ -1,6 +1,29 @@
 """Queue business logic."""
 
+import os
 from typing import Optional
+
+from werkzeug.utils import secure_filename
+
+
+_ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
+
+
+class QueueServiceError(Exception):
+    """Base class for QueueService errors."""
+
+
+class InvalidPrintRequestError(QueueServiceError):
+    """Bad input on a print-from-queue request (mapped to 400)."""
+
+
+class QueueItemNotFoundError(QueueServiceError):
+    """Queue item, job, or printer not found (mapped to 404)."""
+
+
+class QueueExecutionConflictError(QueueServiceError):
+    """Queue items are in a state that blocks the requested transition
+    (mapped to 409)."""
 
 
 class QueueService:
@@ -8,13 +31,15 @@ class QueueService:
 
     def __init__(self, queue_repository, execution_repository,
                  work_order_repository=None, job_repository=None,
-                 farm_manager=None, production_job_repository=None):
+                 farm_manager=None, production_job_repository=None,
+                 execution_service=None):
         self.queue_repository = queue_repository
         self.execution_repository = execution_repository
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
         self.farm_manager = farm_manager
         self.production_job_repository = production_job_repository
+        self.execution_service = execution_service
 
     # ------------------------------------------------------------------
     # Query
@@ -219,3 +244,136 @@ class QueueService:
             queue_ids, printer_id, printer_name, gcode_file,
             operator_initials=operator_initials, job_id=job_id,
         )
+
+    # ------------------------------------------------------------------
+    # Print-from-Queue Orchestration
+    # ------------------------------------------------------------------
+
+    def start_print_request(
+        self,
+        *,
+        printer_id,
+        queue_ids,
+        requested_job_id,
+        uploaded_file,
+        operator_initials,
+    ) -> dict:
+        """Resolve queue items, validate the printer + file, create the
+        execution session, and upload+start the print.
+
+        Validation failures raise typed exceptions. Anything that
+        reaches ``execution_service.create_and_upload`` flows through
+        its result dict (which carries ``ok`` and ``http_status``) so
+        the route can pass the dict straight to the client and derive
+        the HTTP status from ``http_status``.
+
+        Raises:
+            InvalidPrintRequestError: bad input or non-idle printer (400)
+            QueueItemNotFoundError: missing queue/job/printer (404)
+            QueueExecutionConflictError: items already in progress (409)
+        """
+        execution_service = getattr(self, "execution_service", None)
+
+        try:
+            queue_ids, _ = self.resolve_print_request_items(
+                queue_ids, requested_job_id=requested_job_id
+            )
+        except ValueError as exc:
+            raise InvalidPrintRequestError(str(exc))
+        except LookupError as exc:
+            raise QueueItemNotFoundError(str(exc))
+        except RuntimeError as exc:
+            raise QueueExecutionConflictError(str(exc))
+
+        if not printer_id:
+            raise InvalidPrintRequestError("Missing printer_id")
+
+        initials = str(operator_initials or "").strip()
+        if not initials:
+            raise InvalidPrintRequestError(
+                "operator_initials is required when starting a print"
+            )
+
+        if not self.farm_manager:
+            raise InvalidPrintRequestError("Upload workflow unavailable")
+        client = self.farm_manager.get_printer_client(printer_id)
+        if not client:
+            raise QueueItemNotFoundError("Unknown printer")
+        if not execution_service:
+            raise InvalidPrintRequestError("Upload workflow unavailable")
+
+        status = self.farm_manager.get_printer_status(printer_id)
+        if status.get("status") not in ("idle", "finished"):
+            raise InvalidPrintRequestError(
+                "Printer is not idle (status: {})".format(
+                    status.get("status", "unknown")
+                )
+            )
+
+        if uploaded_file is None:
+            raise InvalidPrintRequestError("No gcode file provided")
+        raw_filename = getattr(uploaded_file, "filename", None)
+        if not raw_filename:
+            raise InvalidPrintRequestError("Empty filename")
+        filename = secure_filename(raw_filename)
+        if not filename:
+            raise InvalidPrintRequestError("Invalid filename")
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+            raise InvalidPrintRequestError(
+                "Unsupported file type: {}".format(ext)
+            )
+
+        printer_name = status.get("name", printer_id)
+        try:
+            execution = self.start_queue_job_execution(
+                queue_ids, printer_id, printer_name, filename,
+                operator_initials=initials, job_id=requested_job_id,
+            )
+        except ValueError as exc:
+            raise InvalidPrintRequestError(str(exc))
+        except LookupError as exc:
+            raise QueueItemNotFoundError(str(exc))
+        except RuntimeError as exc:
+            raise QueueExecutionConflictError(str(exc))
+
+        queue_job_id = execution["queue_job_id"]
+        work_order_job_id = execution["job_id"]
+        queue_ids = execution["queue_ids"]
+        auto_created_job = bool(execution.get("auto_created_job"))
+
+        result = execution_service.create_and_upload(
+            printer_id=printer_id,
+            uploaded_file=uploaded_file,
+            original_filename=filename,
+            start_print=True,
+            operator_initials=initials,
+            queue_job_id=queue_job_id,
+            work_order_job_id=work_order_job_id,
+        )
+        result.update({
+            "queue_ids": queue_ids,
+            "queue_job_id": queue_job_id,
+            "job_id": work_order_job_id,
+            "printer_id": printer_id,
+            "wo_id": execution["wo_id"],
+            "auto_created_job": auto_created_job,
+        })
+
+        if result.get("ok"):
+            print(
+                "[WORKORDER] Queue job #{} confirmed printing for job #{} "
+                "on {} with {} part{}".format(
+                    queue_job_id, work_order_job_id, printer_name,
+                    len(queue_ids), "" if len(queue_ids) == 1 else "s",
+                )
+            )
+        else:
+            print(
+                "[WORKORDER] Queue job #{} did not reach printing for job "
+                "#{} on {}: {} ({})".format(
+                    queue_job_id, work_order_job_id, printer_name,
+                    result.get("message"), result.get("error_type"),
+                )
+            )
+        return result

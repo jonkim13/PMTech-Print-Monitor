@@ -5,10 +5,13 @@ API endpoints for work orders, production queue,
 and integrated print-from-queue functionality.
 """
 
-import os
-
 from flask import Blueprint, jsonify, render_template, request
-from werkzeug.utils import secure_filename
+
+from app.domains.queue.service import (
+    InvalidPrintRequestError,
+    QueueExecutionConflictError,
+    QueueItemNotFoundError,
+)
 
 work_order_api = Blueprint("work_order_api", __name__)
 
@@ -18,7 +21,6 @@ _triage_service = None
 _farm_manager = None
 _gcode_uploads_dir = None
 _execution_service = None
-_ALLOWED_UPLOAD_EXTENSIONS = {".gcode", ".gco", ".g", ".bgcode"}
 
 
 def register_work_order_routes(app, farm_manager,
@@ -102,115 +104,30 @@ def _parse_queue_ids(values, default_queue_id=None):
     return queue_ids
 
 
-def _print_queue_items(queue_ids):
-    """Assign one or more queue items, upload, verify, and start printing."""
-    requested_job_id = request.form.get("job_id", type=int)
+def _dispatch_print_request(queue_ids):
+    """Translate Flask request context into a QueueService print call."""
+    uploaded = request.files.get("file")
     try:
-        queue_ids, queue_items = _queue_service.resolve_print_request_items(
-            queue_ids, requested_job_id=requested_job_id
+        result = _queue_service.start_print_request(
+            printer_id=request.form.get("printer_id"),
+            queue_ids=queue_ids,
+            requested_job_id=request.form.get("job_id", type=int),
+            uploaded_file=uploaded,
+            operator_initials=request.form.get("operator_initials"),
         )
-    except ValueError as exc:
+    except InvalidPrintRequestError as exc:
         return jsonify({"error": str(exc)}), 400
-    except LookupError as exc:
+    except QueueItemNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
-    except RuntimeError as exc:
+    except QueueExecutionConflictError as exc:
         return jsonify({"error": str(exc)}), 409
 
-    printer_id = request.form.get("printer_id")
-    if not printer_id:
-        return jsonify({"error": "Missing printer_id"}), 400
-
-    try:
-        operator_initials = _validate_operator_initials(
-            request.form.get("operator_initials")
+    status_code = _workflow_status_code(result)
+    if status_code >= 500 and not result.get("ok"):
+        _log_route_failure(
+            "api_print_queue", result.get("printer_id"), result, status_code,
         )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    client = _farm_manager.get_printer_client(printer_id)
-    if not client:
-        return jsonify({"error": "Unknown printer"}), 404
-    if not _execution_service:
-        return jsonify({"error": "Upload workflow unavailable"}), 500
-
-    status = _farm_manager.get_printer_status(printer_id)
-    if status.get("status") not in ("idle", "finished"):
-        return jsonify({
-            "error": "Printer is not idle (status: {})"
-                     .format(status.get("status", "unknown"))
-        }), 400
-
-    if "file" not in request.files:
-        return jsonify({"error": "No gcode file provided"}), 400
-
-    uploaded = request.files["file"]
-    if not uploaded.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
-    filename = secure_filename(uploaded.filename)
-    if not filename:
-        return jsonify({"error": "Invalid filename"}), 400
-
-    ext = os.path.splitext(filename)[1].lower()
-    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
-        return jsonify({"error": "Unsupported file type: {}".format(ext)}), 400
-
-    printer_name = status.get("name", printer_id)
-    try:
-        execution = _queue_service.start_queue_job_execution(
-            queue_ids,
-            printer_id,
-            printer_name,
-            filename,
-            operator_initials=operator_initials,
-            job_id=requested_job_id,
-        )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({"error": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 409
-
-    queue_job_id = execution["queue_job_id"]
-    work_order_job_id = execution["job_id"]
-    queue_ids = execution["queue_ids"]
-    auto_created_job = bool(execution.get("auto_created_job"))
-
-    result = _execution_service.create_and_upload(
-        printer_id=printer_id,
-        uploaded_file=uploaded,
-        original_filename=filename,
-        start_print=True,
-        operator_initials=operator_initials,
-        queue_job_id=queue_job_id,
-        work_order_job_id=work_order_job_id,
-    )
-    result.update({
-        "queue_ids": queue_ids,
-        "queue_job_id": queue_job_id,
-        "job_id": work_order_job_id,
-        "printer_id": printer_id,
-        "wo_id": execution["wo_id"],
-        "auto_created_job": auto_created_job,
-    })
-
-    if not result.get("ok"):
-        status_code = _workflow_status_code(result)
-        if status_code >= 500:
-            _log_route_failure("_print_queue_items", printer_id, result,
-                               status_code)
-        print("[WORKORDER] Queue job #{} did not reach printing for job #{} "
-              "on {}: {} ({})".format(
-                  queue_job_id, work_order_job_id, printer_name,
-                  result.get("message"), result.get("error_type")))
-        return jsonify(result), status_code
-
-    print("[WORKORDER] Queue job #{} confirmed printing for job #{} on {} "
-          "with {} part{}".format(
-              queue_job_id, work_order_job_id, printer_name, len(queue_ids),
-              "" if len(queue_ids) == 1 else "s"))
-    return jsonify(result), _workflow_status_code(result)
+    return jsonify(result), status_code
 
 
 # ------------------------------------------------------------------
@@ -514,7 +431,7 @@ def api_update_queue_item(queue_id):
 @work_order_api.route("/api/queue/<int:queue_id>/print", methods=["POST"])
 def api_print_queue_item(queue_id):
     """Assign a printer, upload gcode, and start printing."""
-    return _print_queue_items([queue_id])
+    return _dispatch_print_request([queue_id])
 
 
 @work_order_api.route("/api/queue/print", methods=["POST"])
@@ -525,7 +442,7 @@ def api_print_queue_items():
         single = request.form.get("queue_id")
         if single:
             queue_ids = [single]
-    return _print_queue_items(queue_ids)
+    return _dispatch_print_request(queue_ids)
 
 
 @work_order_api.route("/api/queue/<int:queue_id>/cancel", methods=["POST"])

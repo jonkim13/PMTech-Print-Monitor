@@ -188,6 +188,11 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         farm_manager=farm_manager,
         queue_execution_repository=queue_execution_repository,
     )
+    # Late-bind execution_service onto queue_service so
+    # QueueService.start_print_request can drive the upload workflow.
+    # Same late-binding shape as farm_manager above; the Phase 5h
+    # constructor-injection sweep can convert both at once.
+    queue_service.execution_service = execution_service
     weekly_report_service = WeeklyReportService(
         settings=settings, farm_manager=farm_manager,
     )

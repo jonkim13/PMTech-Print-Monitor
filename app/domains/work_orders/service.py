@@ -7,11 +7,13 @@ class WorkOrderService:
     """Orchestrates work-order and job operations."""
 
     def __init__(self, work_order_repository, job_repository,
-                 queue_repository=None, queue_execution_repository=None,
+                 queue_repository=None, queue_bulk_operations=None,
+                 queue_execution_repository=None,
                  farm_manager=None, production_job_repository=None):
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
         self.queue_repository = queue_repository
+        self.queue_bulk_operations = queue_bulk_operations
         self.queue_execution_repository = queue_execution_repository
         self.farm_manager = farm_manager
         self.production_job_repository = production_job_repository
@@ -245,7 +247,7 @@ class WorkOrderService:
         if not self.work_order_repository.get_work_order(wo_id):
             return {"found": False, "cancelled_count": 0, "printing_count": 0}
 
-        affected = self.queue_repository.cancel_queue_items_for_wo(wo_id)
+        affected = self.queue_bulk_operations.cancel_queue_items_for_wo(wo_id)
         self._close_printing_side_effects(affected)
         return {
             "found": True,
@@ -262,7 +264,9 @@ class WorkOrderService:
                 not self._job_exists(job_id):
             return {"found": False, "cancelled_count": 0, "printing_count": 0}
 
-        affected = self.queue_repository.cancel_queue_items_for_job(job_id)
+        affected = self.queue_bulk_operations.cancel_queue_items_for_job(
+            job_id
+        )
         self._close_printing_side_effects(affected)
         return {
             "found": True,
@@ -278,7 +282,9 @@ class WorkOrderService:
         if not self.work_order_repository.get_work_order(wo_id):
             return {"found": False, "requeued_count": 0}
 
-        affected = self.queue_repository.requeue_queue_items_for_wo(wo_id)
+        affected = self.queue_bulk_operations.requeue_queue_items_for_wo(
+            wo_id
+        )
         return {
             "found": True,
             "requeued_count": len(affected),
@@ -292,7 +298,9 @@ class WorkOrderService:
         if not self._job_exists(job_id):
             return {"found": False, "requeued_count": 0}
 
-        affected = self.queue_repository.requeue_queue_items_for_job(job_id)
+        affected = self.queue_bulk_operations.requeue_queue_items_for_job(
+            job_id
+        )
         return {
             "found": True,
             "requeued_count": len(affected),

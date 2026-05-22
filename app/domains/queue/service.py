@@ -30,10 +30,12 @@ class QueueService:
     """Orchestrates queue operations."""
 
     def __init__(self, queue_repository, execution_repository,
+                 queue_bulk_operations=None,
                  work_order_repository=None, job_repository=None,
                  farm_manager=None, production_job_repository=None,
                  execution_service=None):
         self.queue_repository = queue_repository
+        self.queue_bulk_operations = queue_bulk_operations
         self.execution_repository = execution_repository
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
@@ -77,7 +79,7 @@ class QueueService:
         if not item:
             return {"found": False, "cancelled_count": 0, "printing_count": 0}
 
-        affected = self.queue_repository.cancel_queue_items([queue_id])
+        affected = self.queue_bulk_operations.cancel_queue_items([queue_id])
         if affected and affected[0].get("was_printing"):
             self._stop_printer_for(affected[0])
         return {
@@ -93,7 +95,7 @@ class QueueService:
         if not item:
             return {"found": False, "requeued_count": 0}
 
-        affected = self.queue_repository.requeue_queue_items([queue_id])
+        affected = self.queue_bulk_operations.requeue_queue_items([queue_id])
         return {
             "found": True,
             "requeued_count": len(affected),

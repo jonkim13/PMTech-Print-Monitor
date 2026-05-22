@@ -9,8 +9,10 @@ class QueueHandler:
     """Apply queue and work-order lifecycle side effects."""
 
     def __init__(self, runtime_state=None,
-                 queue_repository=None, execution_repository=None):
+                 queue_repository=None, queue_bulk_operations=None,
+                 execution_repository=None):
         self.queue_repository = queue_repository
+        self.queue_bulk_operations = queue_bulk_operations
         self.execution_repository = execution_repository
         self.runtime_state = runtime_state
 
@@ -185,7 +187,7 @@ class QueueHandler:
             if not target_queue_ids:
                 return
 
-            affected = self.queue_repository.cancel_queue_items(
+            affected = self.queue_bulk_operations.cancel_queue_items(
                 target_queue_ids
             )
             for row in affected:

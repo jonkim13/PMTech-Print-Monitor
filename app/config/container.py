@@ -10,6 +10,7 @@ from drone import DroneController
 from farm_manager import PrintFarmManager
 
 from ..domains.assignments.service import AssignmentService
+from ..domains.queue.bulk_operations import QueueBulkOperations
 from ..domains.queue.execution_repository import QueueExecutionRepository
 from ..domains.queue.repository import QueueRepository
 from ..domains.queue.service import QueueService
@@ -49,6 +50,7 @@ class AppContainer:
     work_order_repository: WorkOrderRepository
     wo_job_repository: JobRepository
     queue_repository: QueueRepository
+    queue_bulk_operations: QueueBulkOperations
     queue_execution_repository: QueueExecutionRepository
     work_order_service: WorkOrderService
     queue_service: QueueService
@@ -98,6 +100,9 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     work_order_repository = WorkOrderRepository(settings.work_order_db_path)
     wo_job_repository = JobRepository(settings.work_order_db_path)
     queue_repository = QueueRepository(settings.work_order_db_path)
+    queue_bulk_operations = QueueBulkOperations(
+        settings.work_order_db_path
+    )
     queue_execution_repository = QueueExecutionRepository(
         settings.work_order_db_path
     )
@@ -107,11 +112,13 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         work_order_repository=work_order_repository,
         job_repository=wo_job_repository,
         queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
         queue_execution_repository=queue_execution_repository,
         production_job_repository=job_repository,
     )
     queue_service = QueueService(
         queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
         execution_repository=queue_execution_repository,
         work_order_repository=work_order_repository,
         job_repository=wo_job_repository,
@@ -136,6 +143,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         snapshots_dir=settings.snapshots_dir,
         state_lock=state_lock,
         queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
         queue_execution_repository=queue_execution_repository,
     )
 
@@ -227,6 +235,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         work_order_repository=work_order_repository,
         wo_job_repository=wo_job_repository,
         queue_repository=queue_repository,
+        queue_bulk_operations=queue_bulk_operations,
         queue_execution_repository=queue_execution_repository,
         work_order_service=work_order_service,
         queue_service=queue_service,

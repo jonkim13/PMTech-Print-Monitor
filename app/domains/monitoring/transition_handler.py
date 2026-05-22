@@ -19,7 +19,8 @@ class TransitionHandler:
                  production_handler=None, queue_handler=None,
                  filament_handler=None, job_repository=None,
                  machine_repository=None, material_repository=None,
-                 queue_repository=None, queue_execution_repository=None):
+                 queue_repository=None, queue_bulk_operations=None,
+                 queue_execution_repository=None):
         self.history_db = history_db
         self.event_service = event_service
         self.runtime_state = runtime_state
@@ -27,6 +28,7 @@ class TransitionHandler:
         self.queue_handler = queue_handler or QueueHandler(
             runtime_state=runtime_state,
             queue_repository=queue_repository,
+            queue_bulk_operations=queue_bulk_operations,
             execution_repository=queue_execution_repository,
         )
         self.production_handler = production_handler or ProductionHandler(

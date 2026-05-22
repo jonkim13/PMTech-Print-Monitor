@@ -47,6 +47,7 @@ if ROOT_DIR not in sys.path:
 from app.domains.monitoring.runtime_state import MonitoringRuntimeState
 from app.domains.monitoring.transition_handler import TransitionHandler
 from app.domains.production.job_repository import PrintJobRepository
+from app.domains.queue.bulk_operations import QueueBulkOperations
 from app.domains.queue.execution_repository import QueueExecutionRepository
 from app.domains.queue.repository import QueueRepository
 from app.domains.work_orders.job_repository import JobRepository
@@ -88,6 +89,7 @@ class _BugSetup(unittest.TestCase):
         self.wo_repo = WorkOrderRepository(self.wo_db_path)
         self.job_repo = JobRepository(self.wo_db_path)
         self.q_repo = QueueRepository(self.wo_db_path)
+        self.q_bulk = QueueBulkOperations(self.wo_db_path)
         self.qe_repo = QueueExecutionRepository(self.wo_db_path)
         self.prod_repo = PrintJobRepository(self.prod_db_path)
 
@@ -109,6 +111,7 @@ class _BugSetup(unittest.TestCase):
             machine_repository=_FakeMachineRepo(),
             material_repository=None,
             queue_repository=self.q_repo,
+            queue_bulk_operations=self.q_bulk,
             queue_execution_repository=self.qe_repo,
         )
 

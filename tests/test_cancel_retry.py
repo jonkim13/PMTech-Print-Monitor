@@ -15,6 +15,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from app.domains.queue.bulk_operations import QueueBulkOperations
 from app.domains.queue.repository import QueueRepository
 from app.domains.queue.execution_repository import QueueExecutionRepository
 from app.domains.queue.service import QueueService
@@ -85,11 +86,13 @@ class CancelRetryTests(unittest.TestCase):
         self.wo_repo = WorkOrderRepository(db)
         self.job_repo = JobRepository(db)
         self.queue_repo = QueueRepository(db)
+        self.bulk_ops = QueueBulkOperations(db)
         self.exec_repo = QueueExecutionRepository(db)
         self.farm = FakeFarmManager()
         self.prod = FakeProductionRepo()
         self.queue_svc = QueueService(
             queue_repository=self.queue_repo,
+            queue_bulk_operations=self.bulk_ops,
             execution_repository=self.exec_repo,
             work_order_repository=self.wo_repo,
             job_repository=self.job_repo,
@@ -100,6 +103,7 @@ class CancelRetryTests(unittest.TestCase):
             work_order_repository=self.wo_repo,
             job_repository=self.job_repo,
             queue_repository=self.queue_repo,
+            queue_bulk_operations=self.bulk_ops,
             queue_execution_repository=self.exec_repo,
             farm_manager=self.farm,
             production_job_repository=self.prod,

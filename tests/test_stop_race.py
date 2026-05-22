@@ -125,6 +125,7 @@ class CancelHandlerIntegrationTests(unittest.TestCase):
 
     def _build(self):
         import tempfile, sqlite3, shutil
+        from app.domains.queue.bulk_operations import QueueBulkOperations
         from app.domains.queue.repository import QueueRepository
         from app.domains.queue.execution_repository import QueueExecutionRepository
         from app.domains.work_orders.repository import WorkOrderRepository
@@ -140,6 +141,7 @@ class CancelHandlerIntegrationTests(unittest.TestCase):
         wo_repo = WorkOrderRepository(wo_db)
         job_repo = JobRepository(wo_db)
         q_repo = QueueRepository(wo_db)
+        q_bulk = QueueBulkOperations(wo_db)
         qe_repo = QueueExecutionRepository(wo_db)
         prod_repo = PrintJobRepository(prod_db)
         runtime = MonitoringRuntimeState()
@@ -170,6 +172,7 @@ class CancelHandlerIntegrationTests(unittest.TestCase):
             machine_repository=_FakeMachineRepo(),
             material_repository=None,
             queue_repository=q_repo,
+            queue_bulk_operations=q_bulk,
             queue_execution_repository=qe_repo,
         )
         handler.filament_handler = FilamentAsserter()

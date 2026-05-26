@@ -270,10 +270,26 @@ def api_get_work_order_jobs(wo_id):
     return jsonify(jobs)
 
 
+def _opt_str(value):
+    """Normalize an optional string field — strip + None on empty."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @work_order_api.route("/api/workorders/<wo_id>/jobs", methods=["POST"])
 def api_create_work_order_job(wo_id):
-    """Create a persisted job for a work order."""
+    """Create a persisted job for a work order.
+
+    Body fields (Phase C):
+        job_type: 'Internal' (default) | 'External' | 'Design'
+        queue_ids: list[int]                 (Internal only)
+        vendor, external_process             (External required)
+        designer, requirements               (Design — designer required)
+    """
     data = request.get_json(silent=True) or {}
+    job_type = (data.get("job_type") or "Internal")
 
     queue_ids = []
     if data.get("queue_ids") is not None:
@@ -283,7 +299,15 @@ def api_create_work_order_job(wo_id):
             return jsonify({"error": str(exc)}), 400
 
     try:
-        job = _work_order_service.create_job(wo_id, queue_ids=queue_ids)
+        job = _work_order_service.create_job(
+            wo_id,
+            job_type=job_type,
+            queue_ids=queue_ids,
+            vendor=_opt_str(data.get("vendor")),
+            external_process=_opt_str(data.get("external_process")),
+            designer=_opt_str(data.get("designer")),
+            requirements=_opt_str(data.get("requirements")),
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except LookupError as exc:
@@ -294,6 +318,123 @@ def api_create_work_order_job(wo_id):
         "job": job,
         "assigned_count": len(queue_ids),
     }), 201
+
+
+# ------------------------------------------------------------------
+# Phase C — Job lifecycle + per-type field updates
+# ------------------------------------------------------------------
+
+_EXTERNAL_PATCH_FIELDS = (
+    "vendor", "external_process", "date_delivered",
+    "inspection_report", "inspector", "inspection_date",
+)
+
+_DESIGN_PATCH_FIELDS = (
+    "requirements", "designer", "design_completed_at", "approved_by",
+)
+
+_INSPECTION_PATCH_FIELDS = (
+    "inspection_report", "inspector", "inspection_date",
+)
+
+
+def _collect_patch_fields(data: dict, allowed: tuple) -> dict:
+    return {
+        key: _opt_str(data.get(key))
+        for key in allowed
+        if data.get(key) is not None
+    }
+
+
+@work_order_api.route("/api/jobs/<int:job_id>/start", methods=["POST"])
+def api_start_non_internal_job(job_id):
+    """Transition a non-Internal job 'open' → 'in_progress'."""
+    try:
+        _work_order_service.start_non_internal_job(job_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({
+        "success": True,
+        "job_id": job_id,
+        "status": "in_progress",
+    })
+
+
+@work_order_api.route("/api/jobs/<int:job_id>/complete", methods=["POST"])
+def api_complete_non_internal_job(job_id):
+    """Transition a non-Internal job → 'completed' and roll up the WO."""
+    try:
+        _work_order_service.complete_non_internal_job(job_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({
+        "success": True,
+        "job_id": job_id,
+        "status": "completed",
+    })
+
+
+@work_order_api.route("/api/jobs/<int:job_id>/external", methods=["PATCH"])
+def api_patch_external_job(job_id):
+    """Partially update External-job fields."""
+    data = request.get_json(silent=True) or {}
+    fields = _collect_patch_fields(data, _EXTERNAL_PATCH_FIELDS)
+    try:
+        _work_order_service.update_external_job_fields(job_id, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"success": True, "job_id": job_id})
+
+
+@work_order_api.route("/api/jobs/<int:job_id>/design", methods=["PATCH"])
+def api_patch_design_job(job_id):
+    """Partially update Design-job fields."""
+    data = request.get_json(silent=True) or {}
+    fields = _collect_patch_fields(data, _DESIGN_PATCH_FIELDS)
+    try:
+        _work_order_service.update_design_job_fields(job_id, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"success": True, "job_id": job_id})
+
+
+@work_order_api.route("/api/jobs/<int:job_id>/inspection", methods=["PATCH"])
+def api_patch_job_inspection(job_id):
+    """Partially update inspection fields. Internal + External only."""
+    data = request.get_json(silent=True) or {}
+    fields = _collect_patch_fields(data, _INSPECTION_PATCH_FIELDS)
+
+    job = _work_order_service.job_repository.get_job(job_id)
+    if job is None:
+        return jsonify({"error": "Job not found"}), 404
+    job_type = job.get("job_type")
+    if job_type == "Design":
+        return jsonify({
+            "error": "Inspection not applicable to Design jobs"
+        }), 400
+
+    try:
+        if job_type == "Internal":
+            _work_order_service.update_internal_job_fields(job_id, **fields)
+        elif job_type == "External":
+            _work_order_service.update_external_job_fields(job_id, **fields)
+        else:
+            return jsonify({
+                "error": "Unknown job_type: {!r}".format(job_type)
+            }), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"success": True, "job_id": job_id})
 
 
 @work_order_api.route("/api/workorders/<wo_id>", methods=["PATCH"])

@@ -552,8 +552,22 @@ class ProductionJobDedupTests(unittest.TestCase):
                              "Back-to-back calls within 120s must collapse")
 
     def test_create_job_allows_reprint_after_window(self):
-        """If the prior 'started' row is older than 120s, a new insert
-        must happen — same-day re-prints should no longer be collapsed."""
+        """A same-file re-print after the prior run has finished must
+        create a new row — same-day re-prints get their own production
+        record.
+
+        Phase 6 added a state-based dedup branch keyed on
+        ``status='started'`` (within 24h) as the second layer of
+        ``create_job``'s dedup. That branch correctly catches the
+        FAT32 long↔short filename flip but means the test's prior
+        scenario — a row still in ``status='started'`` 5 minutes
+        later — now reflects an orphan situation, not a legitimate
+        re-print. The realistic re-print sequence is: prior run
+        completes, then a fresh create_job comes in. Complete the
+        first row first; the 5-minute backdate is kept as
+        belt-and-suspenders against the existing 120s filename
+        branch.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "production.db")
             repo = PrintJobRepository(db_path)
@@ -561,7 +575,12 @@ class ProductionJobDedupTests(unittest.TestCase):
                 printer_id="mk4-01", printer_name="MK4 1",
                 file_name="widget.gcode",
             )
-            # Rewrite started_at to simulate a row from 5 minutes ago.
+            # Simulate the prior run finishing — same status flip the
+            # real completion path performs.
+            repo.complete_job(first, duration_sec=300)
+            # Belt and suspenders: rewrite started_at to 5 minutes ago
+            # so the existing 120s filename branch can't catch it
+            # either, even if the completion guard is ever relaxed.
             conn = sqlite3.connect(db_path)
             conn.execute(
                 "UPDATE print_jobs SET started_at = "

@@ -43,6 +43,8 @@
                                 <button class="btn sm danger" onclick="WoDetail.cancelWO('{{ wo.wo_id|e }}')">Cancel WO</button>
                                 <button class="btn sm warn" onclick="WoDetail.retryWO('{{ wo.wo_id|e }}')">Re-queue</button>
                                 <button class="btn sm primary" id="wo-create-job-btn" disabled onclick="WoDetail.createJobFromSelected('{{ wo.wo_id|e }}')">Create job from selected</button>
+                                <button class="btn sm primary" id="wo-create-external-job-btn" onclick="WoDetail.openNonInternalJobModal('{{ wo.wo_id|e }}', 'External')">+ External Job</button>
+                                <button class="btn sm primary" id="wo-create-design-job-btn" onclick="WoDetail.openNonInternalJobModal('{{ wo.wo_id|e }}', 'Design')">+ Design Job</button>
                             </div>
                             <div class="wo-header-meta muted mono">
                                 {% if wo.po %}PO {{ wo.po }} &middot; {% endif %}
@@ -137,9 +139,10 @@
     </main>
 </div>
 
+{% include "partials/modals/cancel_confirm.html" %}
+{% include "partials/modals/create_non_internal_job.html" %}
 {% include "partials/modals/queue_print.html" %}
 {% include "partials/modals/wo_qc.html" %}
-{% include "partials/modals/cancel_confirm.html" %}
 
 <script>
 window.WO_DETAIL_INITIAL = {{ wo|tojson }};

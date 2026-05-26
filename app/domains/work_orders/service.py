@@ -1,6 +1,12 @@
 """Work order business logic."""
 
+from datetime import datetime, timezone
 from typing import Optional
+
+from app.domains.work_orders import status_sync
+
+
+_VALID_JOB_TYPES = ("Internal", "External", "Design")
 
 
 class WorkOrderService:
@@ -111,9 +117,11 @@ class WorkOrderService:
                 "inspector": inspector,
                 "state": state,
             }
-            # 2.5c-bound default — every current job is Internal until
-            # Phase B adds the External/Design types.
-            job.setdefault("type", "internal")
+            # Phase C — surface the discriminator as a lowercase
+            # template-friendly `type`. `or 'Internal'` defends
+            # against rows that somehow lack the column (legacy DBs
+            # that haven't picked up the mirror yet).
+            job["type"] = (job.get("job_type") or "Internal").lower()
 
     def _attach_normalized_counts(self, wo: dict) -> None:
         """Emit the design's `counts` block for the stacked progress bar.
@@ -411,5 +419,92 @@ class WorkOrderService:
     def get_work_order_jobs(self, wo_id: str) -> Optional[list]:
         return self.job_repository.get_work_order_jobs(wo_id)
 
-    def create_job(self, wo_id: str, queue_ids=None) -> dict:
-        return self.job_repository.create_job(wo_id, queue_ids=queue_ids)
+    def create_job(self, wo_id: str, queue_ids=None,
+                   job_type: str = "Internal",
+                   vendor: Optional[str] = None,
+                   external_process: Optional[str] = None,
+                   requirements: Optional[str] = None,
+                   designer: Optional[str] = None) -> dict:
+        if job_type not in _VALID_JOB_TYPES:
+            raise ValueError(
+                "job_type must be one of {}; got {!r}".format(
+                    _VALID_JOB_TYPES, job_type
+                )
+            )
+
+        if job_type == "External":
+            if not (vendor and vendor.strip()):
+                raise ValueError("External jobs require a vendor")
+            if not (external_process and external_process.strip()):
+                raise ValueError(
+                    "External jobs require an external_process"
+                )
+        elif job_type == "Design":
+            if not (designer and designer.strip()):
+                raise ValueError("Design jobs require a designer")
+
+        return self.job_repository.create_job(
+            wo_id,
+            queue_ids=queue_ids if job_type == "Internal" else None,
+            job_type=job_type,
+            vendor=vendor,
+            external_process=external_process,
+            requirements=requirements,
+            designer=designer,
+        )
+
+    def _require_job_type(self, job_id: int, expected_type: str) -> dict:
+        """Look up a job and assert its job_type. Raises for mismatches."""
+        job = self.job_repository.get_job(job_id)
+        if job is None:
+            raise LookupError("Job not found")
+        if job.get("job_type") != expected_type:
+            raise ValueError(
+                "Job {} is type {!r}, not {!r}".format(
+                    job_id, job.get("job_type"), expected_type
+                )
+            )
+        return job
+
+    def update_external_job_fields(self, job_id: int, **kwargs) -> None:
+        self._require_job_type(job_id, "External")
+        self.job_repository.update_external_job_fields(job_id, **kwargs)
+
+    def update_design_job_fields(self, job_id: int, **kwargs) -> None:
+        self._require_job_type(job_id, "Design")
+        self.job_repository.update_design_job_fields(job_id, **kwargs)
+
+    def update_internal_job_fields(self, job_id: int, **kwargs) -> None:
+        self._require_job_type(job_id, "Internal")
+        self.job_repository.update_internal_job_fields(job_id, **kwargs)
+
+    def start_non_internal_job(self, job_id: int) -> str:
+        return self.job_repository.start_non_internal_job(job_id)
+
+    def complete_non_internal_job(self, job_id: int) -> str:
+        # Auto-populate the type-appropriate "actually done" timestamp
+        # when it's still NULL. Goes through the service-layer update
+        # methods so type validation (Change 4) still fires; the user
+        # can pre-fill these via PATCH and we won't overwrite their
+        # value.
+        job = self.job_repository.get_job(job_id)
+        if job is None:
+            raise LookupError("Job not found")
+        job_type = job.get("job_type")
+        now = datetime.now(timezone.utc).isoformat()
+        if job_type == "External" and not job.get("date_delivered"):
+            self.update_external_job_fields(job_id, date_delivered=now)
+        elif job_type == "Design" and not job.get("design_completed_at"):
+            self.update_design_job_fields(job_id, design_completed_at=now)
+
+        wo_id = self.job_repository.complete_non_internal_job(job_id)
+        # Repo committed the job UPDATE on its own connection. Open a
+        # fresh conn here so the WO rollup runs independently and stays
+        # in the service layer (cross-table orchestration).
+        conn = self.job_repository._get_conn()
+        try:
+            status_sync.sync_work_order_status(conn, wo_id)
+            conn.commit()
+        finally:
+            conn.close()
+        return wo_id

@@ -3,6 +3,7 @@
    scaffolding for Phase B and remain unreached. #}
 {% from "components/_inspection_chip.html" import inspection_chip %}
 {% from "components/_part_row.html" import part_row %}
+{% from "components/_status_pill.html" import status_pill %}
 
 {# Collapsed-header partial used by every job-card variant #}
 {% macro _job_header(job, expanded, active=False) -%}
@@ -104,27 +105,81 @@
 {%- endmacro %}
 
 {# ============================================================
-   Phase B job type — visual scaffolding only. Current data model
-   has no External jobs; this macro exists so when Phase B lands
-   the renderer is already in place. #}
+   Phase C — External job card. Body shows the type-specific fields
+   inline-editable via a pencil per row; footer carries Start/Complete
+   based on status. No queue_items section — External jobs have none. #}
+{%- macro _job_status_pill(job) -%}
+{%- set status = job.status or 'open' -%}
+{%- set kind = 'printing' if status == 'in_progress'
+               else ('done' if status == 'completed'
+               else ('cancel' if status == 'cancelled'
+               else ('attn' if status == 'attention'
+               else 'queued'))) -%}
+{{ status_pill(kind, label=status|upper|replace('_', ' ')) }}
+{%- endmacro -%}
+
+{%- macro _editable_field(job_id, edit_fn, field, label, value, input_type='text') -%}
+<div class="job-field-row" style="display:flex; align-items:baseline; gap:10px; padding:6px 0;">
+    <span class="k" style="min-width:140px;">{{ label }}</span>
+    <span class="mono" data-field="{{ field }}" data-input-type="{{ input_type }}" style="flex:1; word-break:break-word;">{{ value or '—' }}</span>
+    <button class="btn sm ghost" onclick="WoDetail.{{ edit_fn }}({{ job_id }}, '{{ field }}')" aria-label="Edit {{ label|lower }}">
+        <i data-lucide="pencil" class="icon icon-sm"></i>
+    </button>
+</div>
+{%- endmacro -%}
+
+{%- macro _non_internal_footer(job) -%}
+<div class="job-card-actions">
+    {% if job.status == 'open' %}
+    <button class="btn sm go" onclick="WoDetail.startNonInternalJob({{ job.job_id }})"><i data-lucide="play" class="icon icon-sm"></i> Start Job</button>
+    {% elif job.status == 'in_progress' %}
+    <button class="btn sm primary" onclick="WoDetail.completeNonInternalJob({{ job.job_id }})"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>
+    {% elif job.status == 'completed' %}
+    <span class="muted">Completed {{ (job.completed_at or '')[:10] }}</span>
+    {% elif job.status == 'cancelled' %}
+    <span class="muted">Cancelled</span>
+    {% endif %}
+    <button class="btn sm danger" onclick="WoDetail.cancelJob('{{ job.wo_id|e }}', {{ job.job_id }})">Cancel job</button>
+</div>
+{%- endmacro -%}
+
 {% macro job_card_external(job, expanded=False) -%}
-<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="external">
+<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="external" data-job-status="{{ job.status or 'open' }}">
     {{ _job_header(job, expanded) }}
     <div class="job-card-body" {% if not expanded %}style="display:none;"{% endif %}>
-        <div class="muted" style="padding:18px;">External job rendering — populated by Phase B.</div>
+        <div class="job-card-status" style="padding:8px 0;">
+            {{ _job_status_pill(job) }}
+        </div>
+
+        {{ _editable_field(job.job_id, 'editExternalField', 'vendor', 'Vendor', job.vendor) }}
+        {{ _editable_field(job.job_id, 'editExternalField', 'external_process', 'Process', job.external_process) }}
+        {{ _editable_field(job.job_id, 'editExternalField', 'date_delivered', 'Date Delivered', job.date_delivered, input_type='date') }}
+        {{ _editable_field(job.job_id, 'editExternalField', 'inspection_report', 'Inspection Report', job.inspection_report) }}
+        {{ _editable_field(job.job_id, 'editExternalField', 'inspector', 'Inspector', job.inspector) }}
+        {{ _editable_field(job.job_id, 'editExternalField', 'inspection_date', 'Inspection Date', job.inspection_date, input_type='date') }}
+
+        {{ _non_internal_footer(job) }}
     </div>
 </article>
 {%- endmacro %}
 
 {# ============================================================
-   Phase B job type — visual scaffolding only. Design jobs go
-   through customer revision rounds; data model + endpoints come
-   in Phase B. #}
+   Phase C — Design job card. No inspection fields (Design jobs
+   don't go through QC per the diagram). No queue_items. #}
 {% macro job_card_design(job, expanded=False) -%}
-<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="design">
+<article class="job-card{% if expanded %} job-card-expanded{% endif %}" data-job-id="{{ job.job_id }}" data-job-type="design" data-job-status="{{ job.status or 'open' }}">
     {{ _job_header(job, expanded) }}
     <div class="job-card-body" {% if not expanded %}style="display:none;"{% endif %}>
-        <div class="muted" style="padding:18px;">Design job rendering — populated by Phase B.</div>
+        <div class="job-card-status" style="padding:8px 0;">
+            {{ _job_status_pill(job) }}
+        </div>
+
+        {{ _editable_field(job.job_id, 'editDesignField', 'designer', 'Designer', job.designer) }}
+        {{ _editable_field(job.job_id, 'editDesignField', 'requirements', 'Requirements', job.requirements, input_type='textarea') }}
+        {{ _editable_field(job.job_id, 'editDesignField', 'design_completed_at', 'Design Completed At', job.design_completed_at, input_type='date') }}
+        {{ _editable_field(job.job_id, 'editDesignField', 'approved_by', 'Approved By', job.approved_by) }}
+
+        {{ _non_internal_footer(job) }}
     </div>
 </article>
 {%- endmacro %}

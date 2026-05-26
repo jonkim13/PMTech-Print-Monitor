@@ -83,6 +83,16 @@
             );
             if (!card) return;
 
+            var jobType = (card.getAttribute('data-job-type') || 'internal');
+            if (jobType !== 'internal') {
+                // Non-Internal cards: server-rendered macros own the
+                // initial DOM. Polling-time updates limited to the
+                // status pill + footer action button to avoid
+                // clobbering an in-flight inline edit on a field span.
+                updateNonInternalJobStatus(card, job);
+                return;
+            }
+
             updateJobHeader(card, job);
 
             var expanded = card.classList.contains('job-card-expanded');
@@ -90,6 +100,65 @@
                 renderJobBody(card, job, wo.queue_items || []);
             }
         });
+    }
+
+    // Map a non-Internal job's status → existing status_pill kind.
+    // Mirrors the Jinja expression in _job_card.html so server-render
+    // and JS-update produce identical pill markup.
+    var _NON_INTERNAL_PILL_KINDS = {
+        in_progress: 'printing',
+        completed: 'done',
+        cancelled: 'cancel',
+        attention: 'attn',
+        open: 'queued',
+    };
+
+    function _statusPillHtml(status) {
+        var s = status || 'open';
+        var kind = _NON_INTERNAL_PILL_KINDS[s] || 'queued';
+        var label = s.toUpperCase().replace(/_/g, ' ');
+        return '<span class="st st-' + kind + '">' +
+            '<i class="sym sym-' + kind + '"></i>' +
+            '<span>' + escapeHtml(label) + '</span>' +
+            '</span>';
+    }
+
+    function _footerHtml(job) {
+        var status = job.status || 'open';
+        var actionHtml = '';
+        if (status === 'open') {
+            actionHtml = '<button class="btn sm go" onclick="WoDetail.startNonInternalJob(' +
+                job.job_id + ')"><i data-lucide="play" class="icon icon-sm"></i> Start Job</button>';
+        } else if (status === 'in_progress') {
+            actionHtml = '<button class="btn sm primary" onclick="WoDetail.completeNonInternalJob(' +
+                job.job_id + ')"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>';
+        } else if (status === 'completed') {
+            var when = (job.completed_at || '').slice(0, 10);
+            actionHtml = '<span class="muted">Completed ' + escapeHtml(when) + '</span>';
+        } else if (status === 'cancelled') {
+            actionHtml = '<span class="muted">Cancelled</span>';
+        }
+        return actionHtml +
+            '<button class="btn sm danger" onclick="WoDetail.cancelJob(\'' +
+            escapeHtml(job.wo_id || '') + "', " + job.job_id +
+            ')">Cancel job</button>';
+    }
+
+    function updateNonInternalJobStatus(card, job) {
+        var prevStatus = card.getAttribute('data-job-status');
+        var newStatus = job.status || 'open';
+        if (prevStatus === newStatus) return;  // common case — no-op
+
+        var pillHost = card.querySelector('.job-card-status');
+        if (pillHost) {
+            pillHost.innerHTML = _statusPillHtml(newStatus);
+        }
+        var actions = card.querySelector('.job-card-actions');
+        if (actions) {
+            actions.innerHTML = _footerHtml(job);
+            refreshIcons(actions);
+        }
+        card.setAttribute('data-job-status', newStatus);
     }
 
     function updateJobHeader(card, job) {

@@ -131,6 +131,57 @@ class PrintJobRepository:
             conn.close()
             return existing["job_id"]
 
+        # Phase 6 — state-based dedup for the FAT32 long↔short filename
+        # flip (audit #20). USB-stick prints with long filenames trigger
+        # Prusa firmware to report the file under the 8.3 truncated form
+        # on one API path and the long form on another, so the
+        # (printer_id, file_name) filter above misses. Catch the
+        # duplicate via the invariant "at most one status='started'
+        # row per printer within the last 24h", which is the same
+        # invariant complete_job/fail_job/stop_job already enforce on
+        # close. The 24h upper bound prevents accidental absorption
+        # onto a stale orphan from some other (non-FAT32) source —
+        # Migration 004 reconciles pre-existing orphans separately,
+        # and any new orphan source emits the [WARN] line below.
+        # julianday() is used because started_at is Python ISO format
+        # ('YYYY-MM-DDTHH:MM:SS+00:00') while SQLite's datetime()
+        # returns space-separated text — a lex comparison would treat
+        # the 'T' at position 10 as greater than the space and always
+        # return TRUE, defeating the 24h bound.
+        started = conn.execute("""
+            SELECT job_id, operator_initials FROM print_jobs
+            WHERE printer_id = ? AND status = 'started'
+              AND julianday('now') - julianday(started_at) < 1
+            ORDER BY job_id DESC
+        """, (printer_id,)).fetchall()
+        if len(started) == 1:
+            existing_job_id = started[0]["job_id"]
+            existing_initials = started[0]["operator_initials"]
+            if operator_initials and not existing_initials:
+                conn.execute("""
+                    UPDATE print_jobs
+                    SET operator_initials = ?
+                    WHERE job_id = ?
+                """, (operator_initials, existing_job_id))
+                conn.commit()
+            conn.close()
+            return existing_job_id
+        if len(started) > 1:
+            # Invariant violation — should not happen after Migration
+            # 004. Log clearly and fall through to insert; do not
+            # silently pick one. This is the smoking gun for a
+            # recurring non-FAT32 orphan source (see audit #22).
+            print(
+                "[WARN] create_job: {n} status='started' rows within "
+                "24h for printer_id={pid}; expected at most 1. "
+                "Existing job_ids: {ids}, incoming file_name={fn}. "
+                "Falling through to insert.".format(
+                    n=len(started), pid=printer_id,
+                    ids=[r["job_id"] for r in started],
+                    fn=file_name,
+                )
+            )
+
         # Log when a new job is created despite a prior row existing
         # for the same printer+file — useful post-fix for diagnosing
         # re-print vs. polling-duplicate patterns.

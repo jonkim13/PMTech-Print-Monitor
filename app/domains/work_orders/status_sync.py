@@ -11,6 +11,19 @@ from typing import List
 ACTIVE_QUEUE_STATUSES = ("uploading", "uploaded", "starting", "printing")
 FAILURE_QUEUE_STATUSES = ("upload_failed", "start_failed", "failed")
 
+# Phase C — map non-Internal job statuses into the queue-item status
+# vocabulary so the existing five-state rollup can consume them
+# unchanged. Internal jobs are excluded from the WO rollup at the
+# SQL layer in sync_work_order_status: their status is already
+# represented transitively through their queue_items.
+_JOB_STATUS_TO_QUEUE_STATUS = {
+    "open":        "queued",
+    "in_progress": "printing",
+    "completed":   "completed",
+    "cancelled":   "cancelled",
+    "attention":   "failed",
+}
+
 
 def derive_job_status(statuses: List[str]) -> str:
     """Derive a jobs.status from its queue_items' statuses."""
@@ -72,6 +85,27 @@ def derive_work_order_status(statuses: List[str]) -> str:
     return "open"
 
 
+def derive_work_order_status_combined(
+    queue_item_statuses: List[str],
+    non_internal_job_statuses: List[str],
+) -> str:
+    """Phase C rollup: queue_items + non-Internal jobs in one pool.
+
+    Non-Internal job statuses are projected into the queue-item
+    status vocabulary via _JOB_STATUS_TO_QUEUE_STATUS so the existing
+    derive_work_order_status logic stays the single source of truth
+    for the five-state output (open / in_progress / attention /
+    completed / cancelled). Unknown job statuses flow through
+    unchanged — the migration constrains the inputs to the mapped
+    set.
+    """
+    projected = [
+        _JOB_STATUS_TO_QUEUE_STATUS.get(s, s)
+        for s in non_internal_job_statuses
+    ]
+    return derive_work_order_status(list(queue_item_statuses) + projected)
+
+
 def sync_job_status(conn, job_id: int) -> str:
     """Recompute jobs.status for a single job and persist it.
 
@@ -105,20 +139,32 @@ def sync_job_status(conn, job_id: int) -> str:
 def sync_work_order_status(conn, wo_id: str) -> str:
     """Recompute work_orders.status for a work order and persist it.
 
-    Returns the new status (or empty string if the WO has no queue
-    items at all — in which case the row is left untouched).
-    `conn` is an open SQLite connection; commit/rollback is the
-    caller's responsibility.
+    Phase C: the rollup pool now spans queue_items AND non-Internal
+    jobs (External, Design). Internal jobs are excluded — their
+    status is already represented through their queue_items, so
+    including them here would double-count.
+
+    Returns the new status (or empty string if the WO has neither
+    queue_items nor non-Internal jobs — in which case the row is
+    left untouched). `conn` is an open SQLite connection;
+    commit/rollback is the caller's responsibility.
     """
-    rows = conn.execute(
+    qi_rows = conn.execute(
         "SELECT status FROM queue_items WHERE wo_id = ?",
         (wo_id,),
     ).fetchall()
-    if not rows:
+    job_rows = conn.execute(
+        "SELECT status FROM jobs WHERE wo_id = ? AND job_type != 'Internal'",
+        (wo_id,),
+    ).fetchall()
+    if not qi_rows and not job_rows:
         return ""
 
-    statuses = [row["status"] for row in rows]
-    new_status = derive_work_order_status(statuses)
+    qi_statuses = [row["status"] for row in qi_rows]
+    job_statuses = [row["status"] for row in job_rows]
+    new_status = derive_work_order_status_combined(
+        qi_statuses, job_statuses
+    )
     now = datetime.now(timezone.utc).isoformat()
     completed_at = now if new_status in ("completed", "cancelled") else None
     conn.execute(

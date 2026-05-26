@@ -1,0 +1,53 @@
+<!-- ===== CREATE EXTERNAL / DESIGN JOB MODAL =====
+     Phase C. Internal jobs use the one-click #wo-create-job-btn path
+     untouched; this dialog only handles the non-Internal types. Type
+     selector toggles the External vs Design fieldset; the submit
+     handler POSTs the type-specific body shape to
+     /api/workorders/<wo_id>/jobs (see WoDetail.submitNonInternalJob).
+     The trigger button stashes the wo_id on this element's dataset
+     so submit can read it without a global. -->
+<div class="modal-overlay" id="create-non-internal-job-modal" data-wo-id="">
+    <div class="modal" style="width: 460px;">
+        <div class="modal-header">
+            <h3>Create Job</h3>
+            <button class="modal-close" onclick="hideModal('create-non-internal-job-modal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="cnij-type">Type</label>
+                <select class="form-input" id="cnij-type">
+                    <option value="External">External</option>
+                    <option value="Design">Design</option>
+                </select>
+            </div>
+
+            <div id="cnij-external-fields">
+                <div class="form-group">
+                    <label class="form-label" for="cnij-vendor">Vendor *</label>
+                    <input type="text" class="form-input" id="cnij-vendor" maxlength="120" placeholder="e.g. MachiningCo">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="cnij-process">Process *</label>
+                    <input type="text" class="form-input" id="cnij-process" maxlength="120" placeholder="e.g. CNC Mill / Anodize">
+                </div>
+            </div>
+
+            <div id="cnij-design-fields" hidden>
+                <div class="form-group">
+                    <label class="form-label" for="cnij-designer">Designer *</label>
+                    <input type="text" class="form-input" id="cnij-designer" maxlength="120" placeholder="Designer name">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="cnij-requirements">Requirements</label>
+                    <textarea class="form-input" id="cnij-requirements" rows="4" placeholder="Optional"></textarea>
+                </div>
+            </div>
+
+            <div id="cnij-error" class="muted" style="color: var(--err, #c0392b); margin-top: 8px;" hidden></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('create-non-internal-job-modal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitNonInternalJob()">Create</button>
+        </div>
+    </div>
+</div>

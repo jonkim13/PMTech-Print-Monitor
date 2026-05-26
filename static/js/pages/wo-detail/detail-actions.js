@@ -280,6 +280,317 @@
         return W.groupIntoNewJob(woIdArg);
     };
 
+    // ------------------------------------------------------------
+    // Phase C — Create External / Design Job modal.
+    // Trigger buttons (#wo-create-external-job-btn,
+    // #wo-create-design-job-btn) pass the wo_id + pre-selected type.
+    // The wo_id is stashed on the dialog's dataset so submit can
+    // read it without a closure variable (mirrors woQcModal's
+    // dataset.printJobId pattern).
+    // ------------------------------------------------------------
+
+    function _cnijFieldsetToggle(jobType) {
+        var ext = document.getElementById('cnij-external-fields');
+        var des = document.getElementById('cnij-design-fields');
+        if (ext) ext.hidden = (jobType !== 'External');
+        if (des) des.hidden = (jobType !== 'Design');
+    }
+
+    function _cnijSetError(message) {
+        var box = document.getElementById('cnij-error');
+        if (!box) return;
+        if (message) {
+            box.textContent = message;
+            box.hidden = false;
+        } else {
+            box.textContent = '';
+            box.hidden = true;
+        }
+    }
+
+    function _cnijClearInputs() {
+        ['cnij-vendor', 'cnij-process',
+         'cnij-designer', 'cnij-requirements'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+    }
+
+    W.openNonInternalJobModal = function (woIdArg, preselectedType) {
+        var modal = document.getElementById('create-non-internal-job-modal');
+        if (!modal) {
+            showToast('Create-Job modal unavailable', 'error');
+            return;
+        }
+        var typeEl = document.getElementById('cnij-type');
+        var jobType = (preselectedType === 'Design') ? 'Design' : 'External';
+        if (typeEl) typeEl.value = jobType;
+        modal.dataset.woId = woIdArg || '';
+
+        _cnijClearInputs();
+        _cnijSetError('');
+        _cnijFieldsetToggle(jobType);
+        showModal('create-non-internal-job-modal');
+    };
+
+    W.submitNonInternalJob = async function () {
+        var modal = document.getElementById('create-non-internal-job-modal');
+        if (!modal) return;
+        var woIdArg = modal.dataset.woId || '';
+        if (!woIdArg) {
+            _cnijSetError('Missing work order id.');
+            return;
+        }
+
+        var jobType = (document.getElementById('cnij-type') || {}).value
+            || 'External';
+        var body = { job_type: jobType };
+
+        if (jobType === 'External') {
+            var vendor = (document.getElementById('cnij-vendor') || {}).value || '';
+            var process = (document.getElementById('cnij-process') || {}).value || '';
+            vendor = vendor.trim();
+            process = process.trim();
+            if (!vendor) {
+                _cnijSetError('Vendor is required.');
+                return;
+            }
+            if (!process) {
+                _cnijSetError('Process is required.');
+                return;
+            }
+            body.vendor = vendor;
+            body.external_process = process;
+        } else if (jobType === 'Design') {
+            var designer = (document.getElementById('cnij-designer') || {}).value || '';
+            var requirements = (document.getElementById('cnij-requirements') || {}).value || '';
+            designer = designer.trim();
+            requirements = requirements.trim();
+            if (!designer) {
+                _cnijSetError('Designer is required.');
+                return;
+            }
+            body.designer = designer;
+            if (requirements) body.requirements = requirements;
+        } else {
+            _cnijSetError('Unsupported job type: ' + jobType);
+            return;
+        }
+
+        _cnijSetError('');
+        try {
+            var result = await apiPost(
+                '/api/workorders/' + encodeURIComponent(woIdArg) + '/jobs',
+                body
+            );
+            var jobId = result && result.job && result.job.job_id;
+            showToast('Job #' + (jobId || '?') + ' created (' + jobType + ')');
+            hideModal('create-non-internal-job-modal');
+            poll();
+        } catch (e) {
+            _cnijSetError(e.message || 'Request failed');
+        }
+    };
+
+    // Wire the type-select change handler once. The dialog markup is
+    // server-rendered on page load (via {% include %} in
+    // wo_detail.html), so we just need to wait until the DOM is
+    // parsed before attaching — same lifecycle gate that index.js
+    // uses for its init().
+    function _wireCnijTypeListener() {
+        var typeEl = document.getElementById('cnij-type');
+        if (!typeEl || typeEl.dataset.cnijListenerAttached === '1') return;
+        typeEl.addEventListener('change', function () {
+            _cnijFieldsetToggle(typeEl.value);
+        });
+        typeEl.dataset.cnijListenerAttached = '1';
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireCnijTypeListener);
+    } else {
+        _wireCnijTypeListener();
+    }
+
+    // ------------------------------------------------------------
+    // Phase C — Non-Internal job lifecycle + inline-edit.
+    // External/Design cards render editable field rows with a
+    // pencil button per field. The button calls editExternal/Design,
+    // which finds the [data-field] span on the matching card and
+    // hands it off to _inlineEdit. _inlineEdit swaps the span for
+    // an input + save/cancel buttons and PATCHes via the caller's
+    // onSave on commit.
+    // ------------------------------------------------------------
+
+    var _REQUIRED_NON_INTERNAL_FIELDS = {
+        vendor: true,
+        external_process: true,
+        designer: true,
+    };
+
+    function _inlineEdit(span, opts) {
+        if (!span || span.dataset.editing === '1') return;
+        var inputType = opts.inputType || span.dataset.inputType || 'text';
+        var current = span.textContent === '—' ? '' : span.textContent;
+        current = (current || '').trim();
+
+        var control;
+        if (inputType === 'textarea') {
+            control = document.createElement('textarea');
+            control.rows = 3;
+            control.className = 'form-input';
+            control.style.flex = '1';
+            control.value = current;
+        } else {
+            control = document.createElement('input');
+            control.type = (inputType === 'date') ? 'date' : 'text';
+            control.className = 'form-input';
+            control.style.flex = '1';
+            control.value = current;
+        }
+
+        var saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'btn sm go';
+        saveBtn.innerHTML = '<i data-lucide="check" class="icon icon-sm"></i>';
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'btn sm ghost';
+        cancelBtn.innerHTML = '<i data-lucide="x" class="icon icon-sm"></i>';
+
+        var errBox = document.createElement('span');
+        errBox.className = 'muted';
+        errBox.style.color = 'var(--err, #c0392b)';
+        errBox.style.marginLeft = '8px';
+        errBox.hidden = true;
+
+        var wrap = document.createElement('span');
+        wrap.style.display = 'flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '6px';
+        wrap.style.flex = '1';
+        wrap.appendChild(control);
+        wrap.appendChild(saveBtn);
+        wrap.appendChild(cancelBtn);
+        wrap.appendChild(errBox);
+
+        // Cache so we can restore on cancel.
+        var prevText = span.textContent;
+        var prevHidden = [];
+        // Also hide the trailing pencil button (the sibling button)
+        // so the row doesn't show two action sets at once.
+        var pencil = span.nextElementSibling;
+        if (pencil && pencil.tagName === 'BUTTON') {
+            prevHidden.push(pencil);
+            pencil.style.display = 'none';
+        }
+        span.textContent = '';
+        span.appendChild(wrap);
+        span.dataset.editing = '1';
+        refreshIcons(wrap);
+        try { control.focus(); } catch (e) { /* ignore */ }
+
+        function restore(text) {
+            span.textContent = (text === '' || text == null) ? '—' : text;
+            delete span.dataset.editing;
+            prevHidden.forEach(function (el) { el.style.display = ''; });
+        }
+
+        cancelBtn.addEventListener('click', function () {
+            restore(prevText);
+        });
+
+        async function commit() {
+            var value = (control.value || '').trim();
+            if (opts.required && !value) {
+                errBox.textContent = 'Required.';
+                errBox.hidden = false;
+                return;
+            }
+            saveBtn.disabled = true;
+            cancelBtn.disabled = true;
+            errBox.hidden = true;
+            try {
+                await opts.onSave(value);
+                restore(value);
+                poll();
+            } catch (e) {
+                errBox.textContent = e.message || 'Save failed';
+                errBox.hidden = false;
+                saveBtn.disabled = false;
+                cancelBtn.disabled = false;
+            }
+        }
+
+        saveBtn.addEventListener('click', commit);
+        if (inputType !== 'textarea') {
+            control.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+                else if (ev.key === 'Escape') { ev.preventDefault(); restore(prevText); }
+            });
+        }
+    }
+
+    function _findFieldSpan(jobId, field) {
+        return document.querySelector(
+            '.job-card[data-job-id="' + jobId + '"] [data-field="' + field + '"]'
+        );
+    }
+
+    W.editExternalField = function (jobId, field) {
+        var span = _findFieldSpan(jobId, field);
+        if (!span) {
+            showToast('Field not found: ' + field, 'error');
+            return;
+        }
+        _inlineEdit(span, {
+            inputType: span.dataset.inputType || 'text',
+            required: !!_REQUIRED_NON_INTERNAL_FIELDS[field],
+            onSave: function (value) {
+                var body = {};
+                body[field] = value;
+                return apiPatch('/api/jobs/' + jobId + '/external', body);
+            }
+        });
+    };
+
+    W.editDesignField = function (jobId, field) {
+        var span = _findFieldSpan(jobId, field);
+        if (!span) {
+            showToast('Field not found: ' + field, 'error');
+            return;
+        }
+        _inlineEdit(span, {
+            inputType: span.dataset.inputType || 'text',
+            required: !!_REQUIRED_NON_INTERNAL_FIELDS[field],
+            onSave: function (value) {
+                var body = {};
+                body[field] = value;
+                return apiPatch('/api/jobs/' + jobId + '/design', body);
+            }
+        });
+    };
+
+    W.startNonInternalJob = async function (jobId) {
+        try {
+            await apiPost('/api/jobs/' + jobId + '/start', {});
+            showToast('Job #' + jobId + ' started');
+            poll();
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    };
+
+    W.completeNonInternalJob = async function (jobId) {
+        try {
+            await apiPost('/api/jobs/' + jobId + '/complete', {});
+            showToast('Job #' + jobId + ' completed');
+            poll();
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    };
+
     W.setQC = function (printJobId, queueId) {
         if (!printJobId || printJobId === 'null') {
             showToast('Cannot inspect — no production record linked to this part', 'error');

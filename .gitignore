@@ -37,3 +37,6 @@ smoke-test-*.md
 # SQLite WAL sidecars
 data/*.db-shm
 data/*.db-wal
+*.db.bak-*
+*.db.bak-*-shm
+*.db.bak-*-wal

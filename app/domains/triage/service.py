@@ -3,8 +3,10 @@
 5 lanes per the v2 design handoff (README §3):
     1. Stopped & Failed       — queue_items in failure/cancelled states
     2. Per-Job Inspection     — print_jobs awaiting QC (outcome='unknown')
-    3. Ready to Ship          — Phase B (returns empty)
-    4. Design · Awaiting Customer — Phase B (returns empty)
+    3. Ready to Ship          — WOs 'completed' (gates cleared) not yet
+                                'delivered' (Phase F delivery-eligible)
+    4. Design · Awaiting Customer — Design jobs done but unapproved
+                                (job_type='Design', approved_by empty)
     5. External & Spools      — spool-low (vendor-past-due is Phase B)
 
 Plus an active_parts table for cross-WO situational awareness.
@@ -201,27 +203,76 @@ class TriageService:
         }
 
     # ------------------------------------------------------------------
-    # Lane 3 — Ready to Ship (Phase B)
+    # Lane 3 — Ready to Ship
     # ------------------------------------------------------------------
 
     def _lane_ready_ship(self) -> Dict[str, Any]:
-        # TODO Phase B: surface WOs where every job has passed inspection,
-        # awaiting WO Sign-off + delivery. Requires the per-job inspection
-        # state machine + WO Sign-off action — neither exists yet.
-        return self._empty_lane("ready_ship", "Ready to Ship", "ok")
+        """WOs that are 'completed' (both the Phase D inspection gate and
+        the Phase E NCR gate cleared) and not yet 'delivered'. A delivered
+        WO carries status 'delivered', so status='completed' is exactly
+        the delivery-eligible set — the operator's cue to open the WO and
+        click Mark Delivered (Phase F)."""
+        rows = self._select_work_orders_by_status(("completed",))
+        items: List[Dict[str, Any]] = []
+        for r in rows:
+            wo_id = r.get("wo_id")
+            customer = r.get("customer_name")
+            completed_at = r.get("completed_at")
+            items.append({
+                "kind": "ready-ship",
+                "wo_id": wo_id,
+                # Title is the customer (the human-readable WO identity);
+                # the wo_id tag is added by the lane-card meta. Customer is
+                # intentionally NOT set as a separate meta field to avoid
+                # showing it twice.
+                "title": customer or wo_id,
+                "sub": ("Completed " + self._format_time(completed_at))
+                       if completed_at else "Ready to deliver",
+            })
+        return {
+            "kind": "ready_ship",
+            "label": "Ready to Ship",
+            "tone": "ok",
+            "count": len(items),
+            "items": items,
+        }
 
     # ------------------------------------------------------------------
-    # Lane 4 — Design · Awaiting Customer (Phase B)
+    # Lane 4 — Design · Awaiting Customer
     # ------------------------------------------------------------------
 
     def _lane_design_await(self) -> Dict[str, Any]:
-        # TODO Phase B: Design jobs with status='awaiting-customer' and
-        # last feedback older than the configured threshold (default 5d).
-        # Requires the Design job model + customer-feedback log — neither
-        # exists yet.
-        return self._empty_lane(
-            "design_await", "Design · Awaiting Customer", "busy"
-        )
+        """Design-type jobs whose work is done but customer approval is
+        still pending. Predicate (per Philip's diagram, where 'Approved
+        by' is the gating field): job_type='Design', approved_by empty,
+        and the design is finished — design_completed_at set OR the job
+        status is 'completed'. A design job still being worked (open, no
+        completed timestamp) is not yet awaiting the customer."""
+        rows = self._select_design_jobs_awaiting_approval()
+        customer_by_wo = self._customer_lookup({r.get("wo_id") for r in rows})
+        items: List[Dict[str, Any]] = []
+        for r in rows:
+            wo_id = r.get("wo_id")
+            job_id = r.get("job_id")
+            designer = r.get("designer")
+            title = "Design job #{}".format(job_id)
+            if designer:
+                title += " · " + designer
+            items.append({
+                "kind": "design-approval",
+                "wo_id": wo_id,
+                "job_id": job_id,
+                "title": title,
+                "customer": customer_by_wo.get(wo_id),
+                "sub": "Awaiting customer approval",
+            })
+        return {
+            "kind": "design_await",
+            "label": "Design · Awaiting Customer",
+            "tone": "busy",
+            "count": len(items),
+            "items": items,
+        }
 
     # ------------------------------------------------------------------
     # Lane 5 — External & Spools (spool-low subset only — Phase B adds
@@ -369,6 +420,48 @@ class TriageService:
                 "ORDER BY COALESCE(completed_at, started_at, queued_at) DESC, "
                 "queue_id DESC".format(placeholders),
                 list(statuses),
+            ).fetchall()
+            conn.close()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
+
+    def _select_work_orders_by_status(
+        self, statuses
+    ) -> List[Dict[str, Any]]:
+        if not self.work_order_db_path:
+            return []
+        placeholders = ",".join("?" * len(statuses))
+        try:
+            conn = sqlite3.connect(self.work_order_db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM work_orders WHERE status IN ({}) "
+                "ORDER BY COALESCE(completed_at, created_at) DESC, "
+                "wo_id DESC".format(placeholders),
+                list(statuses),
+            ).fetchall()
+            conn.close()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
+
+    def _select_design_jobs_awaiting_approval(self) -> List[Dict[str, Any]]:
+        """Design jobs that are done but unapproved. Degrades to [] on a
+        DB that predates the Phase C job-type columns (the query raises,
+        we swallow it) — same defensive pattern as the other selects."""
+        if not self.work_order_db_path:
+            return []
+        try:
+            conn = sqlite3.connect(self.work_order_db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE job_type = 'Design' "
+                "AND (approved_by IS NULL OR TRIM(approved_by) = '') "
+                "AND (design_completed_at IS NOT NULL "
+                "     OR status = 'completed') "
+                "ORDER BY COALESCE(design_completed_at, created_at) DESC, "
+                "job_id DESC"
             ).fetchall()
             conn.close()
         except sqlite3.Error:

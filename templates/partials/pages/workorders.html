@@ -22,8 +22,8 @@
                     <div class="lanes-grid" id="trigageLanesGrid">
                         {{ lane('failed', 'Stopped & Failed', 'err') }}
                         {{ lane('qc', 'Per-Job Inspection', 'info') }}
-                        {{ lane('ready_ship', 'Ready to Ship', 'ok', empty_message='Phase B') }}
-                        {{ lane('design_await', 'Design · Awaiting Customer', 'busy', empty_message='Phase B') }}
+                        {{ lane('ready_ship', 'Ready to Ship', 'ok', empty_message='No completed orders awaiting delivery.') }}
+                        {{ lane('design_await', 'Design · Awaiting Customer', 'busy', empty_message='No design jobs awaiting approval.') }}
                         {{ lane('external_spool', 'External & Spools', 'warn') }}
                     </div>
 

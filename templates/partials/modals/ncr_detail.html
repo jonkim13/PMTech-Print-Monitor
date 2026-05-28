@@ -1,0 +1,22 @@
+<!-- ===== PHASE E2 — NCR DETAIL MODAL =====
+     Read-mostly NCR view populated by WoDetail.openNcrDetail from
+     GET /api/ncrs/<id> ({ncr: {..., corrective_actions: [...]}}).
+     The body is JS-rendered and carries the actionable controls
+     (Add Corrective Action, per-CA Verify, Close NCR). The error box
+     lives OUTSIDE the body so a 409 on close survives the body
+     re-render and is surfaced inline. -->
+<div class="modal-overlay" id="ncrDetailModal">
+    <div class="modal" style="width: 560px;">
+        <div class="modal-header">
+            <h3 id="ncrDetailTitle">Non-Conformance</h3>
+            <button class="modal-close" onclick="hideModal('ncrDetailModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body" id="ncrDetailBody">
+            <!-- populated by WoDetail.openNcrDetail -->
+        </div>
+        <div class="muted" id="ncrDetailError" hidden style="color: var(--err, #c0392b); padding: 0 20px 12px;"></div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('ncrDetailModal')">Close</button>
+        </div>
+    </div>
+</div>

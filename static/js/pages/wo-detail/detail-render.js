@@ -30,10 +30,63 @@
     // ------------------------------------------------------------
 
     function renderMain(wo) {
+        renderWoHeader(wo);
         renderCounts(wo.counts || {});
         renderPhaseTracker(wo);
         renderJobs(wo);
         renderSelectionToolbar();
+    }
+
+    // Phase F — keep the WO header status pill + delivery slot in sync
+    // on poll. The pill and slot are server-rendered for first paint;
+    // this re-renders them so a status change (e.g. last inspection
+    // passes → completed → Mark Delivered appears; deliver → the button
+    // becomes the delivery stamp) shows without a page reload. Targets
+    // only these two elements — the sibling header buttons are left
+    // untouched.
+    var _WO_PILL_KINDS = {
+        in_progress: 'printing',
+        attention: 'attn',
+        completed: 'done',
+        delivered: 'delivered',
+        cancelled: 'cancel',
+    };
+
+    function _woStatusPillHtml(status) {
+        var s = status || 'open';
+        var kind = _WO_PILL_KINDS[s] || 'idle';
+        var label = s.toUpperCase().replace(/_/g, ' ');
+        return '<span class="st st-' + kind + '">' +
+            '<i class="sym sym-' + kind + '"></i>' +
+            '<span>' + escapeHtml(label) + '</span></span>';
+    }
+
+    function _deliverySlotHtml(wo) {
+        if (wo.status === 'completed') {
+            return '<button class="btn sm primary" id="wo-mark-delivered-btn" ' +
+                'onclick="WoDetail.openDeliverModal(\'' +
+                escapeHtml(wo.wo_id || '') + '\')">' +
+                '<i data-lucide="truck" class="icon icon-sm"></i> Mark Delivered</button>';
+        }
+        if (wo.status === 'delivered' && wo.delivery) {
+            var d = wo.delivery;
+            var when = escapeHtml(String(d.delivered_at || ''));
+            var rcv = d.received_by
+                ? ' &middot; ' + escapeHtml(d.received_by) : '';
+            return '<span class="wo-delivered-stamp muted">Delivered ' +
+                when + rcv + '</span>';
+        }
+        return '';
+    }
+
+    function renderWoHeader(wo) {
+        var pill = document.getElementById('wo-header-status-pill');
+        if (pill) pill.innerHTML = _woStatusPillHtml(wo.status);
+        var slot = document.getElementById('wo-delivery-slot');
+        if (slot) {
+            slot.innerHTML = _deliverySlotHtml(wo);
+            refreshIcons(slot);
+        }
     }
 
     function renderCounts(counts) {
@@ -94,12 +147,57 @@
             }
 
             updateJobHeader(card, job);
+            updateInternalJobActions(card, job);
 
             var expanded = card.classList.contains('job-card-expanded');
             if (expanded) {
                 renderJobBody(card, job, wo.queue_items || []);
             }
         });
+    }
+
+    // Phase D — rebuild an Internal job's action footer so the Inspect
+    // button (and the failed-inspection controls) surface as soon as
+    // the last part completes via polling. Guarded by a signature so
+    // we don't clobber/flicker the buttons on every poll. Mirrors the
+    // job_card_internal actions block in _job_card.html.
+    function _internalFooterHtml(job) {
+        var html = '';
+        if (job.queued_parts && job.queued_parts > 0) {
+            html += '<button class="btn sm go" onclick="WoDetail.printJob(' +
+                job.job_id + ')"><i data-lucide="play" class="icon icon-sm"></i> Print job</button>';
+        }
+        if (job.failed_parts && job.failed_parts > 0) {
+            html += '<button class="btn sm warn" onclick="WoDetail.retryJob(\'' +
+                escapeHtml(job.wo_id || '') + "', " + job.job_id + ', ' +
+                job.failed_parts + ')">Retry ' + job.failed_parts + ' failed</button>';
+        }
+        var outcome = (job.inspection && job.inspection.outcome) || 'pending';
+        if (outcome === 'fail') {
+            html += _inspectionFailedControlsHtml(job);
+        } else if (job.status === 'in_progress' && outcome === 'pending' &&
+                   !job.printing_parts && !job.queued_parts) {
+            html += '<button class="btn sm primary" onclick="WoDetail.openInspectionModal(' +
+                job.job_id + ", 'Internal')\">" +
+                '<i data-lucide="clipboard-check" class="icon icon-sm"></i> Inspect</button>';
+        }
+        html += '<button class="btn sm danger" onclick="WoDetail.cancelJob(\'' +
+            escapeHtml(job.wo_id || '') + "', " + job.job_id +
+            ')">Cancel job</button>';
+        return html;
+    }
+
+    function updateInternalJobActions(card, job) {
+        var actions = card.querySelector('.job-card-actions');
+        if (!actions) return;
+        var outcome = (job.inspection && job.inspection.outcome) || 'pending';
+        var sig = [job.status || 'open', outcome,
+                   job.queued_parts || 0, job.failed_parts || 0,
+                   job.printing_parts || 0].join('|');
+        if (card.dataset.inspSig === sig) return;
+        actions.innerHTML = _internalFooterHtml(job);
+        refreshIcons(actions);
+        card.dataset.inspSig = sig;
     }
 
     // Map a non-Internal job's status → existing status_pill kind.
@@ -123,20 +221,40 @@
             '</span>';
     }
 
-    function _footerHtml(job) {
+    // Phase E2 — fail pill + enabled "Create NCR" button. Mirrors the
+    // _inspection_failed_controls(job) Jinja macro. The button opens the
+    // NCR creation modal seeded with the job + work-order ids.
+    function _inspectionFailedControlsHtml(job) {
+        return '<span class="inspection-chip tone-err">INSPECTION FAILED</span>' +
+            '<button class="btn sm primary" onclick="WoDetail.openNcrModal(' +
+            job.job_id + ", '" + escapeHtml(job.wo_id || '') + "')\">" +
+            '<i data-lucide="clipboard-x" class="icon icon-sm"></i> Create NCR</button>';
+    }
+
+    function _footerHtml(job, jobType) {
         var status = job.status || 'open';
+        var isExternal = jobType === 'external';
         var actionHtml = '';
         if (status === 'open') {
             actionHtml = '<button class="btn sm go" onclick="WoDetail.startNonInternalJob(' +
                 job.job_id + ')"><i data-lucide="play" class="icon icon-sm"></i> Start Job</button>';
         } else if (status === 'in_progress') {
-            actionHtml = '<button class="btn sm primary" onclick="WoDetail.completeNonInternalJob(' +
-                job.job_id + ')"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>';
+            if (isExternal) {
+                // Phase D — Complete routes through the inspection gate.
+                actionHtml = '<button class="btn sm primary" onclick="WoDetail.openInspectionModal(' +
+                    job.job_id + ", 'External')\">" +
+                    '<i data-lucide="clipboard-check" class="icon icon-sm"></i> Complete &amp; Inspect</button>';
+            } else {
+                actionHtml = '<button class="btn sm primary" onclick="WoDetail.completeNonInternalJob(' +
+                    job.job_id + ')"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>';
+            }
         } else if (status === 'completed') {
             var when = (job.completed_at || '').slice(0, 10);
             actionHtml = '<span class="muted">Completed ' + escapeHtml(when) + '</span>';
         } else if (status === 'cancelled') {
             actionHtml = '<span class="muted">Cancelled</span>';
+        } else if (status === 'attention' && isExternal) {
+            actionHtml = _inspectionFailedControlsHtml(job);
         }
         return actionHtml +
             '<button class="btn sm danger" onclick="WoDetail.cancelJob(\'' +
@@ -155,7 +273,9 @@
         }
         var actions = card.querySelector('.job-card-actions');
         if (actions) {
-            actions.innerHTML = _footerHtml(job);
+            actions.innerHTML = _footerHtml(
+                job, card.getAttribute('data-job-type')
+            );
             refreshIcons(actions);
         }
         card.setAttribute('data-job-status', newStatus);
@@ -365,7 +485,48 @@
 
     function renderRightRail(wo) {
         renderNeedsYou(wo);
+        renderNcrs(wo);
         renderActivity(wo);
+    }
+
+    // Phase E2 — WO-level Non-Conformances section. Reads the
+    // ncr_summary already on the WO payload (open count + a lightweight
+    // {ncr_id, job_id, status, corrective_action_needed} list). Open
+    // NCRs get attention (tone-err) styling since they gate WO
+    // completion; closed ones are tone-ok. Each row deep-links to the
+    // NCR detail modal.
+    function renderNcrs(wo) {
+        var host = document.getElementById('wo-ncr-body');
+        if (!host) return;
+        var summary = wo.ncr_summary || {};
+        var ncrs = summary.ncrs || [];
+        var countEl = document.getElementById('wo-ncr-count');
+        if (countEl) {
+            countEl.textContent = summary.open_count
+                ? '(' + summary.open_count + ' open)' : '';
+        }
+        if (!ncrs.length) {
+            host.innerHTML = '<div class="muted ncr-rail-empty">No non-conformances</div>';
+            return;
+        }
+        host.innerHTML = ncrs.map(function (n) {
+            var isOpen = n.status === 'open';
+            var tone = isOpen ? 'tone-err' : 'tone-ok';
+            var caFlag = (n.corrective_action_needed === 'Y') ? ' · CA needed' : '';
+            return '<div class="ncr-row' + (isOpen ? ' ncr-row-open' : '') +
+                '" onclick="WoDetail.openNcrDetail(' + n.ncr_id + ')" ' +
+                'style="cursor:pointer; display:flex; align-items:center; gap:8px; padding:6px 0;"' +
+                (isOpen ? ' data-ncr-open="1"' : '') + '>' +
+                '<span class="inspection-chip ' + tone + '">NCR #' +
+                escapeHtml(String(n.ncr_id)) + ' · ' +
+                escapeHtml(String(n.status || '').toUpperCase()) + '</span>' +
+                '<span class="muted" style="font-size:12px;">Job #' +
+                escapeHtml(String(n.job_id)) + escapeHtml(caFlag) + '</span>' +
+                '<div style="flex:1;"></div>' +
+                '<i data-lucide="chevron-right" class="icon icon-sm muted"></i>' +
+                '</div>';
+        }).join('');
+        refreshIcons(host);
     }
 
     function renderNeedsYou(wo) {

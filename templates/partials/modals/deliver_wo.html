@@ -1,0 +1,37 @@
+<!-- ===== PHASE F — MARK DELIVERED MODAL =====
+     Records delivery of a completed WO via
+     POST /api/workorders/<wo>/deliver and stamps the WO 'delivered'.
+     WoDetail.openDeliverModal stashes the wo_id on the dialog dataset
+     (mirrors the inspection/NCR modal pattern); submit reads it. Only
+     reachable when the WO status is 'completed'. -->
+<div class="modal-overlay" id="deliverWoModal">
+    <div class="modal" style="width: 440px;">
+        <div class="modal-header">
+            <h3 id="deliverTitle">Mark Delivered</h3>
+            <button class="modal-close" onclick="hideModal('deliverWoModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="deliverDate">Delivered date</label>
+                <input type="date" class="form-input" id="deliverDate">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="deliverReceivedBy">Received by</label>
+                <input type="text" class="form-input" id="deliverReceivedBy" maxlength="64" placeholder="Customer signoff / who received it">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="deliverRecordedBy">Recorded by</label>
+                <input type="text" class="form-input" id="deliverRecordedBy" maxlength="64" placeholder="Your name / initials">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="deliverNotes">Notes</label>
+                <textarea class="form-input" id="deliverNotes" rows="2" placeholder="Optional delivery notes"></textarea>
+            </div>
+            <div class="muted" id="deliverError" hidden style="color: var(--err, #c0392b);"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('deliverWoModal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitDeliver()">Mark Delivered</button>
+        </div>
+    </div>
+</div>

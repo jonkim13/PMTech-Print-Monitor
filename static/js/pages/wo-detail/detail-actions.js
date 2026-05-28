@@ -591,6 +591,82 @@
         }
     };
 
+    // ------------------------------------------------------------
+    // Phase D — job-level inspection gate. Internal + External jobs
+    // route through inspection before completion is recognized. The
+    // modal records pass/fail via POST /api/jobs/<id>/inspection,
+    // which writes the outcome and re-rolls job + WO status. The job
+    // id + type are stashed on the dialog dataset (mirrors woQcModal).
+    // ------------------------------------------------------------
+
+    function _inspectionSetError(message) {
+        var box = document.getElementById('inspectionError');
+        if (!box) return;
+        if (message) {
+            box.textContent = message;
+            box.hidden = false;
+        } else {
+            box.textContent = '';
+            box.hidden = true;
+        }
+    }
+
+    W.openInspectionModal = function (jobId, jobType) {
+        var modal = document.getElementById('inspectionModal');
+        if (!modal) {
+            showToast('Inspection modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.jobId = jobId;
+        modal.dataset.jobType = jobType || '';
+
+        var titleEl = document.getElementById('inspectionTitle');
+        if (titleEl) {
+            titleEl.textContent = 'Inspect Job #' + jobId;
+        }
+        var outcomeEl = document.getElementById('inspectionOutcome');
+        var inspectorEl = document.getElementById('inspectionInspector');
+        var reportEl = document.getElementById('inspectionReport');
+        var dateEl = document.getElementById('inspectionDate');
+        if (outcomeEl) outcomeEl.value = 'pass';
+        if (inspectorEl) inspectorEl.value = '';
+        if (reportEl) reportEl.value = '';
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+        _inspectionSetError('');
+        showModal('inspectionModal');
+    };
+
+    W.submitInspection = async function () {
+        var modal = document.getElementById('inspectionModal');
+        if (!modal) return;
+        var jobId = parseInt(modal.dataset.jobId, 10);
+        if (!jobId) {
+            _inspectionSetError('No job selected.');
+            return;
+        }
+        var outcome = (document.getElementById('inspectionOutcome') || {}).value || 'pass';
+        var inspector = ((document.getElementById('inspectionInspector') || {}).value || '').trim();
+        var report = ((document.getElementById('inspectionReport') || {}).value || '').trim();
+        var date = (document.getElementById('inspectionDate') || {}).value || '';
+        if (!inspector) {
+            _inspectionSetError('Inspector name is required.');
+            return;
+        }
+        _inspectionSetError('');
+        var body = { outcome: outcome, inspector: inspector };
+        if (report) body.report = report;
+        if (date) body.date = date;
+        try {
+            await apiPost('/api/jobs/' + jobId + '/inspection', body);
+            showToast('Inspection ' + (outcome === 'pass' ? 'passed' : 'failed') +
+                ' · Job #' + jobId);
+            hideModal('inspectionModal');
+            poll();
+        } catch (e) {
+            _inspectionSetError(e.message || 'Request failed');
+        }
+    };
+
     W.setQC = function (printJobId, queueId) {
         if (!printJobId || printJobId === 'null') {
             showToast('Cannot inspect — no production record linked to this part', 'error');
@@ -674,4 +750,377 @@
             }
         };
     }
+
+    // ------------------------------------------------------------
+    // Phase E2 — Non-Conformance (NCR) + Corrective Action (CA).
+    // Entry point is the "Create NCR" button on a failed-inspection
+    // card (openNcrModal). The NCR detail modal (openNcrDetail) is
+    // JS-rendered from GET /api/ncrs/<id> and hosts the CA add/verify
+    // and Close-NCR actions. Modals stash their target id on the
+    // dialog dataset (mirrors the inspection-modal pattern). After a
+    // gate-affecting mutation (create NCR, close NCR) we poll() so the
+    // WO header + NCR section reflect the open-NCR rollup gate; CA
+    // add/verify only re-render the (still-open) detail modal.
+    // ------------------------------------------------------------
+
+    function _val(id) {
+        var el = document.getElementById(id);
+        return (el && el.value) || '';
+    }
+
+    function _setBoxError(boxId, message) {
+        var box = document.getElementById(boxId);
+        if (!box) return;
+        if (message) {
+            box.textContent = message;
+            box.hidden = false;
+        } else {
+            box.textContent = '';
+            box.hidden = true;
+        }
+    }
+
+    W.openNcrModal = function (jobId, woId) {
+        var modal = document.getElementById('createNcrModal');
+        if (!modal) {
+            showToast('NCR modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.jobId = jobId;
+        modal.dataset.woId = woId || '';
+        var title = document.getElementById('createNcrTitle');
+        if (title) title.textContent = 'Raise NCR · Job #' + jobId;
+        ['ncrDescription', 'ncrReportedBy', 'ncrAffectedParts',
+         'ncrRemedialAction'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        var nRadio = document.querySelector(
+            'input[name="ncrCaNeeded"][value="N"]'
+        );
+        if (nRadio) nRadio.checked = true;
+        _setBoxError('createNcrError', '');
+        showModal('createNcrModal');
+    };
+
+    W.submitNcr = async function () {
+        var modal = document.getElementById('createNcrModal');
+        if (!modal) return;
+        var jobId = parseInt(modal.dataset.jobId, 10);
+        var woId = modal.dataset.woId || '';
+        var description = _val('ncrDescription').trim();
+        var reportedBy = _val('ncrReportedBy').trim();
+        var affectedParts = _val('ncrAffectedParts').trim();
+        var remedial = _val('ncrRemedialAction').trim();
+        var caNeeded = (document.querySelector(
+            'input[name="ncrCaNeeded"]:checked'
+        ) || {}).value || 'N';
+        if (!description) {
+            _setBoxError('createNcrError', 'Description is required.');
+            return;
+        }
+        if (!reportedBy) {
+            _setBoxError('createNcrError', 'Reported by is required.');
+            return;
+        }
+        if (!jobId || !woId) {
+            _setBoxError('createNcrError',
+                'Missing job / work-order context.');
+            return;
+        }
+        _setBoxError('createNcrError', '');
+        var body = {
+            job_id: jobId, wo_id: woId, description: description,
+            reported_by: reportedBy, corrective_action_needed: caNeeded,
+        };
+        if (affectedParts) body.affected_parts = affectedParts;
+        if (remedial) body.remedial_action = remedial;
+        try {
+            var result = await apiPost('/api/ncrs', body);
+            var ncrId = result && result.ncr && result.ncr.ncr_id;
+            showToast('NCR #' + (ncrId || '?') + ' raised');
+            hideModal('createNcrModal');
+            poll();  // open NCR gates the WO → header goes attention
+        } catch (e) {
+            _setBoxError('createNcrError', e.message || 'Request failed');
+        }
+    };
+
+    W.openNcrDetail = async function (ncrId) {
+        var modal = document.getElementById('ncrDetailModal');
+        if (!modal) {
+            showToast('NCR detail unavailable', 'error');
+            return;
+        }
+        modal.dataset.ncrId = ncrId;
+        _setBoxError('ncrDetailError', '');
+        var body = document.getElementById('ncrDetailBody');
+        if (body) body.innerHTML = '<div class="muted">Loading…</div>';
+        showModal('ncrDetailModal');
+        await _renderNcrDetail(ncrId);
+    };
+
+    async function _renderNcrDetail(ncrId) {
+        var body = document.getElementById('ncrDetailBody');
+        try {
+            var result = await apiGet('/api/ncrs/' + ncrId);
+            var ncr = result.ncr || {};
+            var title = document.getElementById('ncrDetailTitle');
+            if (title) {
+                title.textContent = 'NCR #' + ncr.ncr_id + ' · ' +
+                    String(ncr.status || '').toUpperCase();
+            }
+            if (body) {
+                body.innerHTML = _ncrDetailHtml(ncr);
+                refreshIcons(body);
+            }
+        } catch (e) {
+            if (body) {
+                body.innerHTML = '<div class="muted" style="color:var(--err)">' +
+                    escapeHtml(e.message || 'Failed to load NCR') + '</div>';
+            }
+        }
+    }
+
+    function _ncrField(label, value) {
+        return '<div class="job-field-row" style="display:flex; gap:10px; padding:5px 0;">' +
+            '<span class="k" style="min-width:150px;">' + escapeHtml(label) + '</span>' +
+            '<span class="mono" style="flex:1; word-break:break-word;">' +
+            escapeHtml(value || '—') + '</span></div>';
+    }
+
+    var _CA_PILL_KINDS = {
+        open: 'queued', in_progress: 'printing',
+        verified: 'done', closed: 'idle',
+    };
+
+    function _caStatusPill(status) {
+        var s = status || 'open';
+        var kind = _CA_PILL_KINDS[s] || 'queued';
+        return '<span class="st st-' + kind + '"><i class="sym sym-' + kind +
+            '"></i><span>' +
+            escapeHtml(s.toUpperCase().replace(/_/g, ' ')) + '</span></span>';
+    }
+
+    function _caHtml(ca) {
+        var verifyBtn = '';
+        if (ca.status === 'open' || ca.status === 'in_progress') {
+            verifyBtn = '<button class="btn sm primary" onclick="WoDetail.openCaVerifyModal(' +
+                ca.ca_id + ')"><i data-lucide="check-check" class="icon icon-sm"></i> Verify</button>';
+        }
+        return '<div class="card card-pad" style="margin:8px 0;">' +
+            '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">' +
+            '<span class="mono muted">CA #' + escapeHtml(String(ca.ca_id)) + '</span>' +
+            _caStatusPill(ca.status) +
+            '<div style="flex:1;"></div>' + verifyBtn + '</div>' +
+            _ncrField('Root cause actions', ca.root_cause_actions) +
+            _ncrField('Responsible', ca.responsible_persons) +
+            _ncrField('Resources', ca.resources_needed) +
+            _ncrField('Effectiveness', ca.effectiveness_verification) +
+            _ncrField('Verifying person', ca.verifying_person) +
+            '</div>';
+    }
+
+    function _ncrDetailHtml(ncr) {
+        var cas = ncr.corrective_actions || [];
+        var html = '';
+        html += _ncrField('Description', ncr.description);
+        html += _ncrField('Reported by', ncr.reported_by);
+        html += _ncrField('Affected parts', ncr.affected_parts);
+        html += _ncrField('Remedial action', ncr.remedial_action);
+        html += _ncrField('CA needed', ncr.corrective_action_needed);
+        html += _ncrField('Status', ncr.status);
+        html += _ncrField('Created', String(ncr.created_at || '').slice(0, 10));
+        if (ncr.closed_at) {
+            html += _ncrField('Closed', String(ncr.closed_at).slice(0, 10));
+        }
+
+        html += '<div style="display:flex; align-items:center; margin:14px 0 4px;">' +
+            '<div class="k">Corrective actions (' + cas.length + ')</div>' +
+            '<div style="flex:1;"></div>';
+        if (ncr.corrective_action_needed === 'Y' && cas.length === 0) {
+            html += '<button class="btn sm go" onclick="WoDetail.openCaModal(' +
+                ncr.ncr_id + ')"><i data-lucide="plus" class="icon icon-sm"></i> Add Corrective Action</button>';
+        }
+        html += '</div>';
+
+        if (!cas.length) {
+            html += (ncr.corrective_action_needed === 'Y')
+                ? '<div class="muted">No corrective action yet — one is required before this NCR can close.</div>'
+                : '<div class="muted">No corrective action required for this NCR.</div>';
+        } else {
+            html += cas.map(_caHtml).join('');
+        }
+
+        if (ncr.status === 'open') {
+            html += '<div style="margin-top:14px; display:flex; gap:8px;">' +
+                '<button class="btn sm danger" onclick="WoDetail.closeNcr(' +
+                ncr.ncr_id + ')"><i data-lucide="check" class="icon icon-sm"></i> Close NCR</button>' +
+                '</div>';
+        }
+        return html;
+    }
+
+    W.openCaModal = function (ncrId) {
+        var modal = document.getElementById('createCaModal');
+        if (!modal) {
+            showToast('Corrective-action modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.ncrId = ncrId;
+        ['caRootCause', 'caResponsible', 'caResources',
+         'caEffectiveness', 'caVerifyingPerson'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        _setBoxError('createCaError', '');
+        showModal('createCaModal');
+    };
+
+    W.submitCa = async function () {
+        var modal = document.getElementById('createCaModal');
+        if (!modal) return;
+        var ncrId = parseInt(modal.dataset.ncrId, 10);
+        var root = _val('caRootCause').trim();
+        if (!ncrId) {
+            _setBoxError('createCaError', 'Missing NCR context.');
+            return;
+        }
+        if (!root) {
+            _setBoxError('createCaError', 'Root cause actions are required.');
+            return;
+        }
+        var body = { root_cause_actions: root };
+        var resp = _val('caResponsible').trim();
+        if (resp) body.responsible_persons = resp;
+        var res = _val('caResources').trim();
+        if (res) body.resources_needed = res;
+        var eff = _val('caEffectiveness').trim();
+        if (eff) body.effectiveness_verification = eff;
+        var vp = _val('caVerifyingPerson').trim();
+        if (vp) body.verifying_person = vp;
+        _setBoxError('createCaError', '');
+        try {
+            await apiPost('/api/ncrs/' + ncrId + '/corrective-actions', body);
+            showToast('Corrective action added');
+            hideModal('createCaModal');
+            // Detail modal is still open behind this one — refresh it.
+            await _renderNcrDetail(ncrId);
+        } catch (e) {
+            _setBoxError('createCaError', e.message || 'Request failed');
+        }
+    };
+
+    W.openCaVerifyModal = function (caId) {
+        var modal = document.getElementById('verifyCaModal');
+        if (!modal) {
+            showToast('Verify modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.caId = caId;
+        var el = document.getElementById('verifyCaPerson');
+        if (el) el.value = '';
+        _setBoxError('verifyCaError', '');
+        showModal('verifyCaModal');
+    };
+
+    W.submitCaVerify = async function () {
+        var modal = document.getElementById('verifyCaModal');
+        if (!modal) return;
+        var caId = parseInt(modal.dataset.caId, 10);
+        var person = _val('verifyCaPerson').trim();
+        if (!caId) {
+            _setBoxError('verifyCaError',
+                'Missing corrective-action context.');
+            return;
+        }
+        if (!person) {
+            _setBoxError('verifyCaError', 'Verifying person is required.');
+            return;
+        }
+        _setBoxError('verifyCaError', '');
+        try {
+            await apiPost('/api/corrective-actions/' + caId + '/verify',
+                { verifying_person: person });
+            showToast('Corrective action verified');
+            hideModal('verifyCaModal');
+            var detailModal = document.getElementById('ncrDetailModal');
+            var ncrId = detailModal &&
+                parseInt(detailModal.dataset.ncrId, 10);
+            if (ncrId) await _renderNcrDetail(ncrId);
+        } catch (e) {
+            _setBoxError('verifyCaError', e.message || 'Request failed');
+        }
+    };
+
+    W.closeNcr = async function (ncrId) {
+        try {
+            await apiPost('/api/ncrs/' + ncrId + '/close', {});
+            showToast('NCR #' + ncrId + ' closed');
+            hideModal('ncrDetailModal');
+            poll();  // closing the last open NCR may release the WO gate
+        } catch (e) {
+            // 409 (unverified CA) etc — surface inline, keep the modal
+            // open so the operator sees why the close was rejected.
+            _setBoxError('ncrDetailError', e.message || 'Could not close NCR');
+        }
+    };
+
+    // ------------------------------------------------------------
+    // Phase F — Delivery. The "Mark Delivered" WO-level action shows
+    // only when the WO is 'completed'. The modal records the delivery
+    // and stamps the WO 'delivered' (a manual terminal status that
+    // survives subsequent re-derivation). On success poll() re-reads
+    // the WO so the header pill flips to DELIVERED and the button
+    // becomes the inline delivery stamp.
+    // ------------------------------------------------------------
+
+    W.openDeliverModal = function (woId) {
+        var modal = document.getElementById('deliverWoModal');
+        if (!modal) {
+            showToast('Deliver modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.woId = woId || '';
+        var dateEl = document.getElementById('deliverDate');
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+        ['deliverReceivedBy', 'deliverRecordedBy', 'deliverNotes']
+            .forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        _setBoxError('deliverError', '');
+        showModal('deliverWoModal');
+    };
+
+    W.submitDeliver = async function () {
+        var modal = document.getElementById('deliverWoModal');
+        if (!modal) return;
+        var woId = modal.dataset.woId || '';
+        if (!woId) {
+            _setBoxError('deliverError', 'Missing work order id.');
+            return;
+        }
+        var body = {};
+        var deliveredAt = _val('deliverDate');
+        if (deliveredAt) body.delivered_at = deliveredAt;
+        var receivedBy = _val('deliverReceivedBy').trim();
+        if (receivedBy) body.received_by = receivedBy;
+        var recordedBy = _val('deliverRecordedBy').trim();
+        if (recordedBy) body.recorded_by = recordedBy;
+        var notes = _val('deliverNotes').trim();
+        if (notes) body.notes = notes;
+        _setBoxError('deliverError', '');
+        try {
+            await apiPost(
+                '/api/workorders/' + encodeURIComponent(woId) + '/deliver',
+                body
+            );
+            showToast('Marked delivered · ' + woId);
+            hideModal('deliverWoModal');
+            poll();  // WO flips to delivered; button → delivery stamp
+        } catch (e) {
+            _setBoxError('deliverError', e.message || 'Request failed');
+        }
+    };
 })();

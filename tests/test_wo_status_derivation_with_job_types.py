@@ -1,10 +1,15 @@
-"""Phase C — WO status rollup spans queue_items + non-Internal jobs.
+"""Phase C/D — WO status rollup spans queue_items + jobs.
 
-Locks the new ``sync_work_order_status`` invariant: a Work Order
-completes only when both its member queue_items AND its member
-non-Internal (External / Design) jobs are completed/cancelled.
-Internal jobs are NOT pulled into the rollup directly — they're
-already represented via their queue_items.
+Locks the ``sync_work_order_status`` invariant: a Work Order completes
+only when both its member queue_items AND its member jobs are
+completed/cancelled.
+
+Phase C pulled non-Internal (External / Design) jobs into the rollup.
+Phase D removed the ``job_type != 'Internal'`` filter as well, so
+Internal jobs now participate too — their stored status can diverge
+from their queue_items when the inspection gate holds them (a
+queue-complete job awaiting QC is 'in_progress'; a failed inspection
+is 'attention'), and that signal must surface at the WO level.
 
 These tests poke ``status_sync.sync_work_order_status`` directly so
 the derivation rules are pinned independent of any service-layer
@@ -207,16 +212,21 @@ class WoStatusDerivationWithJobTypesTests(unittest.TestCase):
         self.assertEqual(_sync(self.db_path, wo["wo_id"]), "cancelled")
 
     # ------------------------------------------------------------------
-    # 8. Internal job status not double-counted
+    # 8. Internal job status propagates to the WO (Phase D)
     # ------------------------------------------------------------------
 
-    def test_internal_job_status_not_double_counted(self):
-        """The WO query filters ``job_type != 'Internal'``. To prove
-        the filter is in place: corrupt the Internal job's status
-        field to 'attention'. If it were being unioned into the
-        rollup, the WO would resolve to 'attention'. With the filter
-        in place, the WO still rolls up to 'completed' from
-        queue_items alone.
+    def test_internal_job_status_propagates_to_wo(self):
+        """Phase D inverts the old Phase C invariant.
+
+        This was test_internal_job_status_not_double_counted, which
+        pinned the ``job_type != 'Internal'`` filter by corrupting an
+        Internal job to 'attention' and asserting the WO stayed
+        'completed'. Phase D removed that filter so the inspection gate
+        is visible above the job level. The same corruption — the state
+        a failed inspection produces — must now propagate: the WO
+        resolves to 'attention' instead of masking it as 'completed'
+        from queue_items alone. The inversion is the regression test
+        for the Phase D rollup change.
         """
         wo = self.wo_repo.create_work_order(
             "Acme",
@@ -236,11 +246,12 @@ class WoStatusDerivationWithJobTypesTests(unittest.TestCase):
             wo["wo_id"], queue_ids=queue_ids,
         )
         _set_queue_items_status(self.db_path, wo["wo_id"], "completed")
-        # Corrupt the Internal job's status field — if the rollup
-        # ever queried it, this would poison the WO status.
+        # Diverge the Internal job's status from its queue_items — the
+        # same divergence the inspection gate produces on a failed QC.
+        # Phase D: this now propagates to the WO instead of being filtered.
         _set_job_status(self.db_path, internal["job_id"], "attention")
 
-        self.assertEqual(_sync(self.db_path, wo["wo_id"]), "completed")
+        self.assertEqual(_sync(self.db_path, wo["wo_id"]), "attention")
 
 
 if __name__ == "__main__":

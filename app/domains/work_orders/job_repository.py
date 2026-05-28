@@ -26,6 +26,12 @@ _PHASE_C_JOB_COLUMNS = [
     ("inspection_date",      "TEXT"),
 ]
 
+# Mirror of scripts/migrations/006_add_inspection_outcome.py's
+# NEW_COLUMNS. Same byte-identical drift guard as Phase C.
+_PHASE_D_JOB_COLUMNS = [
+    ("inspection_outcome", "TEXT DEFAULT 'pending'"),
+]
+
 
 class JobRepository:
     """Manages persisted work-order jobs in the work_orders.db file."""
@@ -75,6 +81,9 @@ class JobRepository:
         # against a DB that predates the migration. Byte-identical to
         # the migration's NEW_COLUMNS list.
         for col_name, col_def in _PHASE_C_JOB_COLUMNS:
+            add_column_if_missing(conn, "jobs", col_name, col_def)
+        # Migration 006 mirror: Phase D inspection_outcome column.
+        for col_name, col_def in _PHASE_D_JOB_COLUMNS:
             add_column_if_missing(conn, "jobs", col_name, col_def)
         conn.commit()
         conn.close()
@@ -416,6 +425,31 @@ class JobRepository:
         self._update_job_fields(
             job_id, self._INTERNAL_UPDATE_COLUMNS, kwargs
         )
+
+    def record_inspection(self, job_id: int, outcome: str,
+                          inspector: str, report: Optional[str],
+                          date: str) -> Optional[dict]:
+        """Atomically write all four inspection columns for a job.
+
+        Repository takes whatever the service hands in; validation
+        lives one layer up in JobService.record_inspection. Returns
+        the updated row, or None if the job_id doesn't exist.
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE jobs SET inspection_outcome = ?, inspector = ?, "
+                "inspection_report = ?, inspection_date = ? "
+                "WHERE job_id = ?",
+                (outcome, inspector, report, date, job_id),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
 
     def start_non_internal_job(self, job_id: int) -> str:
         """Transition an External/Design job 'open' → 'in_progress'.

@@ -1,0 +1,40 @@
+<!-- ===== PHASE E2 — ADD CORRECTIVE ACTION MODAL =====
+     Creates a CA under an NCR via
+     POST /api/ncrs/<id>/corrective-actions. WoDetail.openCaModal
+     stashes ncr_id on the dialog dataset; submit reads it. Only
+     reachable for NCRs with corrective_action_needed='Y'. -->
+<div class="modal-overlay" id="createCaModal">
+    <div class="modal" style="width: 460px;">
+        <div class="modal-header">
+            <h3 id="createCaTitle">Add Corrective Action</h3>
+            <button class="modal-close" onclick="hideModal('createCaModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="caRootCause">Root cause actions</label>
+                <textarea class="form-input" id="caRootCause" rows="3" placeholder="Actions to eliminate the root cause" required></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="caResponsible">Responsible persons</label>
+                <input type="text" class="form-input" id="caResponsible" placeholder="Who is responsible">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="caResources">Resources needed</label>
+                <input type="text" class="form-input" id="caResources" placeholder="Resources required">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="caEffectiveness">Effectiveness verification</label>
+                <textarea class="form-input" id="caEffectiveness" rows="2" placeholder="How effectiveness will be verified"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="caVerifyingPerson">Verifying person</label>
+                <input type="text" class="form-input" id="caVerifyingPerson" maxlength="64" placeholder="Who will verify (optional now)">
+            </div>
+            <div class="muted" id="createCaError" hidden style="color: var(--err, #c0392b);"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('createCaModal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitCa()">Add corrective action</button>
+        </div>
+    </div>
+</div>

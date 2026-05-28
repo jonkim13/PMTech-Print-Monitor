@@ -1,0 +1,25 @@
+<!-- ===== PHASE E2 — VERIFY CORRECTIVE ACTION MODAL =====
+     Marks a CA verified via POST /api/corrective-actions/<id>/verify.
+     WoDetail.openCaVerifyModal stashes ca_id on the dialog dataset.
+     Opens on top of the NCR detail modal; on success the detail
+     re-renders so the CA shows 'verified'. -->
+<div class="modal-overlay" id="verifyCaModal">
+    <div class="modal" style="width: 400px;">
+        <div class="modal-header">
+            <h3 id="verifyCaTitle">Verify Corrective Action</h3>
+            <button class="modal-close" onclick="hideModal('verifyCaModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <p class="muted">Confirm the corrective action has been verified effective.</p>
+            <div class="form-group">
+                <label class="form-label" for="verifyCaPerson">Verifying person</label>
+                <input type="text" class="form-input" id="verifyCaPerson" maxlength="64" placeholder="Your name" required>
+            </div>
+            <div class="muted" id="verifyCaError" hidden style="color: var(--err, #c0392b);"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('verifyCaModal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitCaVerify()">Mark verified</button>
+        </div>
+    </div>
+</div>

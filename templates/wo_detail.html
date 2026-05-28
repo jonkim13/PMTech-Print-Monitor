@@ -38,8 +38,15 @@
                                 <span class="wo-header-id mono">{{ wo.wo_id }}</span>
                                 <span class="wo-header-sep">&middot;</span>
                                 <span class="wo-header-customer">{{ wo.customer_name }}</span>
-                                {{ status_pill('printing' if wo.status == 'in_progress' else ('attn' if wo.status == 'attention' else ('done' if wo.status == 'completed' else ('cancel' if wo.status == 'cancelled' else 'idle'))), label=wo.status|upper|replace('_', ' ')) }}
+                                <span id="wo-header-status-pill">{{ status_pill('printing' if wo.status == 'in_progress' else ('attn' if wo.status == 'attention' else ('done' if wo.status == 'completed' else ('delivered' if wo.status == 'delivered' else ('cancel' if wo.status == 'cancelled' else 'idle')))), label=wo.status|upper|replace('_', ' ')) }}</span>
                                 <div style="flex:1;"></div>
+                                <span id="wo-delivery-slot">
+                                    {% if wo.status == 'completed' %}
+                                    <button class="btn sm primary" id="wo-mark-delivered-btn" onclick="WoDetail.openDeliverModal('{{ wo.wo_id|e }}')"><i data-lucide="truck" class="icon icon-sm"></i> Mark Delivered</button>
+                                    {% elif wo.status == 'delivered' and wo.delivery %}
+                                    <span class="wo-delivered-stamp muted">Delivered {{ wo.delivery.delivered_at }}{% if wo.delivery.received_by %} &middot; {{ wo.delivery.received_by }}{% endif %}</span>
+                                    {% endif %}
+                                </span>
                                 <button class="btn sm danger" onclick="WoDetail.cancelWO('{{ wo.wo_id|e }}')">Cancel WO</button>
                                 <button class="btn sm warn" onclick="WoDetail.retryWO('{{ wo.wo_id|e }}')">Re-queue</button>
                                 <button class="btn sm primary" id="wo-create-job-btn" disabled onclick="WoDetail.createJobFromSelected('{{ wo.wo_id|e }}')">Create job from selected</button>
@@ -112,6 +119,16 @@
                             </div>
                         </div>
 
+                        <!-- Non-conformances (Phase E2) -->
+                        <div class="card ncr-rail-card">
+                            <div class="card-pad">
+                                <div class="k ncr-rail-label">Non-Conformances <span id="wo-ncr-count" class="muted"></span></div>
+                                <div id="wo-ncr-body" class="ncr-rail-body">
+                                    <!-- populated by JS from wo.ncr_summary -->
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Activity timeline -->
                         <div class="card activity-rail-card">
                             <div class="card-pad">
@@ -143,6 +160,12 @@
 {% include "partials/modals/create_non_internal_job.html" %}
 {% include "partials/modals/queue_print.html" %}
 {% include "partials/modals/wo_qc.html" %}
+{% include "partials/modals/inspection.html" %}
+{% include "partials/modals/create_ncr.html" %}
+{% include "partials/modals/create_ca.html" %}
+{% include "partials/modals/verify_ca.html" %}
+{% include "partials/modals/ncr_detail.html" %}
+{% include "partials/modals/deliver_wo.html" %}
 
 <script>
 window.WO_DETAIL_INITIAL = {{ wo|tojson }};

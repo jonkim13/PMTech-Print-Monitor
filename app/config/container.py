@@ -27,6 +27,8 @@ from ..domains.production.job_repository import PrintJobRepository
 from ..domains.production.machine_repository import MachineLogRepository
 from ..domains.production.material_repository import MaterialUsageRepository
 from ..domains.production.service import ProductionService
+from ..domains.quality.repository import QualityRepository
+from ..domains.quality.service import QualityService
 from ..domains.dashboard.service import DashboardService
 from ..domains.triage.service import TriageService
 from ..domains.reports.weekly_service import WeeklyReportService
@@ -52,6 +54,8 @@ class AppContainer:
     queue_repository: QueueRepository
     queue_bulk_operations: QueueBulkOperations
     queue_execution_repository: QueueExecutionRepository
+    quality_repository: QualityRepository
+    quality_service: QualityService
     work_order_service: WorkOrderService
     queue_service: QueueService
     upload_session_repository: UploadSessionRepository
@@ -106,6 +110,7 @@ def build_container(settings: AppSettings = None) -> AppContainer:
     queue_execution_repository = QueueExecutionRepository(
         settings.work_order_db_path
     )
+    quality_repository = QualityRepository(settings.quality_db_path)
     upload_session_repository = UploadSessionRepository(
         settings.upload_session_db_path
     )
@@ -160,6 +165,12 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         queue_execution_repository=queue_execution_repository,
         farm_manager=farm_manager,
         production_job_repository=job_repository,
+        quality_repository=quality_repository,
+    )
+    quality_service = QualityService(
+        quality_repository=quality_repository,
+        job_repository=wo_job_repository,
+        work_order_repository=work_order_repository,
     )
     queue_service = QueueService(
         queue_repository=queue_repository,
@@ -229,6 +240,8 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         queue_repository=queue_repository,
         queue_bulk_operations=queue_bulk_operations,
         queue_execution_repository=queue_execution_repository,
+        quality_repository=quality_repository,
+        quality_service=quality_service,
         work_order_service=work_order_service,
         queue_service=queue_service,
         upload_session_repository=upload_session_repository,

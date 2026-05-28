@@ -16,6 +16,7 @@ from .domains.inventory.routes import register_inventory_routes
 from .domains.monitoring.routes import register_monitoring_routes
 from .domains.printers.routes import register_printers_routes
 from .domains.production.routes import register_production_routes
+from .domains.quality.routes import register_quality_routes
 from .domains.reports.routes import register_reports_routes
 from .domains.work_orders.routes import register_work_order_routes
 from .shared.migrations.runner import MigrationRunner
@@ -130,6 +131,7 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         queue_service=container.queue_service,
         triage_service=container.triage_service,
     )
+    register_quality_routes(app, container.quality_service)
     register_reports_routes(app, container.weekly_report_service)
 
 

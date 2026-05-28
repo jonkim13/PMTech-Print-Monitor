@@ -77,6 +77,10 @@ class AppSettings:
         return os.path.join(self.data_dir, "work_orders.db")
 
     @property
+    def quality_db_path(self) -> str:
+        return os.path.join(self.data_dir, "quality.db")
+
+    @property
     def upload_session_db_path(self) -> str:
         return os.path.join(self.data_dir, "upload_sessions.db")
 

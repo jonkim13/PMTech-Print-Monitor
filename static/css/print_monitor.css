@@ -196,6 +196,7 @@ h1, h2, h3, h4 { margin: 0; }
 .st-offline  { background: rgba(129,139,156,.14); color: var(--fg-3); border: 1px solid rgba(129,139,156,.25); }
 .st-error    { background: rgba(251,113,133,.12); color: var(--err); border: 1px solid rgba(251,113,133,.30); }
 .st-finished { background: rgba(52,211,153,.12); color: var(--ok); border: 1px solid rgba(52,211,153,.25); }
+.st-delivered { background: rgba(167,139,250,.14); color: var(--busy); border: 1px solid rgba(167,139,250,.30); }
 .st-unknown  { background: rgba(129,139,156,.14); color: var(--fg-3); border: 1px solid rgba(129,139,156,.25); }
 
 /* shape coding */
@@ -206,6 +207,7 @@ h1, h2, h3, h4 { margin: 0; }
 .sym-unknown  { border: 1.5px solid currentColor; border-radius: 50%; box-sizing: border-box; opacity: .4; }
 .sym-done     { clip-path: polygon(20% 50%,40% 75%,85% 20%,95% 30%,40% 95%,10% 60%); background: currentColor; }
 .sym-finished { clip-path: polygon(20% 50%,40% 75%,85% 20%,95% 30%,40% 95%,10% 60%); background: currentColor; }
+.sym-delivered { clip-path: polygon(20% 50%,40% 75%,85% 20%,95% 30%,40% 95%,10% 60%); background: currentColor; }
 .sym-failed   { clip-path: polygon(15% 0,50% 35%,85% 0,100% 15%,65% 50%,100% 85%,85% 100%,50% 65%,15% 100%,0 85%,35% 50%,0 15%); background: currentColor; }
 .sym-error    { clip-path: polygon(15% 0,50% 35%,85% 0,100% 15%,65% 50%,100% 85%,85% 100%,50% 65%,15% 100%,0 85%,35% 50%,0 15%); background: currentColor; }
 .sym-cancel   { border: 1.5px solid currentColor; border-radius: 50%; box-sizing: border-box; position: relative; }

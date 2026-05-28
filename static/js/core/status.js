@@ -24,6 +24,7 @@ var WO_STATUS = {
     in_progress: { label: 'In Progress', cssClass: 'wo-in-progress' },
     attention: { label: 'Needs Attention', cssClass: 'wo-attention' },
     completed: { label: 'Completed', cssClass: 'wo-completed' },
+    delivered: { label: 'Delivered', cssClass: 'wo-delivered' },
     cancelled: { label: 'Cancelled', cssClass: 'wo-cancelled' }
 };
 

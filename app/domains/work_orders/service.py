@@ -7,6 +7,13 @@ from app.domains.work_orders import status_sync
 
 
 _VALID_JOB_TYPES = ("Internal", "External", "Design")
+_VALID_INSPECTION_OUTCOMES = ("pass", "fail")
+_INSPECTABLE_JOB_TYPES = ("Internal", "External")
+
+
+class DeliveryStateError(Exception):
+    """Phase F — illegal delivery transition (not completed / already
+    delivered). Maps to HTTP 409."""
 
 
 class WorkOrderService:
@@ -19,7 +26,8 @@ class WorkOrderService:
                  queue_bulk_operations=None,
                  queue_execution_repository=None,
                  farm_manager=None,
-                 production_job_repository=None):
+                 production_job_repository=None,
+                 quality_repository=None):
         self.work_order_repository = work_order_repository
         self.job_repository = job_repository
         self.queue_repository = queue_repository
@@ -27,6 +35,9 @@ class WorkOrderService:
         self.queue_execution_repository = queue_execution_repository
         self.farm_manager = farm_manager
         self.production_job_repository = production_job_repository
+        # Phase E — read-only handle so the WO rollup can apply the
+        # open-NCR gate and the detail payload can carry an ncr_summary.
+        self.quality_repository = quality_repository
 
     # ------------------------------------------------------------------
     # Work Orders
@@ -49,6 +60,8 @@ class WorkOrderService:
         if wo is not None:
             self._attach_production_outcome(wo)
             self._attach_inspection_summaries(wo)
+            self._attach_ncr_summary(wo)
+            self._attach_delivery(wo)
             self._attach_normalized_counts(wo)
             self._attach_activity_timeline(wo)
         return wo
@@ -109,19 +122,72 @@ class WorkOrderService:
                 state = "in-progress"
             else:
                 state = "pending"
+            # Phase D — the recorded inspector pass/fail outcome backing
+            # the gate. Defaults to 'pending' for rows predating the
+            # mirror. Lets the frontend pick the right button/pill
+            # without a second fetch.
+            outcome = (job.get("inspection_outcome") or "pending")
             job["inspection"] = {
                 "passed": bucket["passed"],
                 "failed": bucket["failed"],
                 "pending": bucket["pending"],
                 "total": bucket["total"],
-                "inspector": inspector,
+                "inspector": inspector or job.get("inspector"),
                 "state": state,
+                "outcome": outcome,
             }
             # Phase C — surface the discriminator as a lowercase
             # template-friendly `type`. `or 'Internal'` defends
             # against rows that somehow lack the column (legacy DBs
             # that haven't picked up the mirror yet).
             job["type"] = (job.get("job_type") or "Internal").lower()
+
+    def _attach_ncr_summary(self, wo: dict) -> None:
+        """Phase E — attach this WO's open-NCR count + a lightweight list.
+
+        Service-layer cross-DB read into quality.db (no SQL join). This
+        is the payload E2's UI will render; E1 only exposes it. No-op
+        when the quality repository isn't wired (e.g. minimal test
+        services), mirroring _attach_production_outcome's None guard.
+        """
+        if not self.quality_repository:
+            return
+        ncrs = self.quality_repository.list_ncrs_for_wo(wo["wo_id"])
+        open_count = sum(1 for n in ncrs if n.get("status") == "open")
+        wo["ncr_summary"] = {
+            "open_count": open_count,
+            "total": len(ncrs),
+            "ncrs": [
+                {
+                    "ncr_id": n.get("ncr_id"),
+                    "job_id": n.get("job_id"),
+                    "status": n.get("status"),
+                    "corrective_action_needed": n.get(
+                        "corrective_action_needed"
+                    ),
+                }
+                for n in ncrs
+            ],
+        }
+
+    def _attach_delivery(self, wo: dict) -> None:
+        """Phase F — attach the delivery record (if any) to the payload.
+
+        Lets the UI show "Delivered on <date>" instead of the Mark
+        Delivered action once the WO is delivered. Same-DB read; no
+        guard needed (the work_order_repository is always wired).
+        """
+        delivery = self.work_order_repository.get_delivery_for_wo(
+            wo["wo_id"]
+        )
+        if delivery:
+            wo["delivery"] = {
+                "delivery_id": delivery.get("delivery_id"),
+                "delivered_at": delivery.get("delivered_at"),
+                "received_by": delivery.get("received_by"),
+                "recorded_by": delivery.get("recorded_by"),
+                "notes": delivery.get("notes"),
+            }
 
     def _attach_normalized_counts(self, wo: dict) -> None:
         """Emit the design's `counts` block for the stacked progress bar.
@@ -503,8 +569,147 @@ class WorkOrderService:
         # in the service layer (cross-table orchestration).
         conn = self.job_repository._get_conn()
         try:
-            status_sync.sync_work_order_status(conn, wo_id)
+            status_sync.sync_work_order_status(
+                conn, wo_id, quality_repository=self.quality_repository
+            )
             conn.commit()
         finally:
             conn.close()
         return wo_id
+
+    def record_inspection(self, job_id: int, outcome: str,
+                          inspector: str, report: Optional[str] = None,
+                          date: Optional[str] = None) -> dict:
+        """Phase D — write inspector pass/fail and re-roll statuses.
+
+        Only Internal and External jobs are inspectable; Design jobs
+        are rejected with ValueError per Philip's process diagram.
+        ``outcome`` must be 'pass' or 'fail' — 'pending' is the
+        default state, not a recordable outcome. The inspector name
+        must be non-empty after stripping.
+
+        On a successful write the call also re-runs
+        ``sync_job_status`` (so the inspection gate translates the
+        outcome into the job-status enum) and
+        ``sync_work_order_status`` (so the WO rollup picks up the
+        new job status) inside one transaction.
+
+        Returns the updated job row.
+        """
+        if outcome not in _VALID_INSPECTION_OUTCOMES:
+            raise ValueError(
+                "outcome must be one of {}; got {!r}".format(
+                    _VALID_INSPECTION_OUTCOMES, outcome
+                )
+            )
+        inspector_clean = (inspector or "").strip()
+        if not inspector_clean:
+            raise ValueError("inspector is required")
+
+        job = self.job_repository.get_job(job_id)
+        if job is None:
+            raise LookupError("Job not found")
+        job_type = job.get("job_type")
+        if job_type not in _INSPECTABLE_JOB_TYPES:
+            raise ValueError(
+                "Inspection not applicable to {} jobs".format(job_type)
+            )
+
+        date_value = date or datetime.now(timezone.utc).date().isoformat()
+        report_value = report  # repository accepts None
+
+        # Single transaction for the write + both rollups so the
+        # inspection outcome and the derived statuses commit together.
+        conn = self.job_repository._get_conn()
+        try:
+            conn.execute(
+                "UPDATE jobs SET inspection_outcome = ?, inspector = ?, "
+                "inspection_report = ?, inspection_date = ? "
+                "WHERE job_id = ?",
+                (outcome, inspector_clean, report_value, date_value, job_id),
+            )
+            # External jobs have no queue_items, so the inspection gate
+            # in sync_job_status reads the job's OWN stored status. The
+            # repurposed UI flow (Complete → inspect) submits while the
+            # job is still 'in_progress', so mark it 'completed' first;
+            # the gate then maps the outcome (pass → completed,
+            # fail → attention). Internal jobs derive 'completed' from
+            # their queue_items, so they need no nudge here.
+            if job_type == "External":
+                conn.execute(
+                    "UPDATE jobs SET status = 'completed' WHERE job_id = ?",
+                    (job_id,),
+                )
+            status_sync.sync_job_status(conn, job_id)
+            status_sync.sync_work_order_status(
+                conn, job["wo_id"],
+                quality_repository=self.quality_repository,
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            return dict(row) if row else {}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def mark_delivered(self, wo_id: str, delivered_at: Optional[str] = None,
+                       received_by: Optional[str] = None,
+                       notes: Optional[str] = None,
+                       recorded_by: Optional[str] = None) -> dict:
+        """Phase F — record delivery and stamp the WO ``delivered``.
+
+        Only reachable from ``completed``: a WO that is still open /
+        in_progress / attention isn't finished, and a ``delivered`` WO
+        is terminal (no re-delivery). Both rejections raise
+        DeliveryStateError (HTTP 409); a missing WO raises LookupError
+        (404).
+
+        In one transaction we insert the delivery row and set the WO
+        status via ``set_work_order_status_terminal`` — the direct
+        terminal write that bypasses derivation. We deliberately do NOT
+        call ``sync_work_order_status`` here: that would re-derive the
+        WO back to ``completed``. The sync guard then keeps it
+        ``delivered`` through any later queue/inspection/NCR write.
+
+        Returns the updated WO (with the delivery record attached).
+        """
+        wo = self.work_order_repository.get_work_order(wo_id)
+        if wo is None:
+            raise LookupError("Work order not found")
+        status = wo.get("status")
+        if status == "delivered":
+            raise DeliveryStateError(
+                "Work order {} is already delivered".format(wo_id)
+            )
+        if status != "completed":
+            raise DeliveryStateError(
+                "Work order {} must be completed before delivery "
+                "(current status: {})".format(wo_id, status)
+            )
+
+        delivered_at = (
+            delivered_at or datetime.now(timezone.utc).date().isoformat()
+        )
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn = self.work_order_repository._get_conn()
+        try:
+            self.work_order_repository.insert_delivery(
+                conn, wo_id, delivered_at, received_by, notes,
+                recorded_by, now,
+            )
+            status_sync.set_work_order_status_terminal(
+                conn, wo_id, "delivered"
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return self.get_work_order(wo_id)

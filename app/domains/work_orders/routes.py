@@ -12,6 +12,7 @@ from app.domains.queue.service import (
     QueueExecutionConflictError,
     QueueItemNotFoundError,
 )
+from app.domains.work_orders.service import DeliveryStateError
 
 work_order_api = Blueprint("work_order_api", __name__)
 
@@ -437,6 +438,33 @@ def api_patch_job_inspection(job_id):
     return jsonify({"success": True, "job_id": job_id})
 
 
+@work_order_api.route("/api/jobs/<int:job_id>/inspection", methods=["POST"])
+def api_record_inspection(job_id):
+    """Record an inspection pass/fail outcome (state transition).
+
+    POST is the state transition: it writes the four inspection
+    columns and re-rolls job + WO status through the inspection gate.
+    The sibling PATCH endpoint edits inspection fields without
+    changing the outcome.
+
+    Body: {outcome, inspector, report?, date?}.
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        job = _work_order_service.record_inspection(
+            job_id,
+            outcome=data.get("outcome"),
+            inspector=data.get("inspector"),
+            report=_opt_str(data.get("report")),
+            date=_opt_str(data.get("date")),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"success": True, "job": job})
+
+
 @work_order_api.route("/api/workorders/<wo_id>", methods=["PATCH"])
 def api_update_work_order(wo_id):
     """Update work order status. Body: {"status": "cancelled"}"""
@@ -477,6 +505,34 @@ def api_retry_work_order(wo_id):
     return jsonify({
         "success": True,
         "requeued_count": result["requeued_count"],
+    })
+
+
+@work_order_api.route("/api/workorders/<wo_id>/deliver", methods=["POST"])
+def api_deliver_work_order(wo_id):
+    """Phase F — record delivery and stamp the WO 'delivered'.
+
+    Body: {delivered_at?, received_by?, notes?, recorded_by?}.
+    404 if the WO is missing; 409 if it isn't 'completed' or is
+    already 'delivered'.
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        wo = _work_order_service.mark_delivered(
+            wo_id,
+            delivered_at=_opt_str(data.get("delivered_at")),
+            received_by=_opt_str(data.get("received_by")),
+            notes=_opt_str(data.get("notes")),
+            recorded_by=_opt_str(data.get("recorded_by")),
+        )
+    except DeliveryStateError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({
+        "success": True,
+        "work_order": wo,
+        "delivery": wo.get("delivery"),
     })
 
 

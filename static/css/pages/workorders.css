@@ -69,6 +69,7 @@
 .wo-in-progress { background: rgba(0, 150, 255, 0.15); color: var(--accent-blue); }
 .wo-attention { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
 .wo-completed { background: rgba(0, 200, 100, 0.15); color: var(--accent-green); }
+.wo-delivered { background: rgba(167, 139, 250, 0.18); color: #a78bfa; }
 .wo-cancelled { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
 
 /* Job card status badges */

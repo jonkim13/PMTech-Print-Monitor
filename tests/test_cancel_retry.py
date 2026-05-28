@@ -142,6 +142,15 @@ class CancelRetryTests(unittest.TestCase):
         conn.close()
         return row["status"] if row else None
 
+    def _job_id_for_qid(self, queue_id):
+        conn = sqlite3.connect(self.db)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT job_id FROM queue_items WHERE queue_id=?", (queue_id,)
+        ).fetchone()
+        conn.close()
+        return row["job_id"] if row else None
+
     def _start_print(self, queue_ids, printer_id="P1", job_id=None):
         result = self.exec_repo.start_queue_job_execution(
             queue_ids, printer_id, f"Printer {printer_id}", "p.gcode",
@@ -196,7 +205,14 @@ class CancelRetryTests(unittest.TestCase):
         self.wo_svc.cancel_work_order(wo_id)
         self.assertEqual(self._qi_status(qids[0]), "completed")
         self.assertEqual(self._qi_status(qids[1]), "cancelled")
-        # 1 completed + 1 cancelled → WO = completed (cancelled filtered)
+        # Phase D: inspection gate holds Internal jobs at in_progress until pass.
+        # 1 completed + 1 cancelled, but the completed item's Internal job
+        # is still awaiting inspection, so the WO rolls up to in_progress.
+        self.assertEqual(self._wo_status(wo_id), "in_progress")
+        # Passing inspection releases the gate → WO completes.
+        self.wo_svc.record_inspection(
+            self._job_id_for_qid(qids[0]), outcome="pass", inspector="QC"
+        )
         self.assertEqual(self._wo_status(wo_id), "completed")
 
     def test_cancel_job_scopes_to_that_job(self):
@@ -304,6 +320,13 @@ class CancelRetryTests(unittest.TestCase):
         self.exec_repo.complete_queue_job(qja, print_job_id=101)
         qjb = self._start_print([qids[1]])
         self.exec_repo.complete_queue_job(qjb, print_job_id=102)
+        # Phase D: inspection gate holds Internal jobs at in_progress until pass.
+        # Both parts are queue-complete but their Internal jobs await QC.
+        self.assertEqual(self._wo_status(wo_id), "in_progress")
+        for qid in qids:
+            self.wo_svc.record_inspection(
+                self._job_id_for_qid(qid), outcome="pass", inspector="QC"
+            )
         self.assertEqual(self._wo_status(wo_id), "completed")
 
         # Use the admin path to flip one to failed so retry picks it up.

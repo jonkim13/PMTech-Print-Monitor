@@ -132,6 +132,15 @@ class EdgeCaseTests(unittest.TestCase):
         conn.close()
         return row["status"] if row else None
 
+    def _job_id_for_qid(self, queue_id):
+        conn = sqlite3.connect(self.db)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT job_id FROM queue_items WHERE queue_id=?", (queue_id,)
+        ).fetchone()
+        conn.close()
+        return row["job_id"] if row else None
+
     def _wo_status(self, wo_id):
         conn = sqlite3.connect(self.db)
         conn.row_factory = sqlite3.Row
@@ -193,6 +202,9 @@ class EdgeCaseTests(unittest.TestCase):
         self.exec_repo.complete_queue_job(qja, print_job_id=101)
         qjb = self._start_print([qids[1]], job_id=job_id)
         self.exec_repo.complete_queue_job(qjb, print_job_id=102)
+        # Phase D: inspection gate holds Internal jobs at in_progress until pass.
+        self.assertEqual(self._wo_status(wo_id), "in_progress")
+        self.wo_svc.record_inspection(job_id, outcome="pass", inspector="QC")
         self.assertEqual(self._wo_status(wo_id), "completed")
 
         # Retry on a genuinely completed part is a no-op by policy.

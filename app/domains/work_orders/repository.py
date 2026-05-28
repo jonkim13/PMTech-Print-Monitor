@@ -8,6 +8,31 @@ from app.domains.work_orders import status_sync
 from app.shared.sqlite_migrations import add_column_if_missing
 
 
+# Phase F — canonical DDL for the deliveries table. Imported verbatim
+# by scripts/migrations/008_create_deliveries_table.py so a migrated DB
+# and a fresh _init_tables install converge byte-for-byte (single copy,
+# no drift). IF NOT EXISTS keeps each statement idempotent.
+DELIVERIES_DDL = (
+    "CREATE TABLE IF NOT EXISTS deliveries (\n"
+    "    delivery_id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+    "    wo_id TEXT NOT NULL REFERENCES work_orders(wo_id),\n"
+    "    delivered_at TEXT NOT NULL,\n"
+    "    received_by TEXT,\n"
+    "    notes TEXT,\n"
+    "    recorded_by TEXT,\n"
+    "    created_at TEXT NOT NULL\n"
+    ")"
+)
+
+DELIVERIES_SCHEMA_STATEMENTS = [
+    DELIVERIES_DDL,
+    "CREATE INDEX IF NOT EXISTS idx_deliveries_wo ON deliveries(wo_id)",
+]
+
+# The table this migration owns — layer-2 idempotency checks for it.
+DELIVERIES_TABLES = ["deliveries"]
+
+
 class WorkOrderRepository:
     """Manages work orders and line items in the work_orders.db file."""
 
@@ -55,6 +80,9 @@ class WorkOrderRepository:
         # predates the migration. Keeps fresh installs and legacy installs
         # converged without requiring the operator to run 003 first.
         add_column_if_missing(conn, "work_orders", "due_date", "TEXT")
+        # Migration 008 mirror: the Phase F deliveries table.
+        for stmt in DELIVERIES_SCHEMA_STATEMENTS:
+            conn.execute(stmt)
         conn.commit()
         conn.close()
 
@@ -236,6 +264,62 @@ class WorkOrderRepository:
                 (today_iso,)
             ).fetchone()
             return int(row["n"] or 0)
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Phase F — Deliveries
+    # ------------------------------------------------------------------
+
+    def insert_delivery(self, conn, wo_id: str, delivered_at: str,
+                        received_by: Optional[str], notes: Optional[str],
+                        recorded_by: Optional[str], created_at: str) -> int:
+        """Insert a delivery row on the caller's connection (no commit).
+
+        Lets the service write the delivery + the terminal status in one
+        transaction. Repository takes what it's given; the 'must be
+        completed' rule lives in the service.
+        """
+        cursor = conn.execute(
+            "INSERT INTO deliveries "
+            "(wo_id, delivered_at, received_by, notes, recorded_by, "
+            " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (wo_id, delivered_at, received_by, notes, recorded_by,
+             created_at),
+        )
+        return cursor.lastrowid
+
+    def create_delivery(self, wo_id: str, delivered_at: str,
+                        received_by: Optional[str] = None,
+                        notes: Optional[str] = None,
+                        recorded_by: Optional[str] = None) -> dict:
+        """Standalone delivery insert (opens + commits its own conn)."""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        try:
+            delivery_id = self.insert_delivery(
+                conn, wo_id, delivered_at, received_by, notes,
+                recorded_by, now,
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM deliveries WHERE delivery_id = ?",
+                (delivery_id,),
+            ).fetchone()
+            return dict(row)
+        finally:
+            conn.close()
+
+    def get_delivery_for_wo(self, wo_id: str) -> Optional[dict]:
+        """Most recent delivery record for a WO, or None."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM deliveries WHERE wo_id = ? "
+                "ORDER BY delivery_id DESC LIMIT 1",
+                (wo_id,),
+            ).fetchone()
+            return dict(row) if row else None
         finally:
             conn.close()
 

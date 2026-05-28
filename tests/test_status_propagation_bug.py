@@ -52,6 +52,7 @@ from app.domains.queue.execution_repository import QueueExecutionRepository
 from app.domains.queue.repository import QueueRepository
 from app.domains.work_orders.job_repository import JobRepository
 from app.domains.work_orders.repository import WorkOrderRepository
+from app.domains.work_orders.service import WorkOrderService
 
 
 class _FakeClient:
@@ -92,6 +93,13 @@ class _BugSetup(unittest.TestCase):
         self.q_bulk = QueueBulkOperations(self.wo_db_path)
         self.qe_repo = QueueExecutionRepository(self.wo_db_path)
         self.prod_repo = PrintJobRepository(self.prod_db_path)
+
+        # Phase D — record_inspection only touches work_order/job repos,
+        # so a minimal service is enough to release the inspection gate.
+        self.wo_svc = WorkOrderService(
+            work_order_repository=self.wo_repo,
+            job_repository=self.job_repo,
+        )
 
         self.runtime = MonitoringRuntimeState()
         # Passing filament_db / assignment_db / material_repository as
@@ -254,19 +262,30 @@ class StatusPropagationBugTests(_BugSetup):
             "queue_handler.complete fallbacks all require status='printing'."
             .format(qjid, qj["status"]),
         )
+        # Phase D: inspection gate holds Internal jobs at in_progress until
+        # pass — the queue rollup reaches 'completed' (asserted above) but
+        # the job/WO stay 'in_progress' awaiting QC.
         self.assertEqual(
-            job["status"], "completed",
-            "jobs.status (job_id={}) should be 'completed' (derived from "
-            "queue_items rollup via status_sync.derive_job_status), got "
-            "'{}'.".format(job["job_id"], job["status"]),
+            job["status"], "in_progress",
+            "jobs.status (job_id={}) should be 'in_progress' — the queue "
+            "rollup is complete but the inspection gate holds it pending "
+            "QC. Got '{}'.".format(job["job_id"], job["status"]),
         )
         self.assertEqual(
-            wo["status"], "completed",
-            "work_orders.status (wo_id={}) should be 'completed' "
-            "(derived from queue_items rollup via "
-            "status_sync.derive_work_order_status), got '{}'.".format(
+            wo["status"], "in_progress",
+            "work_orders.status (wo_id={}) should be 'in_progress' while "
+            "its only job awaits inspection, got '{}'.".format(
                 wo_id, wo["status"]),
         )
+
+        # Releasing the gate with a passing inspection completes the chain.
+        self.wo_svc.record_inspection(
+            qi["job_id"], outcome="pass", inspector="QC"
+        )
+        job = self._row("jobs", "job_id", qi["job_id"])
+        wo = self._row("work_orders", "wo_id", wo_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(wo["status"], "completed")
 
     def test_completion_with_filename_mismatch_in_link_start(self):
         """Filename-mismatch scenario must still roll up to 'completed'.
@@ -321,11 +340,19 @@ class StatusPropagationBugTests(_BugSetup):
             "_get_active_queue_job_for_printer fallback."
             .format(qjid, qj["status"]),
         )
+        # Phase D: inspection gate holds Internal jobs at in_progress until
+        # pass — the queue chain completes but the WO awaits QC.
         self.assertEqual(
-            wo["status"], "completed",
-            "work_orders.status (wo_id={}) should be 'completed', got "
-            "'{}'.".format(wo_id, wo["status"]),
+            wo["status"], "in_progress",
+            "work_orders.status (wo_id={}) should be 'in_progress' while "
+            "its job awaits inspection, got '{}'.".format(
+                wo_id, wo["status"]),
         )
+        self.wo_svc.record_inspection(
+            qi["job_id"], outcome="pass", inspector="QC"
+        )
+        wo = self._row("work_orders", "wo_id", wo_id)
+        self.assertEqual(wo["status"], "completed")
 
     def test_predicate_asymmetry_in_complete_queue_job(self):
         """complete_queue_job's queue_items UPDATE filter is the asymmetry.
@@ -372,16 +399,25 @@ class StatusPropagationBugTests(_BugSetup):
             "'cancelled')` predicate — these two should agree."
             .format(qid, qi["status"]),
         )
+        # Phase D: inspection gate holds Internal jobs at in_progress until
+        # pass — the raw queue UPDATE completes but the derived job/WO wait.
         self.assertEqual(
-            job["status"], "completed",
-            "jobs.status should be 'completed' (derived after rollup). "
-            "Got '{}'.".format(job["status"]),
+            job["status"], "in_progress",
+            "jobs.status should be 'in_progress' (queue rollup complete, "
+            "inspection pending). Got '{}'.".format(job["status"]),
         )
         self.assertEqual(
-            wo["status"], "completed",
-            "work_orders.status should be 'completed' (derived after "
-            "rollup). Got '{}'.".format(wo["status"]),
+            wo["status"], "in_progress",
+            "work_orders.status should be 'in_progress' (job awaits "
+            "inspection). Got '{}'.".format(wo["status"]),
         )
+        self.wo_svc.record_inspection(
+            qi["job_id"], outcome="pass", inspector="QC"
+        )
+        job = self._row("jobs", "job_id", qi["job_id"])
+        wo = self._row("work_orders", "wo_id", wo_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(wo["status"], "completed")
 
     def test_baseline_happy_path_still_works(self):
         """Sanity baseline. Pins the existing happy-path behaviour.
@@ -420,15 +456,66 @@ class StatusPropagationBugTests(_BugSetup):
             "(queue_job_id={}) should be 'completed'. Got '{}'.".format(
                 qjid, qj["status"]),
         )
+        # Phase D: inspection gate holds Internal jobs at in_progress until
+        # pass — even on the happy path the job/WO wait for QC.
         self.assertEqual(
-            job["status"], "completed",
-            "Happy path regression: jobs.status should be 'completed'. "
-            "Got '{}'.".format(job["status"]),
+            job["status"], "in_progress",
+            "Happy path: jobs.status should be 'in_progress' pending "
+            "inspection. Got '{}'.".format(job["status"]),
         )
         self.assertEqual(
-            wo["status"], "completed",
-            "Happy path regression: work_orders.status (wo_id={}) "
-            "should be 'completed'. Got '{}'.".format(wo_id, wo["status"]),
+            wo["status"], "in_progress",
+            "Happy path: work_orders.status (wo_id={}) should be "
+            "'in_progress' pending inspection. Got '{}'.".format(
+                wo_id, wo["status"]),
+        )
+        self.wo_svc.record_inspection(
+            qi["job_id"], outcome="pass", inspector="QC"
+        )
+        job = self._row("jobs", "job_id", qi["job_id"])
+        wo = self._row("work_orders", "wo_id", wo_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(wo["status"], "completed")
+
+    def test_phase0_queue_side_decoupled_from_inspection_gate(self):
+        """Phase 0 invariant: queue-side write is independent of the gate.
+
+        complete_queue_job's widened queue_items UPDATE must still drive
+        every queue_item printing → completed cleanly, even though the
+        Phase D inspection gate then holds the derived job at
+        'in_progress' pending QC. Guards against accidental coupling
+        between the queue-side write and the new job-side derivation:
+        a gated job must never strand a queue_item in a non-terminal
+        state.
+        """
+        wo_id, qid, qjid, prod_job_id = self._setup_wo_with_queue_job(
+            "printing"
+        )
+
+        self._drive_handle_complete()
+
+        qi = self._row("queue_items", "queue_id", qid)
+        qj = self._row("queue_jobs", "queue_job_id", qjid)
+        job = self._row("jobs", "job_id", qi["job_id"])
+
+        # Queue side reaches a terminal 'completed' independent of the gate.
+        self.assertEqual(
+            qi["status"], "completed",
+            "queue_items must complete even when the job is gated; got "
+            "'{}'.".format(qi["status"]),
+        )
+        self.assertEqual(
+            qj["status"], "completed",
+            "queue_jobs must complete even when the job is gated; got "
+            "'{}'.".format(qj["status"]),
+        )
+        # Job side is held by the inspection gate — proving the queue
+        # write did not depend on (or get blocked by) the derivation.
+        self.assertEqual(
+            job["status"], "in_progress",
+            "the inspection gate should hold the job at 'in_progress' "
+            "without disturbing the queue-side write; got '{}'.".format(
+                job["status"]),
         )
 
 

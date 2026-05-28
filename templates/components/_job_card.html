@@ -5,6 +5,14 @@
 {% from "components/_part_row.html" import part_row %}
 {% from "components/_status_pill.html" import status_pill %}
 
+{# Phase D — failed-inspection controls: a fail pill + a disabled
+   "Create NCR" button (the NCR workflow lands in Phase E). Shared by
+   the Internal and External job cards. #}
+{%- macro _inspection_failed_controls(job) -%}
+<span class="inspection-chip tone-err">INSPECTION FAILED</span>
+<button class="btn sm primary" onclick="WoDetail.openNcrModal({{ job.job_id }}, '{{ job.wo_id|e }}')"><i data-lucide="clipboard-x" class="icon icon-sm"></i> Create NCR</button>
+{%- endmacro -%}
+
 {# Collapsed-header partial used by every job-card variant #}
 {% macro _job_header(job, expanded, active=False) -%}
 {%- set job_type = job.type or 'internal' -%}
@@ -43,12 +51,20 @@
             <div class="job-count-cell"><span class="k">QC pending</span><span class="job-count-val tone-warn">{{ (job.inspection.pending if job.inspection else 0) or 0 }}</span></div>
         </div>
 
+        {%- set _insp_outcome = (job.inspection.outcome if job.inspection else 'pending') or 'pending' -%}
         <div class="job-card-actions">
             {% if job.queued_parts and job.queued_parts > 0 %}
             <button class="btn sm go" onclick="WoDetail.printJob({{ job.job_id }})"><i data-lucide="play" class="icon icon-sm"></i> Print job</button>
             {% endif %}
             {% if job.failed_parts and job.failed_parts > 0 %}
             <button class="btn sm warn" onclick="WoDetail.retryJob('{{ job.wo_id|e }}', {{ job.job_id }}, {{ job.failed_parts }})">Retry {{ job.failed_parts }} failed</button>
+            {% endif %}
+            {# Phase D — inspection gate: show Inspect once the job is
+               queue-complete (held at in_progress) and still pending QC. #}
+            {% if _insp_outcome == 'fail' %}
+            {{ _inspection_failed_controls(job) }}
+            {% elif job.status == 'in_progress' and _insp_outcome == 'pending' and not job.printing_parts and not job.queued_parts %}
+            <button class="btn sm primary" onclick="WoDetail.openInspectionModal({{ job.job_id }}, 'Internal')"><i data-lucide="clipboard-check" class="icon icon-sm"></i> Inspect</button>
             {% endif %}
             <button class="btn sm danger" onclick="WoDetail.cancelJob('{{ job.wo_id|e }}', {{ job.job_id }})">Cancel job</button>
         </div>
@@ -129,15 +145,25 @@
 {%- endmacro -%}
 
 {%- macro _non_internal_footer(job) -%}
+{%- set _is_external = (job.type or '') == 'external' -%}
 <div class="job-card-actions">
     {% if job.status == 'open' %}
     <button class="btn sm go" onclick="WoDetail.startNonInternalJob({{ job.job_id }})"><i data-lucide="play" class="icon icon-sm"></i> Start Job</button>
     {% elif job.status == 'in_progress' %}
-    <button class="btn sm primary" onclick="WoDetail.completeNonInternalJob({{ job.job_id }})"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>
+        {% if _is_external %}
+        {# Phase D — External jobs route through inspection: the
+           Complete button opens the gate modal instead of completing
+           directly. record_inspection marks the job complete on pass. #}
+        <button class="btn sm primary" onclick="WoDetail.openInspectionModal({{ job.job_id }}, 'External')"><i data-lucide="clipboard-check" class="icon icon-sm"></i> Complete &amp; Inspect</button>
+        {% else %}
+        <button class="btn sm primary" onclick="WoDetail.completeNonInternalJob({{ job.job_id }})"><i data-lucide="check" class="icon icon-sm"></i> Complete Job</button>
+        {% endif %}
     {% elif job.status == 'completed' %}
     <span class="muted">Completed {{ (job.completed_at or '')[:10] }}</span>
     {% elif job.status == 'cancelled' %}
     <span class="muted">Cancelled</span>
+    {% elif job.status == 'attention' and _is_external %}
+    {{ _inspection_failed_controls(job) }}
     {% endif %}
     <button class="btn sm danger" onclick="WoDetail.cancelJob('{{ job.wo_id|e }}', {{ job.job_id }})">Cancel job</button>
 </div>

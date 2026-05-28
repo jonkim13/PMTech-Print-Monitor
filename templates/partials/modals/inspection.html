@@ -1,0 +1,39 @@
+<!-- ===== PHASE D — JOB INSPECTION GATE MODAL =====
+     Records an inspector pass/fail outcome for an Internal or External
+     job via POST /api/jobs/<id>/inspection. The triggering JS stashes
+     the job id + type on the dialog dataset (mirrors woQcModal's
+     dataset.printJobId pattern) so submit reads them without a closure. -->
+<div class="modal-overlay" id="inspectionModal">
+    <div class="modal" style="width: 420px;">
+        <div class="modal-header">
+            <h3 id="inspectionTitle">Record inspection</h3>
+            <button class="modal-close" onclick="hideModal('inspectionModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="inspectionOutcome">Outcome</label>
+                <select class="form-input" id="inspectionOutcome">
+                    <option value="pass">Pass</option>
+                    <option value="fail">Fail</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="inspectionInspector">Inspector</label>
+                <input type="text" class="form-input" id="inspectionInspector" maxlength="64" placeholder="Your name" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="inspectionReport">Report</label>
+                <textarea class="form-input" id="inspectionReport" rows="3" placeholder="Optional notes / report reference"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="inspectionDate">Date</label>
+                <input type="date" class="form-input" id="inspectionDate">
+            </div>
+            <div class="muted" id="inspectionError" hidden style="color: var(--err, #c0392b);"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('inspectionModal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitInspection()">Save inspection</button>
+        </div>
+    </div>
+</div>

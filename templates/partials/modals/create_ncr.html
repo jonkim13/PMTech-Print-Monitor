@@ -1,0 +1,43 @@
+<!-- ===== PHASE E2 — RAISE NON-CONFORMANCE MODAL =====
+     Creates an NCR from a failed-inspection job via POST /api/ncrs.
+     The triggering JS (WoDetail.openNcrModal) stashes job_id + wo_id
+     on the dialog dataset (mirrors inspectionModal's dataset pattern)
+     so submit reads them without a closure. -->
+<div class="modal-overlay" id="createNcrModal">
+    <div class="modal" style="width: 460px;">
+        <div class="modal-header">
+            <h3 id="createNcrTitle">Raise Non-Conformance</h3>
+            <button class="modal-close" onclick="hideModal('createNcrModal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="ncrDescription">Description</label>
+                <textarea class="form-input" id="ncrDescription" rows="3" placeholder="Describe the non-conformance" required></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="ncrReportedBy">Reported by</label>
+                <input type="text" class="form-input" id="ncrReportedBy" maxlength="64" placeholder="Your name / initials" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="ncrAffectedParts">Affected parts</label>
+                <input type="text" class="form-input" id="ncrAffectedParts" placeholder="Free-text — part-level linkage is a future phase">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="ncrRemedialAction">Remedial action (optional)</label>
+                <textarea class="form-input" id="ncrRemedialAction" rows="2" placeholder="Immediate remedial action taken"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Corrective action needed?</label>
+                <div style="display:flex; gap:18px; align-items:center;">
+                    <label style="display:flex; gap:6px; align-items:center;"><input type="radio" name="ncrCaNeeded" value="N" checked> No</label>
+                    <label style="display:flex; gap:6px; align-items:center;"><input type="radio" name="ncrCaNeeded" value="Y"> Yes</label>
+                </div>
+            </div>
+            <div class="muted" id="createNcrError" hidden style="color: var(--err, #c0392b);"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('createNcrModal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitNcr()">Raise NCR</button>
+        </div>
+    </div>
+</div>

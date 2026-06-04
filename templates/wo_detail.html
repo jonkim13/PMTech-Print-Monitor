@@ -3,6 +3,7 @@
 {% from "components/_wo_counts.html" import wo_counts %}
 {% from "components/_phase_tracker.html" import phase_tracker %}
 {% from "components/_job_card.html" import job_card_internal, job_card_external, job_card_design %}
+{% from "components/_part_row.html" import part_row %}
 
 {% block content %}
 <div class="app-layout">
@@ -88,12 +89,34 @@
                                 {% endif %}
                             {% endfor %}
 
-                            {% if not wo.jobs %}
+                            {# Unassigned (loose) parts — queue_items not yet attached to
+                               any job (job_id null). Without a render path these parts
+                               can't be selected, so "Create job from selected" stays
+                               disabled and the WO dead-ends. Rendered via the shared
+                               part_row macro so the checkbox + WoDetail.togglePartSelection
+                               wiring matches the in-job rows the selection toolbar already
+                               expects. Shown alongside job cards: a WO can have some parts
+                               in jobs and others still loose. #}
+                            {% set unassigned_parts = (wo.queue_items or [])|rejectattr("job_id")|list %}
+                            {% if unassigned_parts %}
+                            <div class="card card-pad wo-unassigned-parts">
+                                <div class="part-group">
+                                    <div class="part-group-head">
+                                        <span class="part-group-swatch" style="background:var(--warn);"></span>
+                                        <span class="k tone-warn">Unassigned parts</span>
+                                        <span class="mono tab muted">{{ unassigned_parts|length }} part{{ '' if unassigned_parts|length == 1 else 's' }}</span>
+                                    </div>
+                                    {% for part in unassigned_parts %}{{ part_row(part) }}{% endfor %}
+                                </div>
+                                <div class="muted wo-unassigned-hint" style="margin-top:8px;">
+                                    Select parts and click &ldquo;Create job from selected&rdquo; to start a print.
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            {% if not wo.jobs and not unassigned_parts %}
                             <div class="card card-pad muted" style="text-align:center;">
                                 No jobs created yet for this work order.
-                                {% if wo.queue_items %}
-                                    {{ wo.queue_items|length }} part{{ '' if wo.queue_items|length == 1 else 's' }} are queued. Select parts and create a job to start a print.
-                                {% endif %}
                             </div>
                             {% endif %}
                         </div>

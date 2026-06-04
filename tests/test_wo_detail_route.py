@@ -12,6 +12,7 @@ Validates:
 import os
 import sys
 import unittest
+from unittest import mock
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -121,6 +122,79 @@ class WoDetailRouteTests(unittest.TestCase):
             self.assertIn('href="/?tab=dashboard"', body)
             self.assertIn('href="/?tab=workorders"', body)
             self.assertIn('href="/?tab=inventory"', body)
+
+    # ------------------------------------------------------------------
+    # Unassigned (loose) queue_items must get a selectable render path.
+    # Regression for: a WO with queued parts but zero jobs showed only the
+    # "No jobs created yet" message — no checkboxes — so "Create job from
+    # selected" stayed permanently disabled and the WO dead-ended.
+    # ------------------------------------------------------------------
+
+    def test_unassigned_queued_parts_render_as_selectable_rows(self):
+        """A WO with queued parts and no jobs renders the parts as
+        selectable rows (not just the empty-state message)."""
+        result = self._make_wo()
+        wo_id = result["wo_id"]
+        wo = self.container.work_order_service.get_work_order(wo_id)
+        self.assertEqual(wo["jobs"], [])
+        qids = [qi["queue_id"] for qi in wo["queue_items"]]
+        self.assertTrue(qids)
+        with self.app.test_client() as c:
+            body = c.get("/work-orders/" + wo_id).data.decode("utf-8")
+            self.assertIn("Unassigned parts", body)
+            self.assertIn("test-widget", body)
+            # Each loose part is a checkbox wired to the existing
+            # selection handler the "Create job from selected" button reads.
+            for qid in qids:
+                self.assertIn(
+                    'class="wo-part-select" data-queue-id="{}"'.format(qid),
+                    body,
+                )
+            self.assertIn("WoDetail.togglePartSelection", body)
+            # The bare empty-state must not show when parts exist.
+            self.assertNotIn("No jobs created yet", body)
+
+    def test_mixed_assigned_and_loose_parts_both_render(self):
+        """A WO with one part in a job and another still loose renders
+        the job card AND the loose part as a selectable row."""
+        result = self._make_wo()
+        wo_id = result["wo_id"]
+        wo = self.container.work_order_service.get_work_order(wo_id)
+        qids = [qi["queue_id"] for qi in wo["queue_items"]]
+        self.assertGreaterEqual(len(qids), 2)
+        assigned_qid, loose_qid = qids[0], qids[1]
+        self.container.work_order_service.create_job(
+            wo_id, job_type="Internal", queue_ids=[assigned_qid]
+        )
+        with self.app.test_client() as c:
+            body = c.get("/work-orders/" + wo_id).data.decode("utf-8")
+            # Job card is present...
+            self.assertIn("data-job-id=", body)
+            # ...and the loose part is still rendered as selectable.
+            self.assertIn("Unassigned parts", body)
+            self.assertIn(
+                'class="wo-part-select" data-queue-id="{}"'.format(loose_qid),
+                body,
+            )
+
+    def test_empty_state_message_when_no_jobs_and_no_parts(self):
+        """Regression guard: a WO with no jobs and no queue_items still
+        shows the empty-state message and no unassigned-parts list."""
+        result = self._make_wo()
+        wo_id = result["wo_id"]
+        wo = self.container.work_order_service.get_work_order(wo_id)
+        empty = dict(wo)
+        empty["jobs"] = []
+        empty["queue_items"] = []
+        with mock.patch.object(
+            self.container.work_order_service,
+            "get_work_order",
+            return_value=empty,
+        ):
+            with self.app.test_client() as c:
+                body = c.get("/work-orders/" + wo_id).data.decode("utf-8")
+                self.assertIn("No jobs created yet", body)
+                self.assertNotIn("Unassigned parts", body)
 
 
 if __name__ == "__main__":

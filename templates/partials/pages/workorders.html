@@ -100,12 +100,17 @@
                     </div>
 
                     <div class="section-header" style="margin-top: 20px;">
-                        Line Items
-                        <button class="btn btn-primary" onclick="addWoLineItem()" style="margin-left: 12px; font-size: 11px; padding: 4px 10px;">+ Add Item</button>
+                        Jobs
+                        <button class="btn btn-primary" onclick="addWoJobGroup()" style="margin-left: 12px; font-size: 11px; padding: 4px 10px;">+ Add Job</button>
                     </div>
+                    <p class="muted" style="margin: 4px 0 0; font-size: 12px;">
+                        Pick a type per job: <strong>Internal</strong> (we print it),
+                        <strong>External</strong> (a vendor makes it), or
+                        <strong>Design</strong> (we design it). Mix freely in one order.
+                    </p>
 
-                    <div id="woLineItems">
-                        <!-- Dynamic line items go here -->
+                    <div id="woJobGroups">
+                        <!-- Dynamic job groups go here -->
                     </div>
 
                     <div style="margin-top: 20px;">

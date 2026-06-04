@@ -125,14 +125,17 @@ class WorkOrderRepository:
     # CRUD
     # ------------------------------------------------------------------
 
-    def create_work_order(self, customer_name: str,
-                          line_items: List[dict],
-                          due_date: Optional[str] = None) -> dict:
-        now = datetime.now(timezone.utc).isoformat()
-        conn = self._get_conn()
+    def _insert_wo_and_line_items(self, conn, wo_id: str, customer_name: str,
+                                  line_items: List[dict],
+                                  due_date: Optional[str], now: str) -> int:
+        """Insert the WO row + line items + expanded queue_items.
 
-        wo_id = self._next_wo_id(conn)
-
+        Operates on the caller's connection and does NOT commit, so a
+        caller can compose this with other writes (e.g. Phase G's
+        atomic multi-job WO creation) in one transaction. Returns the
+        number of queue_items created. The expansion logic is unchanged
+        from the original ``create_work_order`` body.
+        """
         conn.execute("""
             INSERT INTO work_orders
                 (wo_id, customer_name, created_at, status, due_date)
@@ -162,9 +165,21 @@ class WorkOrderRepository:
                 """, (item_id, wo_id, part_name, material,
                       customer_name, seq, quantity, now))
                 parts_created += 1
+        return parts_created
 
-        conn.commit()
-        conn.close()
+    def create_work_order(self, customer_name: str,
+                          line_items: List[dict],
+                          due_date: Optional[str] = None) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        try:
+            wo_id = self._next_wo_id(conn)
+            parts_created = self._insert_wo_and_line_items(
+                conn, wo_id, customer_name, line_items, due_date, now
+            )
+            conn.commit()
+        finally:
+            conn.close()
         return {
             "wo_id": wo_id,
             "customer_name": customer_name,

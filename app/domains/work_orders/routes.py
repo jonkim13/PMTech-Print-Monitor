@@ -137,7 +137,17 @@ def _dispatch_print_request(queue_ids):
 
 @work_order_api.route("/api/workorders", methods=["POST"])
 def api_create_work_order():
-    """Create a new work order with line items."""
+    """Create a new work order with Internal line items and/or jobs.
+
+    Phase G — the body may carry Internal ``line_items`` (Part/Material/
+    Qty, expanded into queue_items exactly as before) and/or a ``jobs``
+    list of non-Internal job specs (External: vendor + external_process;
+    Design: designer + optional requirements). At least one of the two
+    must be present. Everything is created in one transaction (see
+    ``WorkOrderService.create_work_order``); an invalid job spec rejects
+    the whole request and creates nothing. A body with only
+    ``line_items`` behaves exactly as the pre-Phase-G endpoint did.
+    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
@@ -146,9 +156,12 @@ def api_create_work_order():
     if not customer:
         return jsonify({"error": "Missing customer_name"}), 400
 
-    items = data.get("line_items", [])
-    if not items:
-        return jsonify({"error": "At least one line item required"}), 400
+    items = data.get("line_items") or []
+    raw_jobs = data.get("jobs") or []
+    if not items and not raw_jobs:
+        return jsonify({
+            "error": "At least one line item or job is required"
+        }), 400
 
     for i, li in enumerate(items):
         if not li.get("part_name", "").strip():
@@ -168,13 +181,27 @@ def api_create_work_order():
                 "error": "Line item {} has invalid quantity".format(i + 1)
             }), 400
 
+    # Normalize job specs; authoritative per-type validation lives in
+    # the service (reused from create_job) and runs before the
+    # transaction opens, so a bad spec creates nothing.
+    jobs = [{
+        "job_type": (spec.get("job_type") or "").strip(),
+        "vendor": _opt_str(spec.get("vendor")),
+        "external_process": _opt_str(spec.get("external_process")),
+        "designer": _opt_str(spec.get("designer")),
+        "requirements": _opt_str(spec.get("requirements")),
+    } for spec in raw_jobs]
+
     due_date = data.get("due_date")
     if due_date is not None:
         due_date = str(due_date).strip() or None
 
-    result = _work_order_service.create_work_order(
-        customer, items, due_date=due_date
-    )
+    try:
+        result = _work_order_service.create_work_order(
+            customer, items, due_date=due_date, jobs=jobs
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify(result), 201
 
 

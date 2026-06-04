@@ -44,10 +44,72 @@ class WorkOrderService:
     # ------------------------------------------------------------------
 
     def create_work_order(self, customer_name: str, line_items: list,
-                          due_date: Optional[str] = None) -> dict:
-        return self.work_order_repository.create_work_order(
-            customer_name, line_items, due_date=due_date
-        )
+                          due_date: Optional[str] = None,
+                          jobs: Optional[list] = None) -> dict:
+        """Create a work order, optionally with non-Internal jobs.
+
+        Phase G — ``jobs`` is an optional list of External/Design job
+        specs ({job_type, vendor, external_process, designer,
+        requirements}). When supplied, the WO, its Internal line items
+        (→ queue_items, expanded exactly as before), and every job row
+        are created in ONE transaction so a partial failure leaves
+        nothing behind. With no ``jobs`` the original single-call repo
+        path runs unchanged.
+
+        Per-type validation reuses ``_validate_job_spec`` — the same
+        rules the detail-page ``create_job`` enforces — so the two
+        creation surfaces can't drift. Any invalid spec raises
+        ValueError before the transaction opens, so nothing is created.
+        """
+        jobs = jobs or []
+        if not jobs:
+            return self.work_order_repository.create_work_order(
+                customer_name, line_items, due_date=due_date
+            )
+
+        for spec in jobs:
+            self._validate_job_spec(
+                spec.get("job_type"),
+                vendor=spec.get("vendor"),
+                external_process=spec.get("external_process"),
+                designer=spec.get("designer"),
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self.work_order_repository._get_conn()
+        try:
+            wo_id = self.work_order_repository._next_wo_id(conn)
+            parts_created = (
+                self.work_order_repository._insert_wo_and_line_items(
+                    conn, wo_id, customer_name, line_items, due_date, now
+                )
+            )
+            for spec in jobs:
+                self.job_repository._create_job_row(
+                    conn, wo_id,
+                    job_type=spec.get("job_type"),
+                    vendor=spec.get("vendor"),
+                    external_process=spec.get("external_process"),
+                    requirements=spec.get("requirements"),
+                    designer=spec.get("designer"),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return {
+            "wo_id": wo_id,
+            "customer_name": customer_name,
+            "status": "open",
+            "created_at": now,
+            "due_date": due_date,
+            "parts_created": parts_created,
+            "line_item_count": len(line_items),
+            "job_count": len(jobs),
+        }
 
     def get_work_orders(self, status: Optional[str] = None,
                         limit: int = 100, offset: int = 0) -> list:
@@ -485,19 +547,23 @@ class WorkOrderService:
     def get_work_order_jobs(self, wo_id: str) -> Optional[list]:
         return self.job_repository.get_work_order_jobs(wo_id)
 
-    def create_job(self, wo_id: str, queue_ids=None,
-                   job_type: str = "Internal",
-                   vendor: Optional[str] = None,
-                   external_process: Optional[str] = None,
-                   requirements: Optional[str] = None,
-                   designer: Optional[str] = None) -> dict:
+    @staticmethod
+    def _validate_job_spec(job_type, *, vendor=None, external_process=None,
+                           designer=None) -> None:
+        """Per-type job validation, shared by both creation surfaces.
+
+        Phase G — the detail-page ``create_job`` and the New-WO-page
+        atomic ``create_work_order`` both call this so the rules stay
+        identical: External needs vendor + external_process; Design
+        needs a designer; Internal has no extra fields. Raises
+        ValueError on a bad spec.
+        """
         if job_type not in _VALID_JOB_TYPES:
             raise ValueError(
                 "job_type must be one of {}; got {!r}".format(
                     _VALID_JOB_TYPES, job_type
                 )
             )
-
         if job_type == "External":
             if not (vendor and vendor.strip()):
                 raise ValueError("External jobs require a vendor")
@@ -508,6 +574,17 @@ class WorkOrderService:
         elif job_type == "Design":
             if not (designer and designer.strip()):
                 raise ValueError("Design jobs require a designer")
+
+    def create_job(self, wo_id: str, queue_ids=None,
+                   job_type: str = "Internal",
+                   vendor: Optional[str] = None,
+                   external_process: Optional[str] = None,
+                   requirements: Optional[str] = None,
+                   designer: Optional[str] = None) -> dict:
+        self._validate_job_spec(
+            job_type, vendor=vendor,
+            external_process=external_process, designer=designer,
+        )
 
         return self.job_repository.create_job(
             wo_id,

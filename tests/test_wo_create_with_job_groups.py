@@ -18,10 +18,13 @@ import tempfile
 import unittest
 
 from flask import Flask
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+TEMPLATES_DIR = os.path.join(ROOT_DIR, "templates")
 
 from app.domains.work_orders.job_repository import JobRepository
 from app.domains.work_orders.repository import WorkOrderRepository
@@ -242,6 +245,36 @@ class CreateWorkOrderWithJobGroupsTests(unittest.TestCase):
             jobs=[{"job_type": "Design", "designer": "Sam"}],
         )
         self.assertEqual(r.status_code, 400)
+
+
+class NewWorkOrderFormRenderTests(unittest.TestCase):
+    """Static shell of the New WO form. The typed job-group rows and the
+    remove (X) control are built client-side by create.js, so only the
+    shell — the groups container, the "+ Add Job" trigger, and the
+    empty-state placeholder — is server-rendered and asserted here.
+    The remove behavior and layout are verified by browser screenshot."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.env = Environment(
+            loader=FileSystemLoader(TEMPLATES_DIR),
+            autoescape=select_autoescape(["html"]),
+        )
+
+    def _render(self):
+        return self.env.get_template(
+            "partials/pages/workorders.html"
+        ).render()
+
+    def test_job_group_container_and_add_trigger_present(self):
+        html = self._render()
+        self.assertIn('id="woJobGroups"', html)
+        self.assertIn('addWoJobGroup()', html)
+        self.assertNotIn('addWoLineItem()', html)  # old symbol is gone
+
+    def test_empty_state_placeholder_present(self):
+        html = self._render()
+        self.assertIn('id="woJobGroupsEmpty"', html)
 
 
 if __name__ == "__main__":

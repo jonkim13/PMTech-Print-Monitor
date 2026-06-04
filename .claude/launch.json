@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "print-farm-web",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-c", "from app.main import create_app; create_app(start_poller=False).run(host='127.0.0.1', port=5050, debug=False, use_reloader=False)"],
+      "port": 5050
+    }
+  ]
+}

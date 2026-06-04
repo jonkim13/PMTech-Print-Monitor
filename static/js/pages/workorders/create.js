@@ -2,14 +2,18 @@
 // Work Orders - Create form: typed job groups, submission.
 //
 // Phase G — the New WO page builds a whole order in one submit. Each
-// "job group" is a bordered card with a type selector:
-//   Internal → Part Name + Material + Qty  (→ line_items / queue_items)
-//   External → Vendor + Process            (→ a non-printing job row)
-//   Design   → Designer + Requirements     (→ a non-printing job row)
-// An order can mix types freely or use just one. On submit the groups
-// are split into `line_items` (Internal) + `jobs` (External/Design) and
-// POSTed to /api/workorders, which creates everything atomically.
-// (_woLineItemCounter is declared in index.js and reused as the group id.)
+// "job group" is a bordered card with a type-agnostic header (numbered
+// badge + type selector + remove) and a divider above the type-specific
+// fields. Switching the type swaps ONLY the fields below the divider —
+// the card chrome stays identical for Internal/External/Design.
+//   Internal → Part Name + Material + Qty stepper  (→ line_items)
+//   External → Vendor + Process                    (→ a job row)
+//   Design   → Designer + Requirements             (→ a job row)
+// On submit the groups are split into `line_items` (Internal) + `jobs`
+// (External/Design) and POSTed to /api/workorders, which creates
+// everything atomically. The payload shape is unchanged.
+// (_woLineItemCounter, declared in index.js, is a monotonic element id —
+// NOT the displayed position; badges are renumbered by DOM order.)
 // ============================================================
 
 function initCreateForm() {
@@ -17,12 +21,28 @@ function initCreateForm() {
         _woLineItemCounter = 0;
         addWoJobGroup('Internal');
     }
+    _woAfterChange();
+}
+
+// Renumber badges by DOM position, refresh the header/footer job counts,
+// and toggle the empty-state placeholder. Called after every add/remove/
+// reset so 01/02/03 and the counts stay correct (e.g. after a mid-list
+// removal the survivors renumber).
+function _woAfterChange() {
+    var groups = document.querySelectorAll('.wo-job-group');
+    groups.forEach(function (g, i) {
+        var badge = g.querySelector('[data-job-badge]');
+        if (badge) badge.textContent = ('0' + (i + 1)).slice(-2);
+    });
+    var n = groups.length;
+    var label = n + ' job' + (n === 1 ? '' : 's');
+    var head = document.getElementById('woJobsHeadCount');
+    if (head) head.textContent = '· ' + label;
+    var foot = document.getElementById('woFooterCount');
+    if (foot) foot.textContent = label;
     _woRefreshEmptyState();
 }
 
-// Toggle the "no jobs yet" placeholder based on how many groups exist.
-// This is what makes removing the last group land on a clean empty
-// state instead of snapping back to a fresh Internal group.
 function _woRefreshEmptyState() {
     var empty = document.getElementById('woJobGroupsEmpty');
     if (!empty) return;
@@ -32,40 +52,52 @@ function _woRefreshEmptyState() {
 function _woGroupFieldsHtml(type) {
     if (type === 'External') {
         return '' +
-            '<div class="form-group" style="margin:0; flex:1 1 200px;">' +
-            '<label class="form-label">Vendor</label>' +
+            '<div class="form-group" style="flex:1 1 200px;">' +
+            '<label class="form-label wo-label">Vendor</label>' +
             '<input type="text" class="form-input wo-vendor" maxlength="120" placeholder="e.g. MachiningCo">' +
             '</div>' +
-            '<div class="form-group" style="margin:0; flex:1 1 200px;">' +
-            '<label class="form-label">Process</label>' +
+            '<div class="form-group" style="flex:1 1 200px;">' +
+            '<label class="form-label wo-label">Process</label>' +
             '<input type="text" class="form-input wo-process" maxlength="120" placeholder="e.g. CNC Mill / Anodize">' +
             '</div>';
     }
     if (type === 'Design') {
         return '' +
-            '<div class="form-group" style="margin:0; flex:1 1 200px;">' +
-            '<label class="form-label">Designer</label>' +
+            '<div class="form-group" style="flex:1 1 200px;">' +
+            '<label class="form-label wo-label">Designer</label>' +
             '<input type="text" class="form-input wo-designer" maxlength="120" placeholder="Designer name">' +
             '</div>' +
-            '<div class="form-group" style="margin:0; flex:2 1 260px;">' +
-            '<label class="form-label">Requirements (optional)</label>' +
+            '<div class="form-group" style="flex:2 1 260px;">' +
+            '<label class="form-label wo-label">Requirements (optional)</label>' +
             '<textarea class="form-input wo-requirements" rows="2" placeholder="Optional"></textarea>' +
             '</div>';
     }
-    // Internal (default)
+    // Internal (default) — Part Name, Material, Qty stepper.
     return '' +
-        '<div class="form-group" style="margin:0; flex:2 1 200px;">' +
-        '<label class="form-label">Part Name</label>' +
+        '<div class="form-group" style="flex:2 1 220px;">' +
+        '<label class="form-label wo-label">Part Name</label>' +
         '<input type="text" class="form-input wo-part-name" placeholder="e.g. Widget Bracket">' +
         '</div>' +
-        '<div class="form-group" style="margin:0; flex:1 1 140px;">' +
-        '<label class="form-label">Material</label>' +
+        '<div class="form-group" style="flex:1 1 150px;">' +
+        '<label class="form-label wo-label">Material</label>' +
         '<select class="form-input wo-material"><option value="">Select...</option></select>' +
         '</div>' +
-        '<div class="form-group" style="margin:0; flex:0 0 90px;">' +
-        '<label class="form-label">Qty</label>' +
-        '<input type="number" class="form-input wo-quantity" min="1" value="1">' +
+        '<div class="form-group" style="flex:0 0 auto;">' +
+        '<label class="form-label wo-label">Qty</label>' +
+        '<div class="wo-qty-stepper">' +
+        '<button type="button" class="wo-qty-btn wo-qty-btn-minus" onclick="_woQtyStep(this, -1)" aria-label="Decrease quantity">−</button>' +
+        '<input type="number" class="wo-qty-value wo-quantity" min="1" value="1" readonly>' +
+        '<button type="button" class="wo-qty-btn wo-qty-btn-plus" onclick="_woQtyStep(this, 1)" aria-label="Increase quantity">+</button>' +
+        '</div>' +
         '</div>';
+}
+
+function _woQtyStep(btn, delta) {
+    var input = btn.parentNode.querySelector('.wo-quantity');
+    if (!input) return;
+    var v = (parseInt(input.value, 10) || 1) + delta;
+    if (v < 1) v = 1;
+    input.value = v;
 }
 
 function addWoJobGroup(type) {
@@ -75,31 +107,27 @@ function addWoJobGroup(type) {
     var container = document.getElementById('woJobGroups');
 
     var div = document.createElement('div');
-    div.className = 'wo-job-group card card-pad';
+    div.className = 'wo-job-group';
     div.id = 'woJobGroup-' + id;
     div.setAttribute('data-job-type', type);
-    div.style.marginTop = '12px';
 
     function opt(value) {
         return '<option value="' + value + '"' +
             (value === type ? ' selected' : '') + '>' + value + '</option>';
     }
 
+    // Type-agnostic chrome (badge + type select + remove + divider) built
+    // once; only .wo-job-fields differs by type.
     div.innerHTML =
-        // Header: type selector first (drives the rest), remove control
-        // pinned top-right so it never floats in dead space.
-        '<div class="wo-job-group-head" style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px;">' +
-        '<div class="form-group" style="margin:0; flex:0 0 170px;">' +
-        '<label class="form-label">Type</label>' +
-        '<select class="form-input wo-group-type" onchange="_woGroupSetType(' + id + ')">' +
+        '<div class="wo-job-group-head">' +
+        '<span class="wo-job-badge" data-job-badge>01</span>' +
+        '<select class="form-input wo-job-type-select" aria-label="Job type" onchange="_woGroupSetType(' + id + ')">' +
         opt('Internal') + opt('External') + opt('Design') +
         '</select>' +
+        '<button type="button" class="btn btn-danger btn-sm wo-job-remove" onclick="removeWoJobGroup(' + id + ')" aria-label="Remove job"><i data-lucide="x" class="icon icon-sm"></i></button>' +
         '</div>' +
-        '<button type="button" class="btn btn-danger" style="font-size:11px; padding:6px 9px;" onclick="removeWoJobGroup(' + id + ')" aria-label="Remove job"><i data-lucide="x" class="icon icon-sm"></i></button>' +
-        '</div>' +
-        // Type-specific fields, wrapped in their own flow row beneath
-        // the header so a group reads as one unit.
-        '<div class="wo-group-fields" style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-top:12px;">' +
+        '<div class="wo-job-divider"></div>' +
+        '<div class="wo-job-fields">' +
         _woGroupFieldsHtml(type) +
         '</div>';
     container.appendChild(div);
@@ -108,15 +136,16 @@ function addWoJobGroup(type) {
     if (type === 'Internal') {
         loadMaterialsForLineItem(div.querySelector('.wo-material'));
     }
-    _woRefreshEmptyState();
+    _woAfterChange();
 }
 
 function _woGroupSetType(id) {
     var group = document.getElementById('woJobGroup-' + id);
     if (!group) return;
-    var type = group.querySelector('.wo-group-type').value;
+    var type = group.querySelector('.wo-job-type-select').value;
     group.setAttribute('data-job-type', type);
-    var fields = group.querySelector('.wo-group-fields');
+    // Swap ONLY the fields below the divider — chrome is untouched.
+    var fields = group.querySelector('.wo-job-fields');
     fields.innerHTML = _woGroupFieldsHtml(type);
     refreshIcons(fields);
     if (type === 'Internal') {
@@ -138,13 +167,25 @@ async function loadMaterialsForLineItem(selectEl) {
     }
 }
 
-// Remove this group entirely. No auto-re-add: removing the last group
-// leaves the empty-state placeholder (see _woRefreshEmptyState), and
-// "Create Work Order" rejects a zero-group form client-side below.
+// Remove this group entirely (no auto-re-add). Removing the last group
+// lands on the empty-state placeholder; "Create Work Order" rejects a
+// zero-group form client-side below.
 function removeWoJobGroup(id) {
     var el = document.getElementById('woJobGroup-' + id);
     if (el) el.remove();
-    _woRefreshEmptyState();
+    _woAfterChange();
+}
+
+// Footer Reset — clear the whole form back to one empty Internal group.
+// Distinct from the per-card X (which removes a single card).
+function resetCreateForm() {
+    var c = document.getElementById('woCustomerName');
+    if (c) c.value = '';
+    var due = document.getElementById('woDueDate');
+    if (due) due.value = '';
+    document.getElementById('woJobGroups').innerHTML = '';
+    _woLineItemCounter = 0;
+    addWoJobGroup('Internal');
 }
 
 async function submitCreateWorkOrder() {
@@ -166,7 +207,7 @@ async function submitCreateWorkOrder() {
         if (type === 'Internal') {
             var partName = (el.querySelector('.wo-part-name').value || '').trim();
             var material = el.querySelector('.wo-material').value;
-            var quantity = parseInt(el.querySelector('.wo-quantity').value) || 0;
+            var quantity = parseInt(el.querySelector('.wo-quantity').value, 10) || 0;
             if (!partName || !material || quantity < 1) {
                 error = 'Fill in Part Name, Material, and Qty for every Internal job.';
                 return;
@@ -237,13 +278,8 @@ async function submitCreateWorkOrder() {
             }
             if (bits.length) msg += ' — ' + bits.join(', ');
             showToast(msg);
-            // Reset form
-            document.getElementById('woCustomerName').value = '';
-            if (dueDateEl) dueDateEl.value = '';
-            document.getElementById('woJobGroups').innerHTML = '';
-            _woLineItemCounter = 0;
-            addWoJobGroup('Internal');
-            // Jump to the new work order's detail page.
+            // Reset the form, then jump to the new WO's detail page.
+            resetCreateForm();
             window.location.href = '/work-orders/' +
                 encodeURIComponent(result.wo_id) + '?from=all';
             return;

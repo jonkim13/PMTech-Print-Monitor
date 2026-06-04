@@ -121,14 +121,163 @@
     width: auto;
 }
 
-/* Create WO form */
+/* ==========================================================================
+   Create WO form (Phase G restyle) — header, typed job-group cards,
+   numbered badges, qty stepper, footer. Frame is type-agnostic; only the
+   fields below the divider change per type.
+   ========================================================================== */
 .wo-create-form {
-    max-width: 700px;
+    max-width: 780px;
 }
-.wo-line-item {
-    background: var(--bg-tertiary);
+
+.wo-create-head { margin-bottom: 18px; }
+.wo-create-head h3 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.wo-create-sub { margin: 0; font-size: 12px; }
+
+/* Uppercase, letter-spaced field labels */
+.wo-label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+/* Customer + Due date on one row (customer wider) */
+.wo-create-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 14px;
+    margin-bottom: 22px;
+}
+.wo-create-row .form-group { margin-bottom: 0; }
+
+/* Jobs section header with live count + add button */
+.wo-jobs-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+.wo-jobs-head-left { display: flex; align-items: baseline; gap: 8px; }
+.wo-jobs-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.wo-jobs-count { font-size: 12px; }
+.wo-add-job-btn { font-size: 12px; padding: 7px 14px; }
+.wo-jobs-hint { margin: 0 0 14px; font-size: 12px; }
+
+/* One job = one bordered card with a blue left accent */
+.wo-job-group {
+    position: relative;
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 8px;
+    border-left: 3px solid var(--accent-blue);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
 }
+
+/* Type-agnostic header strip: numbered badge + Type selector + remove */
+.wo-job-group-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+}
+.wo-job-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--accent-blue);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+}
+.wo-job-type-select { flex: 0 0 170px; }
+.wo-job-remove { margin-left: auto; }
+
+/* Divider between header strip and the type-specific fields */
+.wo-job-divider { height: 1px; background: var(--border); }
+
+.wo-job-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    padding: 14px;
+}
+.wo-job-fields .form-group { margin-bottom: 0; }
+
+/* Qty stepper (Internal only) — submits the same integer quantity */
+.wo-qty-stepper { display: flex; align-items: stretch; height: 35px; }
+.wo-qty-btn {
+    width: 34px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    transition: background 0.15s;
+}
+.wo-qty-btn:hover { background: var(--bg-card-hover); }
+.wo-qty-btn-minus { border-radius: 6px 0 0 6px; }
+.wo-qty-btn-plus { border-radius: 0 6px 6px 0; }
+.wo-qty-value {
+    width: 50px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-left: none;
+    border-right: none;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    -moz-appearance: textfield;
+}
+.wo-qty-value::-webkit-outer-spin-button,
+.wo-qty-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Empty state */
+.wo-jobs-empty {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 22px;
+    text-align: center;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+/* Footer: solid-blue Create + Reset + live job count */
+.wo-create-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+.wo-create-btn {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: #fff;
+    font-size: 12px;
+    padding: 8px 16px;
+}
+.wo-create-btn:hover {
+    background: #2f6fe0;
+    border-color: #2f6fe0;
+    color: #fff;
+}
+.wo-reset-btn { font-size: 12px; padding: 8px 14px; }
+.wo-footer-count { margin-left: auto; font-size: 12px; }

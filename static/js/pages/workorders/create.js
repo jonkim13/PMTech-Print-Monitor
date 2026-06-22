@@ -1,17 +1,18 @@
 // ============================================================
 // Work Orders - Create form: typed job groups, submission.
 //
-// Phase G — the New WO page builds a whole order in one submit. Each
-// "job group" is a bordered card with a type-agnostic header (numbered
-// badge + type selector + remove) and a divider above the type-specific
-// fields. Switching the type swaps ONLY the fields below the divider —
-// the card chrome stays identical for Internal/External/Design.
-//   Internal → Part Name + Material + Qty stepper  (→ line_items)
-//   External → Vendor + Process                    (→ a job row)
-//   Design   → Designer + Requirements             (→ a job row)
-// On submit the groups are split into `line_items` (Internal) + `jobs`
-// (External/Design) and POSTed to /api/workorders, which creates
-// everything atomically. The payload shape is unchanged.
+// The New WO page builds a whole order in one submit. Each "job group"
+// is a bordered card with a type-agnostic header (numbered badge + type
+// selector + remove) and a divider above the type-specific fields.
+// Switching the type swaps ONLY the fields below the divider — the card
+// chrome stays identical for Internal/External/Design.
+//   Internal → a Parts sub-list (1+ Part Name + Material + Qty rows)
+//   External → Vendor + Process
+//   Design   → Designer + Requirements
+// Job→Parts model: EVERY group POSTs as a job in `jobs`, and an Internal
+// job nests its parts under `parts`. The backend creates a real jobs row
+// per group and links each part's queue_items to that job_id at creation
+// time (no loose, job_id-NULL Internal parts from this flow).
 // (_woLineItemCounter, declared in index.js, is a monotonic element id —
 // NOT the displayed position; badges are renumbered by DOM order.)
 // ============================================================
@@ -72,8 +73,24 @@ function _woGroupFieldsHtml(type) {
             '<textarea class="form-input wo-requirements" rows="2" placeholder="Optional"></textarea>' +
             '</div>';
     }
-    // Internal (default) — Part Name, Material, Qty stepper.
+    // Internal (default) — a Parts sub-list: one or more part rows under
+    // the job. Each row is Part Name + Material + Qty; add/remove rows.
     return '' +
+        '<div class="wo-parts">' +
+        '<div class="wo-parts-head">' +
+        '<span class="wo-parts-title">Parts</span>' +
+        '<button type="button" class="btn btn-sm wo-add-part-btn" onclick="_woAddPartRow(this)">+ Add Part</button>' +
+        '</div>' +
+        '<div class="wo-part-rows">' +
+        _woPartRowHtml() +
+        '</div>' +
+        '</div>';
+}
+
+// One Internal part row (Part Name + Material + Qty stepper + remove).
+function _woPartRowHtml() {
+    return '' +
+        '<div class="wo-part-row">' +
         '<div class="form-group" style="flex:2 1 220px;">' +
         '<label class="form-label wo-label">Part Name</label>' +
         '<input type="text" class="form-input wo-part-name" placeholder="e.g. Widget Bracket">' +
@@ -89,6 +106,8 @@ function _woGroupFieldsHtml(type) {
         '<input type="number" class="wo-qty-value wo-quantity" min="1" value="1" readonly>' +
         '<button type="button" class="wo-qty-btn wo-qty-btn-plus" onclick="_woQtyStep(this, 1)" aria-label="Increase quantity">+</button>' +
         '</div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-danger btn-sm wo-part-remove" onclick="_woRemovePartRow(this)" aria-label="Remove part"><i data-lucide="x" class="icon icon-sm"></i></button>' +
         '</div>';
 }
 
@@ -98,6 +117,28 @@ function _woQtyStep(btn, delta) {
     var v = (parseInt(input.value, 10) || 1) + delta;
     if (v < 1) v = 1;
     input.value = v;
+}
+
+// Append a part row to this Internal job's Parts sub-list.
+function _woAddPartRow(btn) {
+    var group = btn.closest('.wo-job-group');
+    var rows = group && group.querySelector('.wo-part-rows');
+    if (!rows) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = _woPartRowHtml();
+    var row = tmp.firstChild;
+    rows.appendChild(row);
+    refreshIcons(row);
+    loadMaterialsForLineItem(row.querySelector('.wo-material'));
+}
+
+// Remove a part row; a job must keep at least one part.
+function _woRemovePartRow(btn) {
+    var group = btn.closest('.wo-job-group');
+    var row = btn.closest('.wo-part-row');
+    if (!group || !row) return;
+    if (group.querySelectorAll('.wo-part-row').length <= 1) return;
+    row.remove();
 }
 
 function addWoJobGroup(type) {
@@ -196,7 +237,6 @@ async function submitCreateWorkOrder() {
     }
 
     var groups = document.querySelectorAll('.wo-job-group');
-    var lineItems = [];
     var jobs = [];
     var error = null;
 
@@ -205,18 +245,28 @@ async function submitCreateWorkOrder() {
         var type = el.getAttribute('data-job-type') || 'Internal';
 
         if (type === 'Internal') {
-            var partName = (el.querySelector('.wo-part-name').value || '').trim();
-            var material = el.querySelector('.wo-material').value;
-            var quantity = parseInt(el.querySelector('.wo-quantity').value, 10) || 0;
-            if (!partName || !material || quantity < 1) {
-                error = 'Fill in Part Name, Material, and Qty for every Internal job.';
+            var parts = [];
+            el.querySelectorAll('.wo-part-row').forEach(function(row) {
+                if (error) return;
+                var partName = (row.querySelector('.wo-part-name').value || '').trim();
+                var material = row.querySelector('.wo-material').value;
+                var quantity = parseInt(row.querySelector('.wo-quantity').value, 10) || 0;
+                if (!partName || !material || quantity < 1) {
+                    error = 'Fill in Part Name, Material, and Qty for every part.';
+                    return;
+                }
+                parts.push({
+                    part_name: partName,
+                    material: material,
+                    quantity: quantity
+                });
+            });
+            if (error) return;
+            if (parts.length === 0) {
+                error = 'Each Internal job needs at least one part.';
                 return;
             }
-            lineItems.push({
-                part_name: partName,
-                material: material,
-                quantity: quantity
-            });
+            jobs.push({ job_type: 'Internal', parts: parts });
         } else if (type === 'External') {
             var vendor = (el.querySelector('.wo-vendor').value || '').trim();
             var process = (el.querySelector('.wo-process').value || '').trim();
@@ -246,7 +296,7 @@ async function submitCreateWorkOrder() {
         showToast(error, 'error');
         return;
     }
-    if (lineItems.length === 0 && jobs.length === 0) {
+    if (jobs.length === 0) {
         showToast('Add at least one job', 'error');
         return;
     }
@@ -254,9 +304,10 @@ async function submitCreateWorkOrder() {
     var dueDateEl = document.getElementById('woDueDate');
     var dueDate = dueDateEl ? (dueDateEl.value || '').trim() : '';
 
+    // Job→Parts model: every group (incl. Internal, with nested parts)
+    // posts as a job; no top-level loose line_items from this flow.
     var payload = {
         customer_name: customer,
-        line_items: lineItems,
         jobs: jobs
     };
     if (dueDate) payload.due_date = dueDate;

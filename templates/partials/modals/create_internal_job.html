@@ -1,0 +1,29 @@
+<!-- ===== ADD INTERNAL JOB MODAL =====
+     Batch 4. Adds an Internal job (we print it in-house) with one or more
+     NEW parts to an existing work order. Mirrors the create-page Parts
+     sub-list: add/remove part rows (Part Name + Material + Qty), ≥1 part.
+     Submit POSTs {job_type:'Internal', parts:[...]} to
+     /api/workorders/<wo_id>/jobs (see WoDetail.submitInternalJob). The
+     trigger stashes the wo_id on this element's dataset. Part rows are
+     built client-side into #cij-part-rows. -->
+<div class="modal-overlay" id="create-internal-job-modal" data-wo-id="">
+    <div class="modal" style="width: 600px;">
+        <div class="modal-header">
+            <h3>Add Internal Job</h3>
+            <button class="modal-close" onclick="hideModal('create-internal-job-modal')" aria-label="Close"><i data-lucide="x" class="icon icon-sm"></i></button>
+        </div>
+        <div class="modal-body">
+            <p class="muted" style="margin-top:0;">An Internal job we print in-house. Add one or more parts.</p>
+            <div class="cij-parts-head">
+                <span class="form-label" style="margin:0;">Parts</span>
+                <button type="button" class="btn sm" onclick="WoDetail.cijAddPartRow()">+ Add Part</button>
+            </div>
+            <div id="cij-part-rows"></div>
+            <div id="cij-error" class="muted" style="color: var(--err, #c0392b); margin-top: 8px;" hidden></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn ghost" onclick="hideModal('create-internal-job-modal')">Cancel</button>
+            <button type="button" class="btn go" onclick="WoDetail.submitInternalJob()">Create</button>
+        </div>
+    </div>
+</div>

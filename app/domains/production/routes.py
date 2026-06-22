@@ -14,15 +14,23 @@ production_api = Blueprint("production_api", __name__)
 _production_service = None
 _export_service = None
 _farm_manager = None
+_work_order_service = None
 
 
 def register_production_routes(app, production_service, export_service,
-                               farm_manager):
-    """Wire up the production blueprint."""
+                               farm_manager, work_order_service=None):
+    """Wire up the production blueprint.
+
+    ``work_order_service`` is optional so single-domain callers (tests)
+    can register the blueprint without the work-order side; when present
+    it lets a per-part QC write propagate to the job inspection gate.
+    """
     global _production_service, _export_service, _farm_manager
+    global _work_order_service
     _production_service = production_service
     _export_service = export_service
     _farm_manager = farm_manager
+    _work_order_service = work_order_service
     app.register_blueprint(production_api)
 
 
@@ -79,6 +87,17 @@ def api_production_job_update(job_id):
         notes=data.get("notes"),
     )
     if success:
+        # Option (b): a per-part QC write drives the parent job's
+        # inspection gate. The production write above has already
+        # committed to production_log.db; this re-rolls the
+        # work_orders.db side. A propagation failure must not fail the
+        # already-saved QC write, so it's logged, not raised.
+        if _work_order_service is not None:
+            try:
+                _work_order_service.propagate_part_qc(job_id)
+            except Exception as exc:
+                print("[QC PROPAGATE] job_id={} failed: {}".format(
+                    job_id, exc))
         return jsonify({"success": True})
     if error == "outcome must be pass, fail, or unknown":
         return jsonify({"error": error}), 400

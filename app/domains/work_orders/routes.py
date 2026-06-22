@@ -183,14 +183,46 @@ def api_create_work_order():
 
     # Normalize job specs; authoritative per-type validation lives in
     # the service (reused from create_job) and runs before the
-    # transaction opens, so a bad spec creates nothing.
-    jobs = [{
-        "job_type": (spec.get("job_type") or "").strip(),
-        "vendor": _opt_str(spec.get("vendor")),
-        "external_process": _opt_str(spec.get("external_process")),
-        "designer": _opt_str(spec.get("designer")),
-        "requirements": _opt_str(spec.get("requirements")),
-    } for spec in raw_jobs]
+    # transaction opens, so a bad spec creates nothing. Each spec may
+    # carry nested ``parts`` (the Job→Parts model — Internal jobs use
+    # this; External/Design currently send none). Part fields are
+    # validated here with the same rules as top-level line items.
+    jobs = []
+    for j, spec in enumerate(raw_jobs):
+        clean_parts = []
+        for k, li in enumerate(spec.get("parts") or []):
+            if not (li.get("part_name") or "").strip():
+                return jsonify({
+                    "error": "Job {} part {} missing part_name".format(
+                        j + 1, k + 1)
+                }), 400
+            if not (li.get("material") or "").strip():
+                return jsonify({
+                    "error": "Job {} part {} missing material".format(
+                        j + 1, k + 1)
+                }), 400
+            try:
+                qty = int(li.get("quantity", 1))
+                if qty < 1:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                return jsonify({
+                    "error": "Job {} part {} has invalid quantity".format(
+                        j + 1, k + 1)
+                }), 400
+            clean_parts.append({
+                "part_name": li["part_name"].strip(),
+                "material": li["material"].strip(),
+                "quantity": qty,
+            })
+        jobs.append({
+            "job_type": (spec.get("job_type") or "").strip(),
+            "vendor": _opt_str(spec.get("vendor")),
+            "external_process": _opt_str(spec.get("external_process")),
+            "designer": _opt_str(spec.get("designer")),
+            "requirements": _opt_str(spec.get("requirements")),
+            "parts": clean_parts,
+        })
 
     due_date = data.get("due_date")
     if due_date is not None:
@@ -318,6 +350,47 @@ def api_create_work_order_job(wo_id):
     """
     data = request.get_json(silent=True) or {}
     job_type = (data.get("job_type") or "Internal")
+
+    # Batch 4 — add an Internal job with NEW parts to an existing WO
+    # (distinct from the queue_ids assign-only path below, which only
+    # groups pre-existing loose parts). Reuses the batch-3 job+parts
+    # create logic via add_internal_job.
+    if job_type == "Internal" and data.get("parts") is not None:
+        clean_parts = []
+        for k, li in enumerate(data.get("parts") or []):
+            if not (li.get("part_name") or "").strip():
+                return jsonify({
+                    "error": "Part {} missing part_name".format(k + 1)
+                }), 400
+            if not (li.get("material") or "").strip():
+                return jsonify({
+                    "error": "Part {} missing material".format(k + 1)
+                }), 400
+            try:
+                qty = int(li.get("quantity", 1))
+                if qty < 1:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                return jsonify({
+                    "error": "Part {} has invalid quantity".format(k + 1)
+                }), 400
+            clean_parts.append({
+                "part_name": li["part_name"].strip(),
+                "material": li["material"].strip(),
+                "quantity": qty,
+            })
+        try:
+            result = _work_order_service.add_internal_job(wo_id, clean_parts)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify({
+            "success": True,
+            "job_id": result["job_id"],
+            "parts_created": result["parts_created"],
+            "line_item_count": result["line_item_count"],
+        }), 201
 
     queue_ids = []
     if data.get("queue_ids") is not None:

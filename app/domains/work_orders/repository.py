@@ -125,23 +125,27 @@ class WorkOrderRepository:
     # CRUD
     # ------------------------------------------------------------------
 
-    def _insert_wo_and_line_items(self, conn, wo_id: str, customer_name: str,
-                                  line_items: List[dict],
-                                  due_date: Optional[str], now: str) -> int:
-        """Insert the WO row + line items + expanded queue_items.
-
-        Operates on the caller's connection and does NOT commit, so a
-        caller can compose this with other writes (e.g. Phase G's
-        atomic multi-job WO creation) in one transaction. Returns the
-        number of queue_items created. The expansion logic is unchanged
-        from the original ``create_work_order`` body.
-        """
+    def _insert_work_order_row(self, conn, wo_id: str, customer_name: str,
+                               due_date: Optional[str], now: str) -> None:
+        """Insert the work_orders row (status 'open'). No commit."""
         conn.execute("""
             INSERT INTO work_orders
                 (wo_id, customer_name, created_at, status, due_date)
             VALUES (?, ?, ?, 'open', ?)
         """, (wo_id, customer_name, now, due_date))
 
+    def _insert_line_items(self, conn, wo_id: str, customer_name: str,
+                           line_items: List[dict], now: str,
+                           job_id: Optional[int] = None) -> int:
+        """Insert line_items + expanded queue_items for a WO.
+
+        When ``job_id`` is given every queue_item is linked to that job
+        at creation time (the Job→Parts model, so printing adopts the
+        existing job instead of auto-creating one); when None the parts
+        are loose (job_id NULL — the legacy / detail-page assign-later
+        flow). Operates on the caller's connection and does NOT commit.
+        Returns the number of queue_items created.
+        """
         parts_created = 0
         for li in line_items:
             part_name = li["part_name"]
@@ -158,14 +162,29 @@ class WorkOrderRepository:
             for seq in range(1, quantity + 1):
                 conn.execute("""
                     INSERT INTO queue_items
-                        (item_id, wo_id, part_name, material,
+                        (item_id, wo_id, job_id, part_name, material,
                          customer_name, sequence_number, total_quantity,
                          status, queued_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
-                """, (item_id, wo_id, part_name, material,
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                """, (item_id, wo_id, job_id, part_name, material,
                       customer_name, seq, quantity, now))
                 parts_created += 1
         return parts_created
+
+    def _insert_wo_and_line_items(self, conn, wo_id: str, customer_name: str,
+                                  line_items: List[dict],
+                                  due_date: Optional[str], now: str) -> int:
+        """Insert the WO row + loose line items (job_id NULL).
+
+        Composes the row + line-item helpers so a caller can run this in
+        one transaction alongside other writes. Behavior is unchanged
+        from before the split: top-level line items stay loose and are
+        assigned to a job at print time. Returns the queue_items count.
+        """
+        self._insert_work_order_row(conn, wo_id, customer_name, due_date, now)
+        return self._insert_line_items(
+            conn, wo_id, customer_name, line_items, now
+        )
 
     def create_work_order(self, customer_name: str,
                           line_items: List[dict],

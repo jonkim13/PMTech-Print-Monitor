@@ -20,8 +20,8 @@
 
                     <!-- 5-lane grid -->
                     <div class="lanes-grid" id="trigageLanesGrid">
-                        {{ lane('failed', 'Stopped & Failed', 'err') }}
-                        {{ lane('qc', 'Per-Job Inspection', 'info') }}
+                        {{ lane('failed', 'Stopped, Failed & Cancelled', 'err') }}
+                        {{ lane('qc', 'Final Inspection', 'info') }}
                         {{ lane('ready_ship', 'Ready to Ship', 'ok', empty_message='No completed orders awaiting delivery.') }}
                         {{ lane('design_await', 'Design · Awaiting Customer', 'busy', empty_message='No design jobs awaiting approval.') }}
                         {{ lane('external_spool', 'External & Spools', 'warn') }}
@@ -91,7 +91,7 @@
                 <div class="wo-create-form">
                     <div class="wo-create-head">
                         <h3>New Work Order</h3>
-                        <p class="muted wo-create-sub">Create a manufacturing order with one or more jobs.</p>
+                        <p class="muted wo-create-sub">Create a manufacturing order with one or more jobs, each holding one or more parts.</p>
                     </div>
 
                     <div class="wo-create-row">
@@ -113,9 +113,10 @@
                         <button class="btn btn-primary wo-add-job-btn" onclick="addWoJobGroup()">+ Add Job</button>
                     </div>
                     <p class="muted wo-jobs-hint">
-                        Pick a type per job: <strong>Internal</strong> (we print it),
-                        <strong>External</strong> (a vendor makes it), or
-                        <strong>Design</strong> (we design it). Mix freely in one order.
+                        Pick a type per job: <strong>Internal</strong> (we print it —
+                        add one or more parts), <strong>External</strong> (a vendor
+                        makes it), or <strong>Design</strong> (we design it). Mix
+                        freely in one order.
                     </p>
 
                     <div id="woJobGroups">

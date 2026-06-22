@@ -27,7 +27,7 @@
             {% elif is_done and part.production_outcome == 'fail' %}
                 <span class="part-row-qc tone-err">Inspection failed{% if part.production_operator %} by {{ part.production_operator }}{% endif %}</span>
             {% elif is_done %}
-                <span class="part-row-qc tone-warn">Awaiting per-job inspection</span>
+                <span class="part-row-qc tone-warn">Awaiting final inspection</span>
             {% endif %}
         </div>
     </div>

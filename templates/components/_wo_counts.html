@@ -1,6 +1,6 @@
 {# WO counts row + stacked progress bar.
    Reads from wo.counts which has: total, done, printing, queued,
-   failed, pending, in_transit. #}
+   failed, cancelled, pending, in_transit. #}
 {% macro wo_counts(counts) -%}
 {%- set total = counts.total or 0 -%}
 {%- set pct = (counts.done * 100 / total) if total else 0 -%}
@@ -11,6 +11,7 @@
         <span class="wo-count-label wo-count-queued">{{ counts.queued }} QUEUED</span>
         {% if counts.in_transit %}<span class="wo-count-label wo-count-in-transit">{{ counts.in_transit }} EXTERNAL</span>{% endif %}
         <span class="wo-count-label wo-count-failed">{{ counts.failed }} FAILED</span>
+        {% if counts.cancelled %}<span class="wo-count-label wo-count-cancelled">{{ counts.cancelled }} CANCELLED</span>{% endif %}
     </div>
     <div class="wo-stacked-progress">
         {% if total %}
@@ -19,6 +20,7 @@
             <div class="wo-stack-seg warn" style="width:{{ (counts.queued * 100 / total)|round(2) }}%;"></div>
             <div class="wo-stack-seg busy" style="width:{{ (counts.in_transit * 100 / total)|round(2) }}%;"></div>
             <div class="wo-stack-seg err" style="width:{{ (counts.failed * 100 / total)|round(2) }}%;"></div>
+            <div class="wo-stack-seg neutral" style="width:{{ (counts.cancelled * 100 / total)|round(2) }}%;"></div>
         {% endif %}
     </div>
 </div>

@@ -96,6 +96,7 @@
             'wo-count-queued': counts.queued,
             'wo-count-in-transit': counts.in_transit,
             'wo-count-failed': counts.failed,
+            'wo-count-cancelled': counts.cancelled,
         };
         Object.keys(labels).forEach(function (cls) {
             var nodes = document.querySelectorAll('.' + cls);
@@ -106,9 +107,9 @@
         });
         var total = counts.total || 0;
         var segs = document.querySelectorAll('.wo-stack-seg');
-        if (!total || segs.length < 5) return;
+        if (!total || segs.length < 6) return;
         var values = [counts.done, counts.printing, counts.queued,
-                      counts.in_transit, counts.failed];
+                      counts.in_transit, counts.failed, counts.cancelled];
         segs.forEach(function (seg, i) {
             var pct = ((values[i] || 0) * 100 / total).toFixed(2);
             seg.style.width = pct + '%';
@@ -365,9 +366,10 @@
             queued: members.filter(function (qi) { return qi.status === 'queued'; }),
             done: members.filter(function (qi) { return qi.status === 'completed'; }),
             failed: members.filter(function (qi) {
-                return ['failed', 'upload_failed', 'start_failed', 'cancelled']
+                return ['failed', 'upload_failed', 'start_failed']
                     .indexOf(qi.status) !== -1;
             }),
+            cancelled: members.filter(function (qi) { return qi.status === 'cancelled'; }),
         };
         if (byStatus.printing.length) {
             groupsHtml += renderPartGroup('Printing now', 'info', byStatus.printing);
@@ -379,7 +381,10 @@
             groupsHtml += renderPartGroup('Done', 'ok', byStatus.done);
         }
         if (byStatus.failed.length) {
-            groupsHtml += renderPartGroup('Failed / cancelled', 'err', byStatus.failed);
+            groupsHtml += renderPartGroup('Failed', 'err', byStatus.failed);
+        }
+        if (byStatus.cancelled.length) {
+            groupsHtml += renderPartGroup('Cancelled', 'neutral', byStatus.cancelled);
         }
         if (!groupsHtml) {
             groupsHtml = '<div class="part-group-empty">No parts assigned to this job yet.</div>';
@@ -393,7 +398,8 @@
     function renderPartGroup(label, tone, parts) {
         var swatchVar = tone === 'info' ? 'info'
             : tone === 'warn' ? 'warn'
-            : tone === 'ok' ? 'ok' : 'err';
+            : tone === 'ok' ? 'ok'
+            : tone === 'neutral' ? 'neutral' : 'err';
         var head = '<div class="part-group-head">' +
             '<span class="part-group-swatch" style="background:var(--' + swatchVar + ');"></span>' +
             '<span class="k tone-' + swatchVar + '">' + escapeHtml(label) + '</span>' +
@@ -424,7 +430,7 @@
             qcLine = '<span class="part-row-qc tone-err">Inspection failed' +
                 (part.production_operator ? ' by ' + escapeHtml(part.production_operator) : '') + '</span>';
         } else if (isDone) {
-            qcLine = '<span class="part-row-qc tone-warn">Awaiting per-job inspection</span>';
+            qcLine = '<span class="part-row-qc tone-warn">Awaiting final inspection</span>';
         }
 
         var actions = '';

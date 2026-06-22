@@ -1,8 +1,8 @@
 """TriageService — composes the aggregated /api/triage payload.
 
 5 lanes per the v2 design handoff (README §3):
-    1. Stopped & Failed       — queue_items in failure/cancelled states
-    2. Per-Job Inspection     — print_jobs awaiting QC (outcome='unknown')
+    1. Stopped, Failed & Cancelled — queue_items in failure/cancelled states
+    2. Final Inspection       — print_jobs awaiting QC (outcome='unknown')
     3. Ready to Ship          — WOs 'completed' (gates cleared) not yet
                                 'delivered' (Phase F delivery-eligible)
     4. Design · Awaiting Customer — Design jobs done but unapproved
@@ -127,7 +127,7 @@ class TriageService:
 
         return {
             "kind": "failed",
-            "label": "Stopped & Failed",
+            "label": "Stopped, Failed & Cancelled",
             "tone": "err",
             "count": len(items),
             "items": items,
@@ -142,19 +142,19 @@ class TriageService:
         }.get(status, "Failed")
 
     # ------------------------------------------------------------------
-    # Lane 2 — Per-Job Inspection (Internal subset only — Phase B adds
+    # Lane 2 — Final Inspection (Internal subset only — Phase B adds
     # external-incoming)
     # ------------------------------------------------------------------
 
     def _lane_qc(self) -> Dict[str, Any]:
         if not self.print_job_repository:
-            return self._empty_lane("qc", "Per-Job Inspection", "info")
+            return self._empty_lane("qc", "Final Inspection", "info")
         try:
             jobs = self.print_job_repository.get_jobs(
                 status="completed", outcome="unknown", limit=10000,
             )
         except Exception:
-            return self._empty_lane("qc", "Per-Job Inspection", "info")
+            return self._empty_lane("qc", "Final Inspection", "info")
 
         # Cross-DB linkage: print_jobs.job_id → queue_items.print_job_id →
         # wo_id + part_name. Batch the lookup so we don't open the WO DB
@@ -196,7 +196,7 @@ class TriageService:
         # shipments) goes here too.
         return {
             "kind": "qc",
-            "label": "Per-Job Inspection",
+            "label": "Final Inspection",
             "tone": "info",
             "count": len(items),
             "items": items,

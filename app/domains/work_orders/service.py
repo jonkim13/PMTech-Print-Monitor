@@ -79,13 +79,16 @@ class WorkOrderService:
         conn = self.work_order_repository._get_conn()
         try:
             wo_id = self.work_order_repository._next_wo_id(conn)
+            # WO row + any top-level (loose) line items, exactly as
+            # before: job_id NULL, assigned to a job at print time.
             parts_created = (
                 self.work_order_repository._insert_wo_and_line_items(
                     conn, wo_id, customer_name, line_items, due_date, now
                 )
             )
+            line_items_created = len(line_items)
             for spec in jobs:
-                self.job_repository._create_job_row(
+                job_id = self.job_repository._create_job_row(
                     conn, wo_id,
                     job_type=spec.get("job_type"),
                     vendor=spec.get("vendor"),
@@ -93,6 +96,21 @@ class WorkOrderService:
                     requirements=spec.get("requirements"),
                     designer=spec.get("designer"),
                 )
+                # Job→Parts model: a job's parts are linked to it at
+                # creation time, so the print path adopts this existing
+                # job rather than auto-creating a second jobs row.
+                spec_parts = spec.get("parts") or []
+                if spec_parts:
+                    parts_created += (
+                        self.work_order_repository._insert_line_items(
+                            conn, wo_id, customer_name, spec_parts, now,
+                            job_id=job_id,
+                        )
+                    )
+                    line_items_created += len(spec_parts)
+                    status_sync.sync_job_status(conn, job_id)
+            # Single source of rollup truth — never hand-set WO status.
+            status_sync.sync_work_order_status(conn, wo_id)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -107,7 +125,7 @@ class WorkOrderService:
             "created_at": now,
             "due_date": due_date,
             "parts_created": parts_created,
-            "line_item_count": len(line_items),
+            "line_item_count": line_items_created,
             "job_count": len(jobs),
         }
 
@@ -254,8 +272,8 @@ class WorkOrderService:
     def _attach_normalized_counts(self, wo: dict) -> None:
         """Emit the design's `counts` block for the stacked progress bar.
 
-        Keys: total, done, printing, queued, failed, pending, in_transit.
-        Sourced from queue_items statuses + production_outcome.
+        Keys: total, done, printing, queued, failed, cancelled, pending,
+        in_transit. Sourced from queue_items statuses + production_outcome.
         """
         queue_items = wo.get("queue_items") or []
         counts = {
@@ -264,6 +282,7 @@ class WorkOrderService:
             "printing": 0,
             "queued": 0,
             "failed": 0,
+            "cancelled": 0,  # not a failure — surfaced separately
             "pending": 0,    # completed but outcome=unknown (awaiting QC)
             "in_transit": 0,  # Phase B (External jobs)
         }
@@ -277,8 +296,9 @@ class WorkOrderService:
                 counts["printing"] += 1
             elif status == "queued":
                 counts["queued"] += 1
-            elif status in ("failed", "upload_failed", "start_failed",
-                            "cancelled"):
+            elif status == "cancelled":
+                counts["cancelled"] += 1
+            elif status in ("failed", "upload_failed", "start_failed"):
                 counts["failed"] += 1
         wo["counts"] = counts
 
@@ -596,6 +616,59 @@ class WorkOrderService:
             designer=designer,
         )
 
+    def add_internal_job(self, wo_id: str, parts: list) -> dict:
+        """Add an Internal job with one or more NEW parts to an existing WO.
+
+        Mirrors the batch-3 create path but targets an existing wo_id:
+        creates one Internal jobs row, inserts its parts (line_items →
+        queue_items linked to the new job_id) by reusing the same
+        ``_insert_line_items`` helper, then re-rolls job + WO status via
+        status_sync. Distinct from ``create_job``, which only ASSIGNS
+        pre-existing loose parts and creates none.
+
+        Adding fresh queued work can correctly move a 'completed' WO back
+        to 'in_progress'; a 'delivered' WO is left terminal by
+        sync_work_order_status's delivered guard (never reopened here).
+
+        Returns {job_id, parts_created, line_item_count}.
+        """
+        parts = parts or []
+        if not parts:
+            raise ValueError("An Internal job needs at least one part")
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self.work_order_repository._get_conn()
+        try:
+            wo = conn.execute(
+                "SELECT customer_name FROM work_orders WHERE wo_id = ?",
+                (wo_id,),
+            ).fetchone()
+            if wo is None:
+                raise LookupError("Work order not found")
+            customer_name = wo["customer_name"]
+
+            job_id = self.job_repository._create_job_row(
+                conn, wo_id, job_type="Internal",
+            )
+            parts_created = self.work_order_repository._insert_line_items(
+                conn, wo_id, customer_name, parts, now, job_id=job_id,
+            )
+            status_sync.sync_job_status(conn, job_id)
+            status_sync.sync_work_order_status(
+                conn, wo_id, quality_repository=self.quality_repository,
+            )
+            conn.commit()
+            return {
+                "job_id": job_id,
+                "parts_created": parts_created,
+                "line_item_count": len(parts),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _require_job_type(self, job_id: int, expected_type: str) -> dict:
         """Look up a job and assert its job_type. Raises for mismatches."""
         job = self.job_repository.get_job(job_id)
@@ -732,6 +805,125 @@ class WorkOrderService:
             raise
         finally:
             conn.close()
+
+    def propagate_part_qc(self, print_job_id: int) -> Optional[dict]:
+        """Option (b): a per-part QC write drives the job inspection gate.
+
+        Per-part QC outcomes live in production_log.db
+        (``print_jobs.outcome``), keyed by ``print_job_id``. Each
+        ``queue_items`` row in work_orders.db carries that
+        ``print_job_id`` plus its owning ``job_id``, so we resolve the
+        parent job WITHOUT a cross-DB join, recompute the job's gate from
+        every part's outcome, and — only when the gate actually changes —
+        re-roll job + WO status through the existing status_sync helpers
+        (the single source of rollup truth). The production write has
+        already committed to its own DB before this runs; this is the
+        separate work_orders.db step.
+
+        There is no separate job sign-off under option (b): when every
+        part of an Internal job has passed QC the gate flips to 'pass'
+        automatically; any failed part flips it to 'fail'. Design and
+        External jobs keep their own flows (record_inspection) and are
+        left untouched.
+
+        Returns the updated job row, or None when there is no linked
+        parent Internal job or the recomputed gate is unchanged.
+        """
+        if not print_job_id or not self.production_job_repository:
+            return None
+        conn = self.job_repository._get_conn()
+        try:
+            owner = conn.execute(
+                "SELECT job_id, wo_id FROM queue_items "
+                "WHERE print_job_id = ?",
+                (print_job_id,),
+            ).fetchone()
+            if owner is None or owner["job_id"] is None:
+                return None
+            job_id = owner["job_id"]
+            wo_id = owner["wo_id"]
+
+            job_row = conn.execute(
+                "SELECT job_type, inspection_outcome FROM jobs "
+                "WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if job_row is None:
+                return None
+            # The parts-driven gate is an Internal-job concept; External
+            # gates come from record_inspection and Design skips QC.
+            if (job_row["job_type"] or "Internal") != "Internal":
+                return None
+
+            parts = conn.execute(
+                "SELECT status, print_job_id FROM queue_items "
+                "WHERE job_id = ?",
+                (job_id,),
+            ).fetchall()
+            new_outcome = self._derive_part_driven_gate(parts)
+            current = job_row["inspection_outcome"] or "pending"
+            if new_outcome == current:
+                return None
+
+            # Single transaction: gate write + both rollups commit
+            # together, mirroring record_inspection's machinery.
+            conn.execute(
+                "UPDATE jobs SET inspection_outcome = ? WHERE job_id = ?",
+                (new_outcome, job_id),
+            )
+            status_sync.sync_job_status(conn, job_id)
+            status_sync.sync_work_order_status(
+                conn, wo_id, quality_repository=self.quality_repository,
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _derive_part_driven_gate(self, parts) -> str:
+        """Map an Internal job's parts' QC outcomes to its gate value.
+
+        Option (b) rule — inspection is per part, only completed parts
+        carry a verdict, and cancelled parts are excluded (the queue
+        rollup ignores them too, see derive_job_status):
+
+            - any completed part failed QC               → 'fail'
+            - every part done AND every one passed QC    → 'pass'
+            - otherwise (a part unprinted or uninspected)→ 'pending'
+
+        Requiring every part done before 'pass' keeps the gate from going
+        stale: a job can't read 'pass' while a part is still printing or
+        still awaiting QC. The per-part outcome is a cross-DB read of
+        production_log.db via the production job repository.
+        """
+        considered = [p for p in parts if p["status"] != "cancelled"]
+        if not considered:
+            return "pending"
+
+        def outcome_of(part):
+            if part["status"] != "completed":
+                return None
+            pjid = part["print_job_id"]
+            if not pjid:
+                return None
+            try:
+                pj = self.production_job_repository.get_job(pjid)
+            except Exception:
+                pj = None
+            return pj.get("outcome") if pj else None
+
+        outcomes = [outcome_of(p) for p in considered]
+        if any(o == "fail" for o in outcomes):
+            return "fail"
+        if all(o == "pass" for o in outcomes):
+            return "pass"
+        return "pending"
 
     def mark_delivered(self, wo_id: str, delivered_at: Optional[str] = None,
                        received_by: Optional[str] = None,

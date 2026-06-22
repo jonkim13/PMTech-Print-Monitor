@@ -121,6 +121,7 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
         container.production_service,
         container.export_service,
         container.farm_manager,
+        work_order_service=container.work_order_service,
     )
     register_work_order_routes(
         app,

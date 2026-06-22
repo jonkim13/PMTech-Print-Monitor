@@ -153,6 +153,35 @@ class WoDetailExtendedPayloadTests(unittest.TestCase):
         # design's stacked bar.
         self.assertEqual(wo["counts"]["printing"], 2)
 
+    def test_cancelled_parts_not_counted_as_failed(self):
+        # CONTRACT (the actual fix): cancellation is not a failure. A WO
+        # whose only non-completed parts are 'cancelled' must report
+        # counts["failed"] == 0, and counts["cancelled"] must equal the
+        # cancelled part count. Pins the bug regardless of how it surfaces.
+        self.fx.set_queue_item(self.queue_ids[0], status="cancelled")
+        self.fx.set_queue_item(self.queue_ids[1], status="cancelled")
+        # queue_ids[2] stays 'queued'
+
+        c = self.fx.service.get_work_order(self.wo_id)["counts"]
+        self.assertEqual(c["failed"], 0)
+        self.assertEqual(c["cancelled"], 2)
+
+    def test_failed_and_cancelled_are_distinct_buckets(self):
+        # WITNESS (specific manifestation): the count dict carries a
+        # distinct 'cancelled' key; real failures stay in 'failed' while
+        # cancellations land in 'cancelled'. A correct fix may change this
+        # witness (e.g. a different key name) without breaking the contract.
+        self.fx.set_queue_item(self.queue_ids[0], status="failed")
+        self.fx.set_queue_item(self.queue_ids[1], status="cancelled")
+        # queue_ids[2] stays 'queued'
+
+        c = self.fx.service.get_work_order(self.wo_id)["counts"]
+        self.assertIn("cancelled", c)
+        self.assertEqual(c["failed"], 1)
+        self.assertEqual(c["cancelled"], 1)
+        self.assertEqual(c["queued"], 1)
+        self.assertEqual(c["total"], 3)
+
     def test_inspection_summary_for_internal_job(self):
         # Create a job spanning all 3 queue items, then mark 2 done
         # with QC pass/fail and one still printing.

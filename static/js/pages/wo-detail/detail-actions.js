@@ -392,6 +392,153 @@
         }
     };
 
+    // ------------------------------------------------------------
+    // Batch 4 — Add Internal Job modal. Mirrors the non-Internal
+    // modal structure but collects a Parts sub-list (add/remove part
+    // rows, ≥1) and POSTs {job_type:'Internal', parts:[...]} to
+    // /api/workorders/<wo_id>/jobs. The wo_id is stashed on the
+    // modal's dataset (same pattern as the non-Internal modal).
+    // ------------------------------------------------------------
+
+    function _cijSetError(message) {
+        var box = document.getElementById('cij-error');
+        if (!box) return;
+        if (message) {
+            box.textContent = message;
+            box.hidden = false;
+        } else {
+            box.textContent = '';
+            box.hidden = true;
+        }
+    }
+
+    function _cijPartRowHtml() {
+        return '' +
+            '<div class="cij-part-row">' +
+            '<div class="form-group" style="flex:2 1 200px;">' +
+            '<label class="form-label">Part Name</label>' +
+            '<input type="text" class="form-input cij-part-name" placeholder="e.g. Widget Bracket">' +
+            '</div>' +
+            '<div class="form-group" style="flex:1 1 140px;">' +
+            '<label class="form-label">Material</label>' +
+            '<select class="form-input cij-material"><option value="">Select...</option></select>' +
+            '</div>' +
+            '<div class="form-group" style="flex:0 0 auto;">' +
+            '<label class="form-label">Qty</label>' +
+            '<div class="wo-qty-stepper">' +
+            '<button type="button" class="wo-qty-btn wo-qty-btn-minus" onclick="WoDetail.cijQtyStep(this, -1)" aria-label="Decrease quantity">−</button>' +
+            '<input type="number" class="wo-qty-value cij-quantity" min="1" value="1" readonly>' +
+            '<button type="button" class="wo-qty-btn wo-qty-btn-plus" onclick="WoDetail.cijQtyStep(this, 1)" aria-label="Increase quantity">+</button>' +
+            '</div>' +
+            '</div>' +
+            '<button type="button" class="btn sm danger cij-part-remove" onclick="WoDetail.cijRemovePartRow(this)" aria-label="Remove part"><i data-lucide="x" class="icon icon-sm"></i></button>' +
+            '</div>';
+    }
+
+    async function _cijLoadMaterials(selectEl) {
+        if (!selectEl) return;
+        try {
+            var options = await apiGet('/api/inventory/options');
+            var materials = options.materials || [];
+            selectEl.innerHTML = '<option value="">Select...</option>' +
+                materials.map(function (m) {
+                    return '<option value="' + escapeHtml(m) + '">' +
+                        escapeHtml(m) + '</option>';
+                }).join('');
+        } catch (e) {
+            selectEl.innerHTML = '<option value="">Error</option>';
+        }
+    }
+
+    W.cijQtyStep = function (btn, delta) {
+        var input = btn.parentNode.querySelector('.cij-quantity');
+        if (!input) return;
+        var v = (parseInt(input.value, 10) || 1) + delta;
+        if (v < 1) v = 1;
+        input.value = v;
+    };
+
+    W.cijAddPartRow = function () {
+        var rows = document.getElementById('cij-part-rows');
+        if (!rows) return;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = _cijPartRowHtml();
+        var row = tmp.firstChild;
+        rows.appendChild(row);
+        refreshIcons(row);
+        _cijLoadMaterials(row.querySelector('.cij-material'));
+    };
+
+    W.cijRemovePartRow = function (btn) {
+        var rows = document.getElementById('cij-part-rows');
+        var row = btn.closest('.cij-part-row');
+        if (!rows || !row) return;
+        if (rows.querySelectorAll('.cij-part-row').length <= 1) return;
+        row.remove();
+    };
+
+    W.openInternalJobModal = function (woIdArg) {
+        var modal = document.getElementById('create-internal-job-modal');
+        if (!modal) {
+            showToast('Add-Internal-Job modal unavailable', 'error');
+            return;
+        }
+        modal.dataset.woId = woIdArg || '';
+        var rows = document.getElementById('cij-part-rows');
+        if (rows) rows.innerHTML = '';
+        _cijSetError('');
+        W.cijAddPartRow();  // start with one part row
+        showModal('create-internal-job-modal');
+    };
+
+    W.submitInternalJob = async function () {
+        var modal = document.getElementById('create-internal-job-modal');
+        if (!modal) return;
+        var woIdArg = modal.dataset.woId || '';
+        if (!woIdArg) {
+            _cijSetError('Missing work order id.');
+            return;
+        }
+
+        var parts = [];
+        var bad = false;
+        document.querySelectorAll('#cij-part-rows .cij-part-row')
+            .forEach(function (row) {
+                if (bad) return;
+                var partName = (row.querySelector('.cij-part-name').value || '').trim();
+                var material = row.querySelector('.cij-material').value;
+                var quantity = parseInt(row.querySelector('.cij-quantity').value, 10) || 0;
+                if (!partName || !material || quantity < 1) {
+                    bad = true;
+                    return;
+                }
+                parts.push({ part_name: partName, material: material, quantity: quantity });
+            });
+        if (bad) {
+            _cijSetError('Fill in Part Name, Material, and Qty for every part.');
+            return;
+        }
+        if (parts.length === 0) {
+            _cijSetError('Add at least one part.');
+            return;
+        }
+
+        _cijSetError('');
+        try {
+            var result = await apiPost(
+                '/api/workorders/' + encodeURIComponent(woIdArg) + '/jobs',
+                { job_type: 'Internal', parts: parts }
+            );
+            showToast('Internal job #' + (result.job_id || '?') + ' added — ' +
+                (result.parts_created || parts.length) + ' part' +
+                ((result.parts_created || parts.length) === 1 ? '' : 's') + ' queued');
+            hideModal('create-internal-job-modal');
+            poll();
+        } catch (e) {
+            _cijSetError(e.message || 'Request failed');
+        }
+    };
+
     // Wire the type-select change handler once. The dialog markup is
     // server-rendered on page load (via {% include %} in
     // wo_detail.html), so we just need to wait until the DOM is

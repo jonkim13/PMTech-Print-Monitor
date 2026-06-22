@@ -433,7 +433,7 @@ class DashboardService:
         return {
             "kind": "qc",
             "count": len(jobs),
-            "label": "AWAITING PER-JOB INSPECTION · {}".format(len(jobs)),
+            "label": "AWAITING FINAL INSPECTION · {}".format(len(jobs)),
             "title": "{}".format(first.get("file_display_name") or first.get("file_name") or "Part"),
             "sub": " · ".join(sub_bits) if sub_bits else None,
             "items": [

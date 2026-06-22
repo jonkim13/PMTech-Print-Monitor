@@ -940,6 +940,7 @@ h1, h2, h3, h4 { margin: 0; }
 :where(#page-wo-detail) .wo-count-queued     { color: var(--warn); }
 :where(#page-wo-detail) .wo-count-in-transit { color: var(--busy); }
 :where(#page-wo-detail) .wo-count-failed     { color: var(--err); }
+:where(#page-wo-detail) .wo-count-cancelled  { color: var(--neutral); }
 :where(#page-wo-detail) .wo-stacked-progress {
   display: flex; height: 8px;
   border-radius: 4px; overflow: hidden;
@@ -952,6 +953,7 @@ h1, h2, h3, h4 { margin: 0; }
 :where(#page-wo-detail) .wo-stack-seg.warn  { background: var(--warn); }
 :where(#page-wo-detail) .wo-stack-seg.busy  { background: var(--busy); }
 :where(#page-wo-detail) .wo-stack-seg.err   { background: var(--err); }
+:where(#page-wo-detail) .wo-stack-seg.neutral { background: var(--neutral); }
 
 /* Phase tracker */
 :where(#page-wo-detail) .phase-tracker { margin-bottom: 18px; }
@@ -1100,6 +1102,7 @@ h1, h2, h3, h4 { margin: 0; }
 :where(#page-wo-detail) .part-group-head .k.tone-warn { color: var(--warn); }
 :where(#page-wo-detail) .part-group-head .k.tone-ok   { color: var(--ok); }
 :where(#page-wo-detail) .part-group-head .k.tone-err  { color: var(--err); }
+:where(#page-wo-detail) .part-group-head .k.tone-neutral { color: var(--neutral); }
 :where(#page-wo-detail) .part-group-swatch {
   width: 6px; height: 6px; border-radius: 3px;
 }

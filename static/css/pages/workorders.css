@@ -217,6 +217,49 @@
 }
 .wo-job-fields .form-group { margin-bottom: 0; }
 
+/* Internal job → Parts sub-list (one or more part rows under the job) */
+.wo-parts { flex: 1 1 100%; display: flex; flex-direction: column; gap: 10px; }
+.wo-parts-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.wo-parts-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.wo-add-part-btn { font-size: 12px; padding: 5px 12px; }
+.wo-part-rows { display: flex; flex-direction: column; gap: 10px; }
+.wo-part-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+}
+.wo-part-row .form-group { margin-bottom: 0; }
+.wo-part-remove { margin-left: auto; align-self: flex-end; }
+
+/* Batch 4 — Add Internal Job modal Parts sub-list (mirrors .wo-part-row;
+   reuses the .wo-qty-stepper styles above) */
+.cij-parts-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.cij-part-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.cij-part-row .form-group { margin-bottom: 0; }
+.cij-part-remove { align-self: flex-end; }
+
 /* Qty stepper (Internal only) — submits the same integer quantity */
 .wo-qty-stepper { display: flex; align-items: stretch; height: 35px; }
 .wo-qty-btn {

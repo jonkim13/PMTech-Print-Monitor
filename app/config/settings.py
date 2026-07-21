@@ -43,6 +43,7 @@ class AppSettings:
         """Create the runtime directories expected during startup."""
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.gcode_uploads_dir, exist_ok=True)
+        os.makedirs(self.engraving_dir, exist_ok=True)
 
     @property
     def static_dir(self) -> str:
@@ -103,6 +104,44 @@ class AppSettings:
     @property
     def max_content_length(self) -> int:
         return 500 * 1024 * 1024
+
+    # ------------------------------------------------------------------
+    # Custom Engraving (Phase E-2)
+    # ------------------------------------------------------------------
+
+    @property
+    def engraving_dir(self) -> str:
+        return os.path.join(self.data_dir, "engraving")
+
+    @property
+    def _engraving_config(self) -> dict:
+        cfg = self.config.get("engraving")
+        return cfg if isinstance(cfg, dict) else {}
+
+    @property
+    def engraving_generation_timeout_sec(self) -> int:
+        return int(self._engraving_config.get("generation_timeout_sec", 300))
+
+    @property
+    def engraving_min_quantity(self) -> int:
+        return int(self._engraving_config.get("min_quantity", 1))
+
+    @property
+    def engraving_max_quantity(self) -> int:
+        return int(self._engraving_config.get("max_quantity", 50))
+
+    @property
+    def engraving_min_dimension_px(self) -> int:
+        return int(self._engraving_config.get("min_dimension_px", 64))
+
+    @property
+    def engraving_max_dimension_px(self) -> int:
+        return int(self._engraving_config.get("max_dimension_px", 5000))
+
+    @property
+    def engraving_products(self) -> dict:
+        products = self._engraving_config.get("products")
+        return products if isinstance(products, dict) else {}
 
 
 def load_settings(base_dir: str = None) -> AppSettings:

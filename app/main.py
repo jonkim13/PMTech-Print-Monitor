@@ -12,6 +12,7 @@ from .config.settings import AppSettings, load_settings
 from .domains.assignments.routes import register_assignments_routes
 from .domains.dashboard.routes import register_dashboard_routes
 from .domains.drone.routes import register_drone_routes
+from .domains.engraving.routes import register_engraving_routes
 from .domains.inventory.routes import register_inventory_routes
 from .domains.monitoring.routes import register_monitoring_routes
 from .domains.printers.routes import register_printers_routes
@@ -69,6 +70,9 @@ def _get_runtime_container(settings: AppSettings = None) -> AppContainer:
                 active_settings.work_order_db_path
             ).ensure_schema_version_table()
             _runtime_container = build_container(active_settings)
+            # Any engraving request still 'generating' at boot was
+            # stranded by a restart (generation state is in-memory only).
+            _runtime_container.engraving_service.sweep_stale_generating()
         return _runtime_container
 
 
@@ -134,6 +138,9 @@ def _register_blueprints(app: Flask, container: AppContainer) -> None:
     )
     register_quality_routes(app, container.quality_service)
     register_reports_routes(app, container.weekly_report_service)
+    register_engraving_routes(
+        app, container.engraving_service, container.settings,
+    )
 
 
 def _register_core_routes(app: Flask, container: AppContainer) -> None:

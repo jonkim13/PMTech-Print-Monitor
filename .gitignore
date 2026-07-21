@@ -34,6 +34,13 @@ WORKORDER_AUDIT.md
 docs/
 smoke-test-*.md
 
+# Generated engraving output (runtime artifacts; templates/ STLs are committed assets)
+mold_*.stl
+prod_*.stl
+
+# Custom Engraving uploads + generated artifacts (Phase E-2, runtime only)
+data/engraving/
+
 # SQLite WAL sidecars
 data/*.db-shm
 data/*.db-wal

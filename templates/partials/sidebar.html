@@ -44,6 +44,11 @@
                 '<i data-lucide="history" class="icon icon-md"></i>') }}
             {{ _side_item('weekly-log', 'Weekly Log',
                 '<i data-lucide="calendar-days" class="icon icon-md"></i>') }}
+            {# Custom Engraving is a standalone page, always a real link. #}
+            <a class="side-item{% if (active_sidebar_page | default('')) == 'engraving' %} active{% endif %}" href="/engraving/new">
+                <span class="ico"><i data-lucide="stamp" class="icon icon-md"></i></span>
+                <span style="flex:1;">Custom Engraving</span>
+            </a>
         </nav>
         <div class="side-foot">
             <span style="opacity:.65;">v0.4.2</span>

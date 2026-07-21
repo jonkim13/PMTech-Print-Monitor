@@ -58,3 +58,24 @@ drone:
   enabled: false
   auto_dispatch: false
   cooldown_sec: 300
+
+# ============================================================
+# Custom Engraving (Phase E-2)
+# Internal image -> engraved coaster STL generation.
+# ============================================================
+engraving:
+  # Seconds a single background generation may run before the request
+  # is marked failed with a timeout message.
+  generation_timeout_sec: 300
+  # Allowed quantity range for a custom-engraving work order.
+  min_quantity: 1
+  max_quantity: 50
+  # Reject images outside these pixel bounds at upload time.
+  min_dimension_px: 64
+  max_dimension_px: 5000
+  # Per-product defaults. product_key -> {display_name, material}.
+  # Only Coaster_100mm_Square is enabled in the UI for now.
+  products:
+    Coaster_100mm_Square:
+      display_name: "Custom Engraved Coaster (100mm Square)"
+      material: "PLA"

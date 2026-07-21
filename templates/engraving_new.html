@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="app-layout">
+
+{% include "partials/sidebar.html" %}
+
+    <main class="main">
+
+{% include "partials/topbar.html" %}
+
+        <div class="content">
+            <section id="page-engraving-new" class="wo-detail-page">
+
+                <!-- Breadcrumb row -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                    <a href="/" class="muted" style="text-decoration:none;">Dashboard</a>
+                    <span class="muted">/</span>
+                    <span>Custom Engraving</span>
+                </div>
+
+                <div style="max-width:640px;">
+                    <h1 style="margin:0 0 4px 0;">Custom Engraving</h1>
+                    <p class="muted" style="margin:0 0 20px 0;">
+                        Upload an image to generate an engraved coaster. Submitting
+                        creates a work order immediately and starts generation in the
+                        background — you'll land on the work order to watch it finish.
+                    </p>
+
+                    {% if error %}
+                    <div class="card card-pad" style="border-color:var(--danger,#c0392b);color:var(--danger,#c0392b);margin-bottom:16px;">
+                        {{ error }}
+                    </div>
+                    {% endif %}
+
+                    <form class="card card-pad" method="POST" action="/engraving"
+                          enctype="multipart/form-data"
+                          style="display:flex;flex-direction:column;gap:16px;">
+
+                        <label style="display:flex;flex-direction:column;gap:6px;">
+                            <span class="k">Product</span>
+                            <select name="product_key" required class="input">
+                                {% for key, display_name in products %}
+                                <option value="{{ key }}"
+                                    {% if form.product_key == key %}selected{% endif %}>
+                                    {{ display_name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </label>
+
+                        <label style="display:flex;flex-direction:column;gap:6px;">
+                            <span class="k">Image (PNG or JPG)</span>
+                            <input type="file" name="image" accept="image/png,image/jpeg" required class="input">
+                        </label>
+
+                        <label style="display:flex;flex-direction:column;gap:6px;">
+                            <span class="k">Quantity</span>
+                            <input type="number" name="quantity"
+                                   min="{{ min_quantity }}" max="{{ max_quantity }}"
+                                   value="{{ form.quantity or 1 }}" required class="input"
+                                   style="max-width:140px;">
+                            <span class="muted" style="font-size:12px;">
+                                Between {{ min_quantity }} and {{ max_quantity }}.
+                            </span>
+                        </label>
+
+                        <label style="display:flex;flex-direction:column;gap:6px;">
+                            <span class="k">Customer name</span>
+                            <input type="text" name="customer_name"
+                                   value="{{ form.customer_name or '' }}" required class="input">
+                        </label>
+
+                        <div style="display:flex;gap:8px;">
+                            <button type="submit" class="btn primary">
+                                <i data-lucide="stamp" class="icon icon-sm"></i>
+                                Create work order &amp; generate
+                            </button>
+                            <a href="/" class="btn ghost">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+
+            </section>
+        </div>
+    </main>
+</div>
+{% endblock %}

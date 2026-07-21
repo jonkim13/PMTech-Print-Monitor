@@ -32,6 +32,8 @@ from ..domains.quality.service import QualityService
 from ..domains.dashboard.service import DashboardService
 from ..domains.triage.service import TriageService
 from ..domains.reports.weekly_service import WeeklyReportService
+from ..domains.engraving.repository import EngravingRepository
+from ..domains.engraving.service import EngravingService
 
 from .settings import AppSettings, load_settings
 
@@ -69,6 +71,8 @@ class AppContainer:
     weekly_report_service: WeeklyReportService
     dashboard_service: DashboardService
     triage_service: TriageService
+    engraving_repository: EngravingRepository
+    engraving_service: EngravingService
 
     @property
     def upload_session_db(self) -> UploadSessionRepository:
@@ -224,6 +228,12 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         farm_manager=farm_manager,
         work_order_db_path=settings.work_order_db_path,
     )
+    engraving_repository = EngravingRepository(settings.work_order_db_path)
+    engraving_service = EngravingService(
+        repository=engraving_repository,
+        work_order_service=work_order_service,
+        settings=settings,
+    )
 
     return AppContainer(
         settings=settings,
@@ -255,4 +265,6 @@ def build_container(settings: AppSettings = None) -> AppContainer:
         weekly_report_service=weekly_report_service,
         dashboard_service=dashboard_service,
         triage_service=triage_service,
+        engraving_repository=engraving_repository,
+        engraving_service=engraving_service,
     )

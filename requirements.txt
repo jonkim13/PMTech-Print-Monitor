@@ -3,3 +3,13 @@ flask-cors==5.0.1
 pyyaml==6.0.2
 python-dotenv==1.1.0
 requests==2.32.3
+
+# Vendored engraving library (app/domains/engraving/vendored). New as of
+# 2026-07-21 — requires `pip install` on the Pi before the next deploy.
+opencv-python-headless==5.0.0.93
+numpy==2.5.1
+pillow==12.3.0
+# Preview rendering (render.py): matplotlib Agg + trimesh decimation backend.
+matplotlib==3.11.0
+trimesh==4.12.2
+fast-simplification==0.1.13

@@ -122,6 +122,14 @@
                             {% endif %}
                         </div>
 
+                        <!-- Custom Engraving (Phase E-2). Hidden until engraving.js
+                             fetches /api/work-orders/<wo_id>/engraving; only WOs
+                             created via Custom Engraving have a record. -->
+                        <div id="wo-engraving-card" class="card card-pad" style="display:none;">
+                            <div class="k" style="margin-bottom:10px;">Custom Engraving</div>
+                            <div id="wo-engraving-body"><!-- populated by engraving.js --></div>
+                        </div>
+
                         <!-- Sticky selection toolbar (hidden until parts are checked) -->
                         <div id="wo-selection-toolbar" class="wo-selection-toolbar" style="display:none;">
                             <span class="selection-count" id="wo-selection-count">0 parts selected</span>

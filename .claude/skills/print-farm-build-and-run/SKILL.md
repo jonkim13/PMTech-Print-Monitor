@@ -101,13 +101,16 @@ venv, created by `deploy/install.sh` — unrelated to the stale Mac venv).
 ## Document landscape — trust in this order
 
 1. **Code + tests** — ground truth.
-2. `docs/` (gitignored, Mac-local): `docs/audit/*` (per-domain audits,
+2. Session summaries, RESULTS files, and diagnostic writeups belong in
+   `docs/notes/` (**committed**) — write them there, not at the repo root. It
+   travels with the repo, so it is readable from the Pi or any clone.
+3. `docs/` otherwise (gitignored, Mac-local): `docs/audit/*` (per-domain audits,
    corrections-swept 2026-05-22), `docs/audit/stuck-printing-diagnosis.md`,
    `docs/investigations/filament-grams.md`, `scripts/migrations/README.md`
    (committed, authoritative for migrations). Good but can drift.
-3. `README.md` — committed but stale (describes the original
+4. `README.md` — committed but stale (describes the original
    monitoring-only scope; wrong quick start).
-4. Root `PROJECT_MEMORY.md`, `CODEBASE_AUDIT.md`, `REFACTOR_PLAN.md`,
+5. Root `PROJECT_MEMORY.md`, `CODEBASE_AUDIT.md`, `REFACTOR_PLAN.md`,
    `WORKORDER_AUDIT.md` — **historical**, describe the pre-refactor flat
    layout. Do not use as current reference.
 

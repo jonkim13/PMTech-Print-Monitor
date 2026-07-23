@@ -30,8 +30,11 @@ data/*.db
 data/*.db.bak
 WORKORDER_AUDIT.md
 
-# Local-only audit and notes
-docs/
+# Local-only audit and notes. docs/notes/ is the exception: session summaries,
+# RESULTS files and diagnostic writeups are committed so they travel with the
+# repo. Everything else under docs/ (audit/, investigations/, ...) stays local.
+docs/*
+!docs/notes/
 smoke-test-*.md
 
 # Generated engraving output (runtime artifacts; templates/ STLs are committed assets)

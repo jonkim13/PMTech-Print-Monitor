@@ -380,8 +380,11 @@ def test_e2e_real_generation(tmp_path):
         product_key="Coaster_100mm_Square", quantity=1, customer_name="Acme")
     view = svc.get_wo_engraving_view(res["wo_id"])
     assert view["status"] == "ready", view.get("error_message")
-    # Golden triangle counts from the E-1 smoke test.
-    assert view["triangle_counts"] == {"mold": 435130, "prod": 435114}
+    # Golden triangle counts. Was {"mold": 435130, "prod": 435114} from the
+    # E-1 smoke test, until refan_border began welding the relief into the
+    # template (+4*465 = +1860 triangles per model). See the mesh-integrity
+    # tests in test_engraving_vendored.py for the properties that matter.
+    assert view["triangle_counts"] == {"mold": 436990, "prod": 436974}
     for key in ("prod_stl_path", "mold_stl_path",
                 "prod_preview_path", "mold_preview_path"):
         assert os.path.isfile(repo.get(view["engraving_id"])[key])

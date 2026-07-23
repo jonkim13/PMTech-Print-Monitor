@@ -179,6 +179,18 @@ class Triangle:
 	def flip_normal(self):
 		nv = (self.normalVector[0]*-1, self.normalVector[1]*-1, self.normalVector[2]*-1)
 		self.normalVector = nv
+		# start MOD0011
+		# Reversing a face means reversing its winding too - slicers take
+		# facing from vertex order and ignore the stored normal. Without this,
+		# the mold's relief (rotated 180 deg about z, which turns the
+		# heightfield upside down) stayed inside-out however the normal was
+		# set: its signed volume came out 64201mm3 against a 35263mm3
+		# template, where the relief can only ever add 0..18050mm3.
+		self.v2, self.v3 = self.v3, self.v2
+		self.e1 = Edge(self.v1, self.v2)
+		self.e2 = Edge(self.v2, self.v3)
+		self.e3 = Edge(self.v3, self.v1)
+		# end MOD0011
 
 	def get_vertexList(self):
 		return [self.v1.get_vertex(), self.v2.get_vertex(), self.v3.get_vertex()]
@@ -191,10 +203,15 @@ class Triangle:
 			z = ((v1[0] * v2[1]) - (v1[1] * v2[0]))
 			return (x, y, z)
 
+		# start MOD0011
+		# Operands ordered so the result is the winding normal
+		# (v2-v1) x (v3-v1). Both branches used to return its negation, which
+		# info_dict compensated for per-product via flip_norms.
 		if self.v2.x < self.v3.x:
-			n1 = dumb(self.v2 - self.v1, self.v2 - self.v3)
+			n1 = dumb(self.v2 - self.v3, self.v2 - self.v1)
 		else:
-			n1 = dumb(self.v3 - self.v2, self.v3 - self.v1)
+			n1 = dumb(self.v3 - self.v1, self.v3 - self.v2)
+		# end MOD0011
 
 		nx = n1[0]
 		ny = n1[1]
@@ -242,6 +259,12 @@ class Mesh:
 		self.triangles = []
 		self.vertexList = set()
 		self.normalsList = []
+		# start MOD0009
+		# Set by img2Mesh: the four edges of the relief sheet, each an ordered
+		# list of Vertex sharing its end corners with its neighbours. Consumed
+		# by refan_border to weld the sheet into the template.
+		self.border_sides = None
+		# end MOD0009
 
 	def add_Triangle(self, tri):
 		self.triangles.append(tri)
@@ -283,10 +306,14 @@ class Mesh:
 		else:
 			for i in self.vertexList:
 				i.translate(tm)
-			for j in self.triangles:
-				j.normalVector = (j.normalVector[0]+tm[0], \
-									j.normalVector[1]+tm[1], \
-									j.normalVector[2]+tm[2])
+			# start MOD0010
+			# Translation cannot change a normal. The loop that used to live
+			# here added tm to every normalVector and renormalised against it,
+			# producing non-unit, meaningless normals. The mold got away with
+			# it because its rot_array is set, so rotate() -> update_normal()
+			# recomputed them afterwards; the product's rot_array is None, so
+			# rotate() is a no-op and the corrupt normals reached the file.
+			# end MOD0010
 		tt2 = time.perf_counter()
 		print('translate {}'.format(tt2-tt1))
 		# for j in self.triangles:
@@ -542,6 +569,14 @@ def crossProd(v1, v2):
 	return (x, y, z)
 
 def img2Mesh(i, depth=1, xwidth=5, ywidth=5, yz_swap=False):
+	# start MOD0008
+	# i is uint8; under numpy >= 2.0 (NEP 50) `i[y, x] * depth` stays uint8 and
+	# wraps for any pixel >= 128, so the height term below silently aliased
+	# (255*2 -> 254, i.e. the BORDER_COLOR ring landed 1.004mm short of the
+	# template surface instead of flush with it). Widen once, here, rather
+	# than per-pixel in the hot loop.
+	i = i.astype(np.int32)
+	# end MOD0008
 	m = Mesh()
 	vlist = []
 	# print(i.shape)
@@ -559,6 +594,19 @@ def img2Mesh(i, depth=1, xwidth=5, ywidth=5, yz_swap=False):
 			vlist[y].append(v)
 	# print(len(vlist))
 	# print(len(vlist[0]))
+	# start MOD0009
+	# The sheet's four edges, in grid order. These land on the edges of the
+	# hole remove_triangles punched in the template; refan_border needs them
+	# ordered so it can rebuild the adjacent template face as a fan.
+	ih = i.shape[0]
+	iw = i.shape[1]
+	m.border_sides = [
+		[vlist[0][x] for x in range(iw)],
+		[vlist[ih-1][x] for x in range(iw)],
+		[vlist[y][0] for y in range(ih)],
+		[vlist[y][iw-1] for y in range(ih)],
+	]
+	# end MOD0009
 	ot2 = time.perf_counter()
 	for y in range(1, i.shape[0]):
 		for x in range(1, i.shape[1]):
@@ -576,8 +624,12 @@ def img2Mesh(i, depth=1, xwidth=5, ywidth=5, yz_swap=False):
 			# start MOD0002
 			# n1 = crossProd(v4 - v1, v2 - v1)
 			# n2 = crossProd(v4 - v1, v1 - v3)
-			n1 = crossProd(v2 - v1, v2 - v4)
-			n2 = crossProd(v3 - v4, v3 - v1)
+			# start MOD0011
+			# Operands ordered so each result is the triangle's own winding
+			# normal; both used to come out negated.
+			n1 = crossProd(v2 - v4, v2 - v1)
+			n2 = crossProd(v3 - v1, v3 - v4)
+			# end MOD0011
 			
 			# time5 = time.perf_counter()# - time4
 
@@ -913,6 +965,82 @@ def remove_triangles(m, pt_list, rounding=None):
 	# print(square)
 	return square
 
+# start MOD0009
+# Vertex coordinates are matched on this many decimal places (1e-4 mm). The
+# templates are stored as float32, whose representation error around these
+# coordinates is ~4e-6 mm, so the tolerance sits comfortably above the noise;
+# the relief's border segments are ~0.2 mm apart, so it sits far below any
+# real feature and cannot merge two distinct vertices.
+_WELD_ROUNDING = 4
+
+def _edge_key(v1, v2, rounding):
+	# Order-independent key for the edge joining two vertices.
+	a = tuple(v1.get_vertex(r=rounding))
+	b = tuple(v2.get_vertex(r=rounding))
+	return (a, b) if a <= b else (b, a)
+
+def refan_border(m, sides, rounding=_WELD_ROUNDING):
+	"""Subdivide the template faces that the relief's border lands on.
+
+	remove_triangles leaves a hole bounded by a handful of long edges (one per
+	side of the placeholder square). img2Mesh produces a sheet whose border
+	lies exactly on those edges, but subdivided into hundreds of short
+	segments. Mesh.__add__ only concatenates triangle lists, so every one of
+	those segments ends up referenced by a single face - a T-junction seam,
+	and an open mesh that slicers reject.
+
+	For each border side, this replaces the one template face carrying the
+	matching long edge with a fan of coplanar triangles - one per relief
+	segment, all sharing the face's opposite vertex - so both sides of the
+	seam agree and every edge is referenced by exactly two faces.
+
+	Must be called *after* the relief has been translated and rotated into
+	place: it references the relief's Vertex objects at their final positions.
+
+	Returns the number of triangles added.
+	"""
+	edges = {}
+	for tri in m.triangles:
+		verts = (tri.v1, tri.v2, tri.v3)
+		for k in range(3):
+			key = _edge_key(verts[k], verts[(k+1) % 3], rounding)
+			edges.setdefault(key, []).append((tri, k))
+
+	added = 0
+	used = set()
+	for side in sides:
+		key = _edge_key(side[0], side[-1], rounding)
+		match = edges.get(key, [])
+		if len(match) != 1:
+			raise RuntimeError(
+				'relief border side {} does not sit on exactly one template '
+				'face (found {}); the template hole and the relief sheet are '
+				'not aligned'.format(key, len(match)))
+		tri, k = match[0]
+		# Triangle defines __eq__ but no __hash__, so track identity by id().
+		if id(tri) in used:
+			raise RuntimeError(
+				'template face matched by two relief border sides at {}'.format(key))
+		used.add(id(tri))
+
+		verts = (tri.v1, tri.v2, tri.v3)
+		a = verts[k]
+		opp = verts[(k+2) % 3]
+		# Walk the border in the same direction the face is wound, so the fan
+		# keeps the template's facing.
+		seq = list(side)
+		if tuple(seq[0].get_vertex(r=rounding)) != tuple(a.get_vertex(r=rounding)):
+			seq.reverse()
+
+		nx, ny, nz = tri.normalVector
+		m.remove_Triangle(tri)
+		for j in range(len(seq) - 1):
+			m.add_Triangle(Triangle(nx, ny, nz, seq[j], seq[j+1], opp))
+		added += len(seq) - 2
+
+	return added
+# end MOD0009
+
 def create_models(img, product, invert=True):
 	# print(ind.info)
 	mold_mesh = open_stl_binary(str(_TEMPLATE_DIR / ind.info[product]["Mold"]['location']))
@@ -1025,6 +1153,16 @@ def create_models(img, product, invert=True):
 		mold_img_mesh.flip_normals()
 	if ind.info[product]["Product"]["flip_norms"]:
 		product_img_mesh.flip_normals()
+
+	# start MOD0009
+	# Weld the relief into the hole remove_triangles punched: subdivide the
+	# template faces bounding that hole so they share every segment of the
+	# relief's border. Without this the two shells stay disconnected and the
+	# output is an open mesh. Runs after every transform above, because it
+	# references the relief's vertices in their final positions.
+	refan_border(mold_mesh, mold_img_mesh.border_sides)
+	refan_border(product_mesh, product_img_mesh.border_sides)
+	# end MOD0009
 
 	mold_final_mesh = mold_mesh + mold_img_mesh
 	product_final_mesh = product_mesh + product_img_mesh
